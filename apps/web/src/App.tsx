@@ -1,13 +1,17 @@
 import { useState } from 'react'
+import AlertsPage from './features/alerts/AlertsPage'
 import BriefingPage from './features/briefing/BriefingPage'
+import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
+import ExposuresPage from './features/exposures/ExposuresPage'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
   { label: 'Events', icon: '●' },
   { label: 'Exposures', icon: '▲' },
+  { label: 'Alerts', icon: '◆' },
   { label: 'Claims', icon: '■' },
-  { label: 'Briefing', icon: '◆' },
+  { label: 'Briefing', icon: '◇' },
 ] as const
 
 type Section = (typeof sections)[number]['label']
@@ -60,6 +64,12 @@ function App() {
         <main className="flex-1 px-8 py-8">
           {activeSection === 'Executive Overview' ? (
             <ExecutiveOverview />
+          ) : activeSection === 'Events' ? (
+            <EventsPage />
+          ) : activeSection === 'Exposures' ? (
+            <ExposuresPage />
+          ) : activeSection === 'Alerts' ? (
+            <AlertsPage />
           ) : activeSection === 'Briefing' ? (
             <BriefingPage />
           ) : (

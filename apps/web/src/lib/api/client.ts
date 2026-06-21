@@ -82,3 +82,64 @@ export type BriefingResponse = {
 export async function getBriefing(): Promise<BriefingResponse> {
   return request<BriefingResponse>('/briefings/today')
 }
+
+export type ExposureRule = {
+  id: string
+  region_name: string
+  region_keywords: string[]
+  total_exposure: number
+  currency: string
+  risk_multiplier: number
+  portfolio_name: string
+  estimated_impact: number
+}
+
+export type ExposuresResponse = {
+  data: ExposureRule[]
+  meta: { count: number }
+}
+
+export async function getExposures(): Promise<ExposuresResponse> {
+  return request<ExposuresResponse>('/exposures')
+}
+
+export type ExposureMatch = {
+  matched_rule: ExposureRule | null
+  estimated_impact: number | null
+}
+
+export type ExposureMatchResponse = {
+  data: ExposureMatch
+}
+
+export async function matchExposure(place: string): Promise<ExposureMatchResponse> {
+  const qs = new URLSearchParams({ place })
+  return request<ExposureMatchResponse>(`/exposures/match?${qs.toString()}`)
+}
+
+export type AlertSeverity = 'Critical' | 'High' | 'Moderate'
+
+export type Alert = {
+  id: string
+  event_id: string
+  alert_type: string
+  severity: AlertSeverity
+  message: string
+  acknowledged: boolean
+  created_at: string
+}
+
+export type AlertsResponse = {
+  data: Alert[]
+  meta: { count: number; unacknowledged: number }
+}
+
+export async function getAlerts(): Promise<AlertsResponse> {
+  return request<AlertsResponse>('/alerts')
+}
+
+export async function acknowledgeAlert(id: string): Promise<void> {
+  await request<{ ok: boolean }>(`/alerts/${encodeURIComponent(id)}/acknowledge`, {
+    method: 'PATCH',
+  })
+}
