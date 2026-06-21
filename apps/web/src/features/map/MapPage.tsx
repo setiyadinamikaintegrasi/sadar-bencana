@@ -74,6 +74,25 @@ function magnitudeColor(mag: number): string {
   return '#22c55e' // green-500
 }
 
+function createEventIcon(magnitude: number): L.DivIcon {
+  const color = magnitudeColor(magnitude)
+  const size = Math.round(6 + magnitude * 1.8)
+  const pulseClass =
+    magnitude >= 7 ? 'pulse-critical' :
+    magnitude >= 6 ? 'pulse-high' :
+    magnitude >= 5 ? 'pulse-medium' : ''
+  const spread = size * 5
+  return L.divIcon({
+    className: '',
+    iconSize: [spread, spread],
+    iconAnchor: [spread / 2, spread / 2],
+    html: `<div
+      class="event-dot ${pulseClass}"
+      style="--color:${color};width:${size}px;height:${size}px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)"
+    ></div>`,
+  })
+}
+
 // --- main page ------------------------------------------------------------
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
@@ -209,6 +228,7 @@ export default function MapPage() {
                   <Marker
                     key={ev.event_id}
                     position={[ev.latitude, ev.longitude]}
+                    icon={createEventIcon(ev.magnitude)}
                   >
                     <Popup>
                       <div style={{ minWidth: '180px' }}>
