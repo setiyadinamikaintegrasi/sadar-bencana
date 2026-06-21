@@ -1,31 +1,76 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import { getEvents, type Event } from '../../lib/api/client'
 import { getVessels, getAircraft, type Vessel, type Aircraft } from '../../lib/api/assets'
 
 // --- helpers --------------------------------------------------------------
+
+const MAP_ANIMATION_CSS = `
+  .event-dot {
+    position: relative;
+    border-radius: 50%;
+    background: var(--color);
+    opacity: 0.9;
+  }
+  .event-dot::before,
+  .event-dot::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 2px solid var(--color);
+    animation: ring-expand 2s ease-out infinite;
+    pointer-events: none;
+  }
+  .event-dot::after { display: none; }
+  .pulse-critical::before { animation-duration: 1.2s; }
+  .pulse-critical::after  { display: block; animation-duration: 1.2s; animation-delay: 0.6s; }
+  .pulse-high::before     { animation-duration: 2s; }
+  .pulse-medium           { animation: breathe 3s ease-in-out infinite; }
+  @keyframes ring-expand {
+    0%   { transform: translate(-50%, -50%) scale(1);   opacity: 0.8; }
+    100% { transform: translate(-50%, -50%) scale(3.5); opacity: 0;   }
+  }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1);   opacity: 0.85; }
+    50%      { transform: scale(1.3); opacity: 0.5;  }
+  }
+  .vessel-moving { filter: drop-shadow(0 0 4px #06b6d4); }
+  .aircraft-airborne { animation: aircraft-pulse 4s ease-in-out infinite; }
+  @keyframes aircraft-pulse {
+    0%, 100% { opacity: 1;   transform: scale(1);    }
+    50%      { opacity: 0.6; transform: scale(0.85); }
+  }
+  .stat-value { animation: count-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes count-pop {
+    0%   { transform: scale(1.25); opacity: 0.4; }
+    100% { transform: scale(1);    opacity: 1;   }
+  }
+  @keyframes countdown {
+    from { transform: scaleX(1); }
+    to   { transform: scaleX(0); }
+  }
+  .leaflet-popup-content-wrapper {
+    background: #1e293b !important;
+    color: #cbd5e1 !important;
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6) !important;
+  }
+  .leaflet-popup-tip { background: #1e293b !important; }
+  .leaflet-popup-content { margin: 10px 14px !important; }
+`
 
 function magnitudeColor(mag: number): string {
   if (mag >= 7) return '#dc2626' // red-600
   if (mag >= 6) return '#f97316' // orange-500
   if (mag >= 5) return '#eab308' // yellow-500
   return '#22c55e' // green-500
-}
-
-function sourceColor(src: string): string {
-  if (src.includes('bmkg')) return '#ef4444'
-  if (src.includes('usgs')) return '#3b82f6'
-  if (src.includes('seed')) return '#a78bfa'
-  return '#64748b'
-}
-
-// Component to recenter map when needed
-function Recenter({ center }: { center: [number, number] }) {
-  const map = useMap()
-  useEffect(() => {
-    map.setView(center, 5)
-  }, [map, center[0], center[1]])
-  return null
 }
 
 // --- main page ------------------------------------------------------------
@@ -41,6 +86,18 @@ export default function MapPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeLayers, setActiveLayers] = useState<Set<LayerToggle>>(new Set(['events']))
+
+  useEffect(() => {
+    const existing = document.getElementById('map-animations')
+    if (existing) return
+    const style = document.createElement('style')
+    style.id = 'map-animations'
+    style.textContent = MAP_ANIMATION_CSS
+    document.head.appendChild(style)
+    return () => {
+      document.getElementById('map-animations')?.remove()
+    }
+  }, [])
 
   const toggleLayer = useCallback((layer: LayerToggle) => {
     setActiveLayers((prev) => {
@@ -148,15 +205,9 @@ export default function MapPage() {
               {/* Earthquake events */}
               {activeLayers.has('events') &&
                 events.map((ev) => (
-                  <CircleMarker
+                  <Marker
                     key={ev.event_id}
-                    center={[ev.latitude, ev.longitude]}
-                    radius={4 + ev.magnitude * 1.5}
-                    pathOptions={{
-                      color: magnitudeColor(ev.magnitude),
-                      fillColor: magnitudeColor(ev.magnitude),
-                      fillOpacity: 0.6,
-                    }}
+                    position={[ev.latitude, ev.longitude]}
                   >
                     <Popup>
                       <div style={{ minWidth: '180px' }}>
@@ -169,17 +220,15 @@ export default function MapPage() {
                         <span>Kedalaman tersedia di detail</span>
                       </div>
                     </Popup>
-                  </CircleMarker>
+                  </Marker>
                 ))}
 
               {/* Vessels (M9) */}
               {activeLayers.has('vessels') &&
                 vessels.map((v) => (
-                  <CircleMarker
+                  <Marker
                     key={`v-${v.mmsi}`}
-                    center={[v.latitude, v.longitude]}
-                    radius={4}
-                    pathOptions={{ color: '#06b6d4', fillColor: '#06b6d4', fillOpacity: 0.8 }}
+                    position={[v.latitude, v.longitude]}
                   >
                     <Popup>
                       <div>
@@ -192,17 +241,15 @@ export default function MapPage() {
                         <span>Update: {new Date(v.timestamp).toLocaleTimeString('id-ID')}</span>
                       </div>
                     </Popup>
-                  </CircleMarker>
+                  </Marker>
                 ))}
 
               {/* Aircraft (M9) */}
               {activeLayers.has('aircraft') &&
                 aircraft.map((a) => (
-                  <CircleMarker
+                  <Marker
                     key={`a-${a.icao24}`}
-                    center={[a.latitude, a.longitude]}
-                    radius={4}
-                    pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.8 }}
+                    position={[a.latitude, a.longitude]}
                   >
                     <Popup>
                       <div>
@@ -215,7 +262,7 @@ export default function MapPage() {
                         <span>Vel: {a.velocity != null ? `${a.velocity.toFixed(0)} m/s` : 'N/A'}</span>
                       </div>
                     </Popup>
-                  </CircleMarker>
+                  </Marker>
                 ))}
             </MapContainer>
           )}
