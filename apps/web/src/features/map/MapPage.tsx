@@ -181,6 +181,7 @@ export default function MapPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeLayers, setActiveLayers] = useState<Set<LayerToggle>>(new Set(['events']))
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     const existing = document.getElementById('map-animations')
@@ -204,6 +205,7 @@ export default function MapPage() {
   }, [])
 
   const loadAll = useCallback(async () => {
+    setRefreshKey((k) => k + 1)
     try {
       const [ev, vs, ac] = await Promise.allSettled([
         getEvents(),
@@ -280,7 +282,23 @@ export default function MapPage() {
 
       {/* Map */}
       <div className='overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/40'>
-        <div style={{ height: 'clamp(300px, 50vh, 600px)', width: '100%' }}>
+        <div style={{ height: 'clamp(300px, 50vh, 600px)', width: '100%', position: 'relative' }}>
+          {/* Countdown bar */}
+          <div
+            key={refreshKey}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: '2px',
+              background: '#4f46e5',
+              transformOrigin: 'left',
+              animation: 'countdown 60s linear forwards',
+              zIndex: 1000,
+              pointerEvents: 'none',
+            }}
+          />
           {loading ? (
             <div className='flex h-full items-center justify-center text-slate-400'>
               Loading map…
