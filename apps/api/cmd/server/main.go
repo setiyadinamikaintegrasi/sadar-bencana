@@ -43,6 +43,8 @@ func main() {
 	router.GET("/api/v1/events", apihttp.Events(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
+	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
+	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/exposures", apihttp.Exposures(dbPool))
 	router.GET("/api/v1/exposures/match", apihttp.ExposureMatch(dbPool))
 

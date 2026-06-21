@@ -9,6 +9,7 @@ import asyncpg
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from alerts import evaluate_and_create_alerts
 from connectors.usgs import USGSConnector
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
@@ -46,11 +47,13 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
 
     upserted = await upsert_events(pool, events)
     scored = await score_events(pool, events)
+    alerts = await evaluate_and_create_alerts(pool, events)
 
     return {
         "fetched": len(events),
         "upserted": upserted,
         "scored": scored,
+        "alerts_created": len(alerts),
     }
 
 
@@ -204,7 +207,7 @@ async def worker_events() -> dict[str, int | list[dict[str, object]] | str]:
 async def worker_ingest() -> JSONResponse:
     """Fetch USGS events, upsert them, and compute risk scores.
 
-    Returns ``{"fetched": N, "upserted": M, "scored": K}`` on success.
+    Returns ``{"fetched": N, "upserted": M, "scored": K, "alerts_created": A}`` on success.
     Distinct failure modes map to distinct HTTP status codes:
       * 503 — DB pool not ready
       * 502 — USGS fetch failed
@@ -217,7 +220,7 @@ async def worker_ingest() -> JSONResponse:
     except RuntimeError as exc:
         return JSONResponse(
             status_code=503,
-            content={"fetched": 0, "upserted": 0, "scored": 0, "error": str(exc)},
+            content={"fetched": 0, "upserted": 0, "scored": 0, "alerts_created": 0, "error": str(exc)},
         )
 
     # 2. Fetch events from USGS.
@@ -227,7 +230,7 @@ async def worker_ingest() -> JSONResponse:
     except Exception as exc:
         return JSONResponse(
             status_code=502,
-            content={"fetched": 0, "upserted": 0, "scored": 0, "error": str(exc)},
+            content={"fetched": 0, "upserted": 0, "scored": 0, "alerts_created": 0, "error": str(exc)},
         )
     finally:
         await connector.close()
@@ -238,6 +241,7 @@ async def worker_ingest() -> JSONResponse:
     try:
         upserted = await upsert_events(pool, events)
         scored = await score_events(pool, events)
+        alerts = await evaluate_and_create_alerts(pool, events)
     except Exception as exc:
         return JSONResponse(
             status_code=500,
@@ -245,13 +249,19 @@ async def worker_ingest() -> JSONResponse:
                 "fetched": len(events),
                 "upserted": 0,
                 "scored": 0,
+                "alerts_created": 0,
                 "error": str(exc),
             },
         )
 
     return JSONResponse(
         status_code=200,
-        content={"fetched": len(events), "upserted": upserted, "scored": scored},
+        content={
+            "fetched": len(events),
+            "upserted": upserted,
+            "scored": scored,
+            "alerts_created": len(alerts),
+        },
     )
 
 

@@ -1,0 +1,101 @@
+name: reinsurance-risk-monitor
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rrm-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rrm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rrm_password}
+      POSTGRES_DB: ${POSTGRES_DB:-reinsurance_risk_monitor}
+    volumes:
+      - rrm-pgdata:/var/lib/postgresql/data
+      - ./db/schema:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-rrm} -d ${POSTGRES_DB:-reinsurance_risk_monitor}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: rrm-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - rrm-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.api
+    container_name: rrm-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: "8001"
+      API_ENV: ${API_ENV:-docker}
+      DATABASE_URL: ${DATABASE_URL:-postgres://rrm:rrm_password@postgres:5432/reinsurance_risk_monitor}
+    ports:
+      - "8001:8001"
+
+  worker:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile.worker
+    container_name: rrm-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://rrm:rrm_password@postgres:5432/reinsurance_risk_monitor}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
+      LLM_MODEL: ${LLM_MODEL:-gemma4-e4b}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8002:8002"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.web
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    container_name: rrm-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "3001:3001"
+
+volumes:
+  rrm-pgdata:
+  rrm-redis-data:
