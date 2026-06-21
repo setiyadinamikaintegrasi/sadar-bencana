@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
-from connectors.usgs import USGSConnector
+from connectors.multi_source import MultiSourceConnector
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
 from db.pool import close_pool, get_pool, init_pool
@@ -39,7 +39,7 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     where applicable). Raises on any failure.
     """
 
-    connector = USGSConnector()
+    connector = MultiSourceConnector()
     try:
         events: list[EarthquakeEvent] = await connector.fetch_recent()
     finally:
@@ -188,9 +188,9 @@ async def worker_status() -> dict[str, str]:
 
 @app.get("/api/v1/worker/events")
 async def worker_events() -> dict[str, int | list[dict[str, object]] | str]:
-    """Fetch recent events from USGS and return a small response payload."""
+    """Fetch recent events from BMKG+USGS and return a small response payload."""
 
-    connector = USGSConnector()
+    connector = MultiSourceConnector()
     try:
         events: list[EarthquakeEvent] = await connector.fetch_recent()
         return {
@@ -205,7 +205,7 @@ async def worker_events() -> dict[str, int | list[dict[str, object]] | str]:
 
 @app.post("/api/v1/worker/ingest")
 async def worker_ingest() -> JSONResponse:
-    """Fetch USGS events, upsert them, and compute risk scores.
+    """Fetch BMKG+USGS events, upsert them, and compute risk scores.
 
     Returns ``{"fetched": N, "upserted": M, "scored": K, "alerts_created": A}`` on success.
     Distinct failure modes map to distinct HTTP status codes:
@@ -223,8 +223,8 @@ async def worker_ingest() -> JSONResponse:
             content={"fetched": 0, "upserted": 0, "scored": 0, "alerts_created": 0, "error": str(exc)},
         )
 
-    # 2. Fetch events from USGS.
-    connector = USGSConnector()
+    # 2. Fetch events from BMKG (Indonesia) + USGS (global).
+    connector = MultiSourceConnector()
     try:
         events: list[EarthquakeEvent] = await connector.fetch_recent()
     except Exception as exc:
