@@ -1,0 +1,11 @@
+{
+  "name": "reinsurance-risk-monitor",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:api": "cd apps/api && go run ./cmd/server",
+    "verify": "bash scripts/verify-structure.sh"
+  }
+}
