@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     profiles: ["", "core"]
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rrm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rrm_dev_2026}

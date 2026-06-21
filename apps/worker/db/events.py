@@ -9,6 +9,7 @@ performs that mapping explicitly.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Sequence
 
 import asyncpg
@@ -76,11 +77,11 @@ async def upsert_events(
                 event.latitude,
                 event.longitude,
                 event.place,
-                # EarthquakeEvent.time (ISO string) -> events.event_time
-                event.time,
+                # EarthquakeEvent.time (ISO string) -> events.event_time (timestamp)
+                datetime.fromisoformat(event.time.replace("Z", "+00:00")),
                 event.url,
                 None,  # severity: not modeled on EarthquakeEvent yet
-                event.created_at,
+                datetime.fromisoformat(event.created_at.replace("Z", "+00:00")),
             )
             if row is not None:
                 upserted += 1

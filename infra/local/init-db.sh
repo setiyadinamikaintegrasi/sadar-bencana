@@ -66,5 +66,5 @@ docker compose -f "${COMPOSE_FILE}" exec -T postgres \
 
 echo ""
 echo "Done. Connection string for host-native apps:"
-echo "  DATABASE_URL=postgres://${PG_USER}@localhost:5432/${PG_DB}"
+echo "  DATABASE_URL=postgres://${PG_USER}@localhost:5433/${PG_DB}"
 echo "  REDIS_URL=redis://localhost:6379"

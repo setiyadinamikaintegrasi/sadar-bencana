@@ -20,7 +20,7 @@ type Event struct {
 	Place     string    `json:"place"`
 	EventTime time.Time `json:"event_time"`
 	URL       string    `json:"url"`
-	Severity  string    `json:"severity"`
+	Severity  *string   `json:"severity"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

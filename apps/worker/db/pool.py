@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Default DSN matches docker-compose service `postgres` for this project.
 DEFAULT_DATABASE_URL = (
-    "postgres://rrm:rrm_dev_2026@localhost:5432/reinsurance_risk_monitor"
+    "postgres://rrm:***@localhost:5433/reinsurance_risk_monitor"
 )
 
 # Module-level singleton. Mutated only via init_pool()/close_pool().

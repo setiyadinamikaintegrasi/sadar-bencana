@@ -9,7 +9,7 @@ const (
 	defaultPgUser = "rrm"
 	defaultPgPass = "rrm_dev_2026"
 	defaultPgHost = "localhost"
-	defaultPgPort = "5432"
+	defaultPgPort = "5433"
 	defaultPgDB   = "reinsurance_risk_monitor"
 )
 

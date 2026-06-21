@@ -37,5 +37,6 @@ export async function getMeta(): Promise<Meta> {
 }
 
 export async function getEvents(): Promise<Event[]> {
-  return request<Event[]>('/events')
+  const res = await request<{ data: Event[]; meta: { count: number; limit: number } }>('/events')
+  return res.data
 }
