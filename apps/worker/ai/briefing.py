@@ -75,7 +75,7 @@ async def generate_briefing(events: list[EarthquakeEvent]) -> str:
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": 512,
+        "max_tokens": 2048,
     }
 
     try:
@@ -88,6 +88,12 @@ async def generate_briefing(events: list[EarthquakeEvent]) -> str:
             data = resp.json()
             summary = data["choices"][0]["message"]["content"].strip()
             if not summary:
+                # Gemma-4 reasoning mode: content may be empty if reasoning
+                # consumed all tokens. Try reasoning_content as last resort.
+                reasoning = data["choices"][0]["message"].get("reasoning_content", "").strip()
+                if reasoning:
+                    logger.warning("LLM content empty, extracting from reasoning_content")
+                    return reasoning
                 logger.warning("LLM returned empty summary, using fallback")
                 return _fallback_summary(events)
             return summary
