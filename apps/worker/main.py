@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import asyncpg
 from fastapi import FastAPI
@@ -10,9 +11,10 @@ from fastapi.responses import JSONResponse
 
 from connectors.usgs import USGSConnector
 from db.briefings import save_briefing
-from db.events import upsert_events
+from db.events import fetch_top_events, upsert_events
 from db.pool import close_pool, get_pool, init_pool
 from models.event import EarthquakeEvent
+from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
 from scoring.risk import score_events
 
@@ -20,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Reinsurance Risk Monitor Worker", version="0.1.0")
 
-# Module-level scheduler instance. Created lazily in the startup hook so
-# it binds to the running event loop. Captured module-level so the
-# shutdown hook can stop it.
+# Module-level scheduler instances. Created lazily in the startup hook so
+# they bind to the running event loop. Captured module-level so the
+# shutdown hook can stop them.
 _scheduler: IngestScheduler | None = None
+_briefing_scheduler: BriefingScheduler | None = None
 
 
 async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
@@ -63,17 +66,73 @@ async def _ingest_once() -> dict[str, int]:
     return await _ingest_cycle(pool)
 
 
+async def _briefing_cycle(pool: asyncpg.Pool) -> dict[str, Any]:
+    """Run one fetch -> generate -> save briefing cycle against a pool.
+
+    Shared by both the on-demand briefing endpoint and the background
+    scheduler so they execute identical logic. Reuses
+    :func:`db.events.fetch_top_events`, :func:`ai.briefing.generate_briefing`,
+    and :func:`db.briefings.save_briefing` rather than duplicating any
+    briefing-generation logic. Raises on any failure.
+    """
+
+    # Local import keeps the heavy LLM/httpx import lazy, matching the
+    # style of the on-demand endpoint above.
+    from ai.briefing import generate_briefing
+    from ai.briefing import LLM_MODEL
+
+    events, event_uuids = await fetch_top_events(pool, limit=10)
+
+    if not events:
+        logger.info("No events to summarize; skipping briefing generation.")
+        return {
+            "event_count": 0,
+            "model": LLM_MODEL,
+            "id": None,
+            "skipped": True,
+        }
+
+    summary = await generate_briefing(events)
+    saved = await save_briefing(
+        pool,
+        briefing_type="daily",
+        summary=summary,
+        event_ids=event_uuids,
+        event_count=len(events),
+        model=LLM_MODEL,
+    )
+
+    return {
+        "event_count": len(events),
+        "model": LLM_MODEL,
+        "id": saved["id"],
+        "skipped": False,
+    }
+
+
+async def _generate_briefing_once() -> dict[str, Any]:
+    """Resolve the pool and run one briefing generation cycle.
+
+    This is the entry point used by the background briefing scheduler. It
+    raises on any failure (pool unavailable, LLM error, DB error); the
+    scheduler logs and swallows such exceptions so the loop survives.
+    """
+
+    pool = get_pool()
+    return await _briefing_cycle(pool)
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
-    """Bring up long-lived resources: PostgreSQL pool + ingest scheduler.
+    """Bring up long-lived resources: PostgreSQL pool + schedulers.
 
     The DB is optional for some endpoints (health/status), so a failed
     pool init is logged as a warning rather than crashing the app. The
-    scheduler is started regardless: even with a degraded DB it will
+    schedulers are started regardless: even with a degraded DB they will
     simply log failures each tick and recover once the pool is available.
     """
 
-    global _scheduler
+    global _scheduler, _briefing_scheduler
 
     try:
         await init_pool()
@@ -84,17 +143,28 @@ async def startup_event() -> None:
     # Start the background ingest loop (every 5 minutes by default).
     _scheduler = IngestScheduler(ingest_fn=_ingest_once)
     _scheduler.start()
-    logger.info("Worker startup complete; background ingestion is enabled.")
+
+    # Start the background briefing loop (every 6 hours by default).
+    _briefing_scheduler = BriefingScheduler(briefing_fn=_generate_briefing_once)
+    _briefing_scheduler.start()
+
+    logger.info(
+        "Worker startup complete; background ingestion and auto-briefing are enabled."
+    )
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
-    """Stop the scheduler and release the PostgreSQL connection pool."""
+    """Stop the schedulers and release the PostgreSQL connection pool."""
 
-    global _scheduler
+    global _scheduler, _briefing_scheduler
     if _scheduler is not None:
         await _scheduler.stop()
         _scheduler = None
+
+    if _briefing_scheduler is not None:
+        await _briefing_scheduler.stop()
+        _briefing_scheduler = None
 
     await close_pool()
 

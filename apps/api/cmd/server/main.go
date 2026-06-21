@@ -41,6 +41,10 @@ func main() {
 	router.GET("/health", apihttp.Health)
 	router.GET("/api/v1/meta", apihttp.Meta(cfg.Env))
 	router.GET("/api/v1/events", apihttp.Events(dbPool))
+	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
+	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
+	router.GET("/api/v1/exposures", apihttp.Exposures(dbPool))
+	router.GET("/api/v1/exposures/match", apihttp.ExposureMatch(dbPool))
 
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
 	log.Printf("API server listening on %s", addr)

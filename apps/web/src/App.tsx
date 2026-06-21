@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import BriefingPage from './features/briefing/BriefingPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
 
 const sections = [
@@ -59,6 +60,8 @@ function App() {
         <main className="flex-1 px-8 py-8">
           {activeSection === 'Executive Overview' ? (
             <ExecutiveOverview />
+          ) : activeSection === 'Briefing' ? (
+            <BriefingPage />
           ) : (
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-slate-950/40">
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>

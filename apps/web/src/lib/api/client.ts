@@ -61,12 +61,18 @@ export async function getRiskScores(): Promise<RiskScoresResponse> {
   return request<RiskScoresResponse>('/risk-scores')
 }
 
+export type BriefingTopEvent = {
+  event_id: string
+  magnitude: number
+  place: string | null
+  source: string | null
+}
+
 export type Briefing = {
-  id: string
   date: string
   summary: string
-  highlights: string[]
-  generated_at: string
+  event_count: number
+  top_events: BriefingTopEvent[]
 }
 
 export type BriefingResponse = {

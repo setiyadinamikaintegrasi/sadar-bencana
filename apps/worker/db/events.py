@@ -95,3 +95,48 @@ async def upsert_events(
         "Upserted %d/%d events into the events table", upserted, len(events)
     )
     return upserted
+
+
+_FETCH_TOP_EVENTS_SQL = """
+SELECT id, event_id, source, event_type, magnitude,
+       latitude, longitude, place, event_time, url
+FROM events
+ORDER BY magnitude DESC NULLS LAST
+LIMIT $1
+"""
+
+
+async def fetch_top_events(
+    pool: asyncpg.Pool, limit: int = 10
+) -> tuple[list[EarthquakeEvent], list[str]]:
+    """Fetch the most significant recent events by magnitude DESC.
+
+    Returns a tuple ``(events, event_uuids)`` where ``event_uuids`` are the
+    stringified ``id`` columns aligned 1:1 with ``events``. Returns empty
+    lists when the table has no rows. Shared by the on-demand briefing
+    endpoint and the background briefing scheduler so both pull identical
+    event sets.
+    """
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_FETCH_TOP_EVENTS_SQL, limit)
+
+    events: list[EarthquakeEvent] = []
+    event_uuids: list[str] = []
+    for r in rows:
+        events.append(
+            EarthquakeEvent(
+                event_id=r["event_id"],
+                source=r["source"],
+                event_type=r["event_type"] or "earthquake",
+                magnitude=float(r["magnitude"] or 0.0),
+                latitude=float(r["latitude"] or 0.0),
+                longitude=float(r["longitude"] or 0.0),
+                place=r["place"] or "",
+                time=str(r["event_time"] or ""),
+                url=r["url"] or "",
+            )
+        )
+        event_uuids.append(str(r["id"]))
+
+    return events, event_uuids
