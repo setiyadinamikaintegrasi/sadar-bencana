@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import SourceBadge from '../../components/SourceBadge'
+import MagnitudeFilter from '../../components/MagnitudeFilter'
 import { getEvents, getMeta, type Event, type Meta } from '../../lib/api/client'
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
@@ -17,39 +19,47 @@ function severityFor(magnitude: number): Severity {
   return 'Low'
 }
 
-const sourceBadgeClasses =
-  'inline-flex rounded-full bg-slate-700/60 px-3 py-1 text-xs font-semibold text-slate-200 ring-1 ring-inset ring-slate-500/40'
+
 
 export default function ExecutiveOverview() {
   const [events, setEvents] = useState<Event[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [minMagnitude, setMinMagnitude] = useState(0)
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function load() {
+  const load = useCallback(async (mode: 'initial' | 'refresh') => {
+    if (mode === 'initial') {
       setLoading(true)
-      setError(null)
-      try {
-        const [eventsData, metaData] = await Promise.all([getEvents(), getMeta()])
-        if (cancelled) return
-        setEvents(eventsData)
-        setMeta(metaData)
-      } catch (err) {
-        if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Failed to load dashboard data.')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+    } else {
+      setRefreshing(true)
     }
-
-    void load()
-    return () => {
-      cancelled = true
+    setError(null)
+    try {
+      const [eventsData, metaData] = await Promise.all([getEvents(), getMeta()])
+      setEvents(eventsData)
+      setMeta(metaData)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard data.')
+    } finally {
+      if (mode === 'initial') setLoading(false)
+      else setRefreshing(false)
     }
   }, [])
+
+  useEffect(() => {
+    void load('initial')
+  }, [load])
+
+  const handleRefresh = useCallback(() => {
+    void load('refresh')
+  }, [load])
+
+  const filteredEvents = useMemo(
+    () => events.filter((e) => e.magnitude >= minMagnitude),
+    [events, minMagnitude],
+  )
 
   const kpis = useMemo(() => {
     const maxMagnitude =
@@ -100,12 +110,23 @@ export default function ExecutiveOverview() {
 
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
-          <div className="mb-5 flex items-center justify-between">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
                 Watchlist
               </p>
               <h3 className="mt-2 text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={loading || refreshing}
+                className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
             </div>
           </div>
 
@@ -133,6 +154,13 @@ export default function ExecutiveOverview() {
                 to populate the watchlist.
               </p>
             </div>
+          ) : filteredEvents.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-700 bg-slate-800/50 p-8 text-center">
+              <p className="text-sm font-medium text-slate-200">No events match this magnitude filter</p>
+              <p className="mt-2 text-sm text-slate-400">
+                Lower the minimum magnitude to show more watchlist events.
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
@@ -145,7 +173,7 @@ export default function ExecutiveOverview() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {events.map((row) => {
+                  {filteredEvents.map((row) => {
                     const severity = severityFor(row.magnitude)
                     return (
                       <tr key={row.id} className="text-slate-200">
@@ -157,8 +185,8 @@ export default function ExecutiveOverview() {
                             {severity}
                           </span>
                         </td>
-                        <td className="py-4 pr-6">
-                          <span className={sourceBadgeClasses}>{row.source}</span>
+                        <td className="py-4 pr-6 align-top">
+                          <SourceBadge source={row.source} timestamp={row.created_at} />
                         </td>
                         <td className="py-4 pr-6 text-slate-400">
                           {new Date(row.event_time).toLocaleString()}

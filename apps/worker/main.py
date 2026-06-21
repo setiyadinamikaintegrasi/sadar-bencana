@@ -4,39 +4,97 @@ from __future__ import annotations
 
 import logging
 
+import asyncpg
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from connectors.usgs import USGSConnector
+from db.briefings import save_briefing
 from db.events import upsert_events
 from db.pool import close_pool, get_pool, init_pool
 from models.event import EarthquakeEvent
+from schedulers.ingest import IngestScheduler
+from scoring.risk import score_events
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Reinsurance Risk Monitor Worker", version="0.1.0")
 
+# Module-level scheduler instance. Created lazily in the startup hook so
+# it binds to the running event loop. Captured module-level so the
+# shutdown hook can stop it.
+_scheduler: IngestScheduler | None = None
+
+
+async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
+    """Run one fetch -> upsert -> score cycle against an active pool.
+
+    Shared by both the on-demand ingest endpoint and the background
+    scheduler so they execute identical logic. The caller is responsible
+    for acquiring the pool (and mapping failures to HTTP status codes
+    where applicable). Raises on any failure.
+    """
+
+    connector = USGSConnector()
+    try:
+        events: list[EarthquakeEvent] = await connector.fetch_recent()
+    finally:
+        await connector.close()
+
+    upserted = await upsert_events(pool, events)
+    scored = await score_events(pool, events)
+
+    return {
+        "fetched": len(events),
+        "upserted": upserted,
+        "scored": scored,
+    }
+
+
+async def _ingest_once() -> dict[str, int]:
+    """Resolve the pool and run one full ingest + scoring cycle.
+
+    This is the entry point used by the background scheduler. It raises
+    on any failure (pool unavailable, USGS fetch error, DB error); the
+    scheduler logs and swallows such exceptions so the loop survives.
+    """
+
+    pool = get_pool()
+    return await _ingest_cycle(pool)
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    """Bring up long-lived resources: PostgreSQL connection pool.
+    """Bring up long-lived resources: PostgreSQL pool + ingest scheduler.
 
     The DB is optional for some endpoints (health/status), so a failed
-    init is logged as a warning rather than crashing the app. Endpoints
-    that need the pool will surface a clean 503 via :func:`get_pool`.
+    pool init is logged as a warning rather than crashing the app. The
+    scheduler is started regardless: even with a degraded DB it will
+    simply log failures each tick and recover once the pool is available.
     """
 
-    logger.info("Worker startup complete; ingestion is configured to run on-demand.")
+    global _scheduler
+
     try:
         await init_pool()
         logger.info("PostgreSQL connection pool initialized.")
     except Exception as exc:  # pragma: no cover — depends on runtime DB availability
         logger.warning("Could not initialize DB pool at startup: %s", exc)
 
+    # Start the background ingest loop (every 5 minutes by default).
+    _scheduler = IngestScheduler(ingest_fn=_ingest_once)
+    _scheduler.start()
+    logger.info("Worker startup complete; background ingestion is enabled.")
+
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
-    """Release the PostgreSQL connection pool on shutdown."""
+    """Stop the scheduler and release the PostgreSQL connection pool."""
+
+    global _scheduler
+    if _scheduler is not None:
+        await _scheduler.stop()
+        _scheduler = None
 
     await close_pool()
 
@@ -74,13 +132,13 @@ async def worker_events() -> dict[str, int | list[dict[str, object]] | str]:
 
 @app.post("/api/v1/worker/ingest")
 async def worker_ingest() -> JSONResponse:
-    """Fetch USGS events and upsert them into PostgreSQL.
+    """Fetch USGS events, upsert them, and compute risk scores.
 
-    Returns ``{"fetched": N, "upserted": M}`` on success. Distinct
-    failure modes map to distinct HTTP status codes:
+    Returns ``{"fetched": N, "upserted": M, "scored": K}`` on success.
+    Distinct failure modes map to distinct HTTP status codes:
       * 503 — DB pool not ready
       * 502 — USGS fetch failed
-      * 500 — upsert failed
+      * 500 — upsert or scoring failed
     """
 
     # 1. Acquire the DB pool.
@@ -89,7 +147,7 @@ async def worker_ingest() -> JSONResponse:
     except RuntimeError as exc:
         return JSONResponse(
             status_code=503,
-            content={"fetched": 0, "upserted": 0, "error": str(exc)},
+            content={"fetched": 0, "upserted": 0, "scored": 0, "error": str(exc)},
         )
 
     # 2. Fetch events from USGS.
@@ -99,23 +157,124 @@ async def worker_ingest() -> JSONResponse:
     except Exception as exc:
         return JSONResponse(
             status_code=502,
-            content={"fetched": 0, "upserted": 0, "error": str(exc)},
+            content={"fetched": 0, "upserted": 0, "scored": 0, "error": str(exc)},
         )
     finally:
         await connector.close()
 
-    # 3. Upsert into PostgreSQL.
+    # 3. Upsert + score. Both run inside the same step so a scoring
+    #    failure surfaces as 500 (the events were fetched, but persistence
+    #    did not complete cleanly).
     try:
         upserted = await upsert_events(pool, events)
+        scored = await score_events(pool, events)
     except Exception as exc:
         return JSONResponse(
             status_code=500,
-            content={"fetched": len(events), "upserted": 0, "error": str(exc)},
+            content={
+                "fetched": len(events),
+                "upserted": 0,
+                "scored": 0,
+                "error": str(exc),
+            },
         )
 
     return JSONResponse(
         status_code=200,
-        content={"fetched": len(events), "upserted": upserted},
+        content={"fetched": len(events), "upserted": upserted, "scored": scored},
+    )
+
+
+@app.post("/api/v1/worker/briefings/generate")
+async def worker_generate_briefing() -> JSONResponse:
+    """Generate a reinsurance briefing from recent events using local LLM.
+
+    Flow:
+      1. Acquire DB pool (503 if not ready).
+      2. Fetch top events by magnitude from PostgreSQL.
+      3. Call Gemma4-E4B (localhost:8080) for summary generation.
+      4. Persist to briefings table.
+      5. Return briefing payload.
+
+    Error codes: 503 (DB), 500 (generation/persistence).
+    """
+
+    from ai.briefing import generate_briefing
+    from ai.briefing import LLM_MODEL
+
+    # 1. Acquire pool.
+    try:
+        pool = get_pool()
+    except RuntimeError as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+
+    # 2. Fetch recent events (top 10 by magnitude DESC).
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, event_id, source, event_type, magnitude,
+                       latitude, longitude, place, event_time, url
+                FROM events
+                ORDER BY magnitude DESC NULLS LAST
+                LIMIT 10
+                """
+            )
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    if not rows:
+        return JSONResponse(
+            status_code=200,
+            content={"summary": "No events to summarize.", "event_count": 0},
+        )
+
+    # Build EarthquakeEvent instances from DB rows.
+    events: list[EarthquakeEvent] = []
+    event_uuids: list[str] = []
+    for r in rows:
+        events.append(EarthquakeEvent(
+            event_id=r["event_id"],
+            source=r["source"],
+            event_type=r["event_type"] or "earthquake",
+            magnitude=float(r["magnitude"] or 0.0),
+            latitude=float(r["latitude"] or 0.0),
+            longitude=float(r["longitude"] or 0.0),
+            place=r["place"] or "",
+            time=str(r["event_time"] or ""),
+            url=r["url"] or "",
+        ))
+        event_uuids.append(str(r["id"]))
+
+    # 3. Generate briefing via LLM.
+    try:
+        summary = await generate_briefing(events)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    # 4. Persist to briefings table.
+    try:
+        saved = await save_briefing(
+            pool,
+            briefing_type="daily",
+            summary=summary,
+            event_ids=event_uuids,
+            event_count=len(rows),
+            model=LLM_MODEL,
+        )
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    # 5. Return.
+    return JSONResponse(
+        status_code=200,
+        content={
+            "id": saved["id"],
+            "summary": summary,
+            "event_count": len(rows),
+            "model": LLM_MODEL,
+            "created_at": saved["created_at"].isoformat() if saved["created_at"] else None,
+        },
     )
 
 

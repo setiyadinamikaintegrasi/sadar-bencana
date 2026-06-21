@@ -40,3 +40,39 @@ export async function getEvents(): Promise<Event[]> {
   const res = await request<{ data: Event[]; meta: { count: number; limit: number } }>('/events')
   return res.data
 }
+
+export type RiskScore = {
+  event_id: string
+  place: string
+  magnitude: number
+  score: number
+  band: string
+  currency: string
+  estimated_loss: number
+  updated_at: string
+}
+
+export type RiskScoresResponse = {
+  data: RiskScore[]
+  meta: { count: number; limit: number }
+}
+
+export async function getRiskScores(): Promise<RiskScoresResponse> {
+  return request<RiskScoresResponse>('/risk-scores')
+}
+
+export type Briefing = {
+  id: string
+  date: string
+  summary: string
+  highlights: string[]
+  generated_at: string
+}
+
+export type BriefingResponse = {
+  data: Briefing
+}
+
+export async function getBriefing(): Promise<BriefingResponse> {
+  return request<BriefingResponse>('/briefings/today')
+}

@@ -15,12 +15,14 @@ from typing import Sequence
 import asyncpg
 
 from models.event import EarthquakeEvent
+from scoring.risk import classify_severity
 
 logger = logging.getLogger(__name__)
 
 # Columns are listed explicitly so future schema additions don't silently
-# break the upsert. ``severity`` has no counterpart on EarthquakeEvent yet,
-# so it is passed as NULL.
+# break the upsert. ``severity`` is derived from ``magnitude`` at write
+# time via :func:`scoring.risk.classify_severity`, so callers never need
+# to pass it explicitly.
 _UPSERT_SQL = """
 INSERT INTO events (
     event_id,
@@ -57,9 +59,11 @@ async def upsert_events(
     """Upsert a batch of earthquake events into the ``events`` table.
 
     Uses ``INSERT ... ON CONFLICT (source, event_id) DO UPDATE`` so the
-    operation is idempotent across re-ingestions. Returns the number of
-    rows actually written (inserts + updates). Empty input returns 0
-    without touching the database.
+    operation is idempotent across re-ingestions. Each event's
+    ``severity`` is derived from its magnitude and written inline, so the
+    column is always populated for freshly ingested rows. Returns the
+    number of rows actually written (inserts + updates). Empty input
+    returns 0 without touching the database.
     """
 
     if not events:
@@ -68,6 +72,7 @@ async def upsert_events(
     upserted = 0
     async with pool.acquire() as conn:
         for event in events:
+            severity = classify_severity(event.magnitude)
             row = await conn.fetchrow(
                 _UPSERT_SQL,
                 event.event_id,
@@ -80,7 +85,7 @@ async def upsert_events(
                 # EarthquakeEvent.time (ISO string) -> events.event_time (timestamp)
                 datetime.fromisoformat(event.time.replace("Z", "+00:00")),
                 event.url,
-                None,  # severity: not modeled on EarthquakeEvent yet
+                severity,  # derived from magnitude at write time
                 datetime.fromisoformat(event.created_at.replace("Z", "+00:00")),
             )
             if row is not None:
