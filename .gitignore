@@ -26,3 +26,8 @@ logs/
 # IDE
 .vscode/
 .idea/
+
+# Go
+*.test
+*.out
+apps/api/server
