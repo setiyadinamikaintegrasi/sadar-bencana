@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import SourceBadge from '../../components/SourceBadge'
 import {
   acknowledgeAlert,
   getAlerts,
@@ -7,6 +8,8 @@ import {
 } from '../../lib/api/client'
 
 const REFRESH_INTERVAL_MS = 60_000
+
+const ALL_SOURCES = '__all__'
 
 const severityClasses: Record<AlertSeverity, string> = {
   Moderate: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
@@ -29,6 +32,7 @@ export default function AlertsPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>(ALL_SOURCES)
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null)
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
@@ -124,10 +128,21 @@ export default function AlertsPage() {
   }, [alerts])
 
   const filteredAlerts = useMemo(() => {
-    if (statusFilter === 'all') return alerts
-    const wantAcked = statusFilter === 'acknowledged'
-    return alerts.filter((alert) => alert.acknowledged === wantAcked)
-  }, [alerts, statusFilter])
+    return alerts.filter((alert) => {
+      if (statusFilter !== 'all') {
+        const wantAcked = statusFilter === 'acknowledged'
+        if (alert.acknowledged !== wantAcked) return false
+      }
+      if (sourceFilter !== ALL_SOURCES && alert.source !== sourceFilter) return false
+      return true
+    })
+  }, [alerts, statusFilter, sourceFilter])
+
+  const sourceOptions = useMemo(() => {
+    const seen = new Set<string>()
+    filteredAlerts.forEach((a) => seen.add(a.source))
+    return Array.from(seen).sort()
+  }, [filteredAlerts])
 
   const hasUnacknowledged = unacknowledged > 0
 
@@ -201,6 +216,26 @@ export default function AlertsPage() {
               )
             })}
           </div>
+
+          <label className="ml-auto inline-flex items-center gap-3 text-sm text-slate-300">
+            <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+              Source
+            </span>
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400"
+            >
+              <option value={ALL_SOURCES} className="bg-slate-800 text-slate-100">
+                All sources
+              </option>
+              {sourceOptions.map((src) => (
+                <option key={src} value={src} className="bg-slate-800 text-slate-100">
+                  {src.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </section>
 
@@ -254,6 +289,7 @@ export default function AlertsPage() {
                     <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 ring-1 ring-inset ring-slate-700">
                       {alert.alert_type}
                     </span>
+                    <SourceBadge source={alert.source} timestamp={alert.created_at} />
                     {alert.acknowledged ? (
                       <span className="inline-flex rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
                         Acknowledged
@@ -266,9 +302,12 @@ export default function AlertsPage() {
                   </div>
 
                   <p className="mt-3 break-words text-sm text-slate-200">{alert.message}</p>
-                  <p className="mt-3 text-xs text-slate-500">
-                    Event {alert.event_id} · {new Date(alert.created_at).toLocaleString()}
-                  </p>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                    <span>M {alert.magnitude.toFixed(1)}</span>
+                    <span>{alert.place}</span>
+                    <span>{new Date(alert.event_time).toLocaleString()}</span>
+                    <span>ID {alert.event_id}</span>
+                  </div>
                 </div>
 
                 <div className="shrink-0">
