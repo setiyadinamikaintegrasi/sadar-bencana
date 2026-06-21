@@ -128,6 +128,27 @@ function createVesselIcon(vessel: Vessel): L.DivIcon {
   })
 }
 
+function createAircraftIcon(aircraft: Aircraft): L.DivIcon {
+  const rotation = aircraft.heading ?? 0
+  const isAirborne = !aircraft.on_ground && (aircraft.altitude ?? 0) > 0
+  const color = isAirborne ? '#f59e0b' : '#94a3b8'
+  const opacity = isAirborne ? '1' : '0.5'
+  const animClass = isAirborne ? 'aircraft-airborne' : ''
+
+  return L.divIcon({
+    className: '',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+    html: `<div class="${animClass}" style="width:20px;height:20px;opacity:${opacity}">
+      <div style="transform:rotate(${rotation}deg);width:100%;height:100%">
+        <svg viewBox="0 0 18 18" fill="${color}" xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+          <path d="M9,1 L11,7 L17,8 L11,11 L12,17 L9,15 L6,17 L7,11 L1,8 L7,7 Z"/>
+        </svg>
+      </div>
+    </div>`,
+  })
+}
+
 // --- main page ------------------------------------------------------------
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
@@ -301,12 +322,13 @@ export default function MapPage() {
                   </Marker>
                 ))}
 
-              {/* Aircraft (M9) */}
+              {/* Aircraft */}
               {activeLayers.has('aircraft') &&
                 aircraft.map((a) => (
                   <Marker
                     key={`a-${a.icao24}`}
                     position={[a.latitude, a.longitude]}
+                    icon={createAircraftIcon(a)}
                   >
                     <Popup>
                       <div>
