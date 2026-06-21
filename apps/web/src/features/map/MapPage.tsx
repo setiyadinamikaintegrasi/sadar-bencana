@@ -93,6 +93,41 @@ function createEventIcon(magnitude: number): L.DivIcon {
   })
 }
 
+function createVesselIcon(vessel: Vessel): L.DivIcon {
+  const rotation = vessel.cog ?? vessel.heading ?? 0
+  const isMoving = (vessel.sog ?? 0) > 0.5
+
+  if (isMoving) {
+    return L.divIcon({
+      className: '',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+      html: `<div class="vessel-moving" style="width:24px;height:24px">
+        <div style="transform:rotate(${rotation}deg);width:100%;height:100%">
+          <svg viewBox="0 0 20 20" fill="#06b6d4" xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+            <polygon points="10,2 18,18 10,14 2,18"/>
+          </svg>
+        </div>
+      </div>`,
+    })
+  }
+
+  return L.divIcon({
+    className: '',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    html: `<div class="vessel-anchor" style="width:16px;height:16px;opacity:0.45">
+      <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+        <circle cx="8" cy="4" r="2" stroke="#06b6d4" stroke-width="1.5" fill="none"/>
+        <line x1="8" y1="6" x2="8" y2="13" stroke="#06b6d4" stroke-width="1.5"/>
+        <line x1="3" y1="9" x2="13" y2="9" stroke="#06b6d4" stroke-width="1.5"/>
+        <line x1="3" y1="13" x2="5" y2="11" stroke="#06b6d4" stroke-width="1.5"/>
+        <line x1="13" y1="13" x2="11" y2="11" stroke="#06b6d4" stroke-width="1.5"/>
+      </svg>
+    </div>`,
+  })
+}
+
 // --- main page ------------------------------------------------------------
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
@@ -244,12 +279,13 @@ export default function MapPage() {
                   </Marker>
                 ))}
 
-              {/* Vessels (M9) */}
+              {/* Vessels */}
               {activeLayers.has('vessels') &&
                 vessels.map((v) => (
                   <Marker
                     key={`v-${v.mmsi}`}
                     position={[v.latitude, v.longitude]}
+                    icon={createVesselIcon(v)}
                   >
                     <Popup>
                       <div>
