@@ -16,6 +16,8 @@ dist/
 .env
 .env.local
 .env.*.local
+# Local docker-compose dev env (contains dev DB credentials) — keep .env.example tracked
+infra/local/.env
 
 # Logs
 logs/

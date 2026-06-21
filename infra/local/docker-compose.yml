@@ -1,0 +1,87 @@
+# =============================================================================
+# docker-compose.yml — Reinsurance Risk Monitor (local dev stack)
+# Project : Reinsurance Risk Monitor (PT Tugure)
+# Usage   : docker compose -f infra/local/docker-compose.yml up -d
+# Docs    : see infra/local/README.md
+# =============================================================================
+
+name: rrm-local
+
+networks:
+  rrm-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+  grafana-data:
+    driver: local
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 — primary datastore (events, alerts, risk_scores, ...)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: rrm-postgres
+    restart: unless-stopped
+    profiles: ["", "core"]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rrm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rrm_dev_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-reinsurance_risk_monitor}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rrm} -d ${POSTGRES_DB:-reinsurance_risk_monitor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - rrm-net
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — cache / pub-sub / rate-limit / broker-lite
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: rrm-redis
+    restart: unless-stopped
+    profiles: ["", "core"]
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - rrm-net
+
+  # ---------------------------------------------------------------------------
+  # Grafana (optional) — dashboards for risk & event metrics.
+  # Disabled by default: run with `--profile monitoring`.
+  #   docker compose -f infra/local/docker-compose.yml --profile monitoring up -d
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rrm-grafana
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    ports:
+      - "3002:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rrm-net
