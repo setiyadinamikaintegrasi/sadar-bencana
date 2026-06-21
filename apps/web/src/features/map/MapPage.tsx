@@ -393,8 +393,14 @@ function Stat({ label, value, sub, color }: { label: string; value: number; sub?
   return (
     <div className='rounded-xl border border-slate-800 bg-slate-900 px-4 py-2'>
       <p className='text-xs uppercase tracking-wider text-slate-500'>{label}</p>
-      <p className={`text-2xl font-bold ${color}`}>{value}</p>
-      {sub && <p className='text-xs text-slate-500'>{sub}</p>}
+      <p className={`text-2xl font-bold ${color}`}>
+        <span key={value} className='stat-value inline-block'>{value}</span>
+      </p>
+      {sub && (
+        <p className='text-xs text-slate-500'>
+          <span key={sub} className='stat-value inline-block'>{sub}</span>
+        </p>
+      )}
     </div>
   )
 }
