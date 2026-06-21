@@ -22,7 +22,7 @@ export type Event = {
   created_at: string
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, init)
 
   if (!res.ok) {

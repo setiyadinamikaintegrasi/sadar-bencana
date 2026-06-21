@@ -47,6 +47,8 @@ func main() {
 	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/exposures", apihttp.Exposures(dbPool))
 	router.GET("/api/v1/exposures/match", apihttp.ExposureMatch(dbPool))
+	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
+	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
 
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
 	log.Printf("API server listening on %s", addr)

@@ -10,11 +10,15 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
+from connectors.aisstream import AISStreamConnector
 from connectors.multi_source import MultiSourceConnector
+from connectors.opensky import OpenSkyConnector
+from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
 from db.pool import close_pool, get_pool, init_pool
 from models.event import EarthquakeEvent
+from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
 from scoring.risk import score_events
@@ -28,6 +32,8 @@ app = FastAPI(title="Reinsurance Risk Monitor Worker", version="0.1.0")
 # shutdown hook can stop them.
 _scheduler: IngestScheduler | None = None
 _briefing_scheduler: BriefingScheduler | None = None
+_asset_scheduler: AssetScheduler | None = None
+_ais_connector: AISStreamConnector | None = None
 
 
 async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
@@ -125,6 +131,37 @@ async def _generate_briefing_once() -> dict[str, Any]:
     return await _briefing_cycle(pool)
 
 
+async def _asset_poll_cycle() -> dict[str, int]:
+    """Poll OpenSky (REST) + drain AIS buffer, then upsert to DB.
+
+    Called every 60s by the AssetScheduler. Degrades gracefully:
+    if OpenSky is unreachable or AIS has no data, it logs and continues.
+    """
+    pool = get_pool()
+
+    # --- Aviation (OpenSky REST) ---
+    aircraft_count = 0
+    try:
+        sky = OpenSkyConnector()
+        states = await sky.fetch_states()
+        if states:
+            aircraft_count = await upsert_aircraft(pool, states)
+    except Exception as e:
+        logger.warning("OpenSky poll failed: %s", e)
+
+    # --- Marine (AIS buffer drain) ---
+    vessel_count = 0
+    if _ais_connector and _ais_connector.is_configured:
+        try:
+            vessels = _ais_connector.drain()
+            if vessels:
+                vessel_count = await upsert_vessels(pool, vessels)
+        except Exception as e:
+            logger.warning("AIS drain failed: %s", e)
+
+    return {"vessels": vessel_count, "aircraft": aircraft_count}
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     """Bring up long-lived resources: PostgreSQL pool + schedulers.
@@ -135,12 +172,12 @@ async def startup_event() -> None:
     simply log failures each tick and recover once the pool is available.
     """
 
-    global _scheduler, _briefing_scheduler
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector
 
     try:
         await init_pool()
         logger.info("PostgreSQL connection pool initialized.")
-    except Exception as exc:  # pragma: no cover — depends on runtime DB availability
+    except Exception as exc:  # pragma: no cover
         logger.warning("Could not initialize DB pool at startup: %s", exc)
 
     # Start the background ingest loop (every 5 minutes by default).
@@ -151,8 +188,17 @@ async def startup_event() -> None:
     _briefing_scheduler = BriefingScheduler(briefing_fn=_generate_briefing_once)
     _briefing_scheduler.start()
 
+    # Start AIS WebSocket connector (background, continuous stream).
+    _ais_connector = AISStreamConnector()
+    await _ais_connector.start()
+
+    # Start asset position polling (OpenSky REST + AIS drain, every 60s).
+    _asset_scheduler = AssetScheduler(poll_fn=_asset_poll_cycle, interval_seconds=60)
+    _asset_scheduler.start()
+
     logger.info(
-        "Worker startup complete; background ingestion and auto-briefing are enabled."
+        "Worker startup complete; background ingestion, auto-briefing, "
+        "and asset tracking are enabled."
     )
 
 
@@ -160,7 +206,7 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Stop the schedulers and release the PostgreSQL connection pool."""
 
-    global _scheduler, _briefing_scheduler
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector
     if _scheduler is not None:
         await _scheduler.stop()
         _scheduler = None
@@ -168,6 +214,14 @@ async def shutdown_event() -> None:
     if _briefing_scheduler is not None:
         await _briefing_scheduler.stop()
         _briefing_scheduler = None
+
+    if _asset_scheduler is not None:
+        await _asset_scheduler.stop()
+        _asset_scheduler = None
+
+    if _ais_connector is not None:
+        await _ais_connector.stop()
+        _ais_connector = None
 
     await close_pool()
 
@@ -356,6 +410,61 @@ async def worker_generate_briefing() -> JSONResponse:
             "created_at": saved["created_at"].isoformat() if saved["created_at"] else None,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# M9: Asset tracking endpoints (marine + aviation)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/assets/marine")
+async def assets_marine() -> dict:
+    """Return latest vessel positions from the database."""
+
+    try:
+        pool = get_pool()
+    except RuntimeError as exc:
+        return {"data": [], "meta": {"count": 0}, "error": str(exc)}
+
+    try:
+        rows = await fetch_vessels(pool)
+        return {"data": rows, "meta": {"count": len(rows)}}
+    except Exception as exc:
+        return {"data": [], "meta": {"count": 0}, "error": str(exc)}
+
+
+@app.get("/api/v1/assets/aviation")
+async def assets_aviation() -> dict:
+    """Return latest aircraft positions from the database."""
+
+    try:
+        pool = get_pool()
+    except RuntimeError as exc:
+        return {"data": [], "meta": {"count": 0}, "error": str(exc)}
+
+    try:
+        rows = await fetch_aircraft(pool)
+        return {"data": rows, "meta": {"count": len(rows)}}
+    except Exception as exc:
+        return {"data": [], "meta": {"count": 0}, "error": str(exc)}
+
+
+@app.post("/api/v1/worker/assets/poll")
+async def worker_asset_poll() -> JSONResponse:
+    """Manually trigger an asset poll (OpenSky + AIS drain + DB upsert).
+
+    Useful for testing without waiting for the 60s scheduler interval.
+    """
+
+    try:
+        pool = get_pool()
+    except RuntimeError as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+
+    try:
+        result = await _asset_poll_cycle()
+        return JSONResponse(status_code=200, content=result)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 if __name__ == "__main__":

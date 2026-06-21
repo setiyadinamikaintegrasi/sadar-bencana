@@ -4,9 +4,11 @@ import BriefingPage from './features/briefing/BriefingPage'
 import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
 import ExposuresPage from './features/exposures/ExposuresPage'
+import MapPage from './features/map/MapPage'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
+  { label: 'Map', icon: '◉' },
   { label: 'Events', icon: '●' },
   { label: 'Exposures', icon: '▲' },
   { label: 'Alerts', icon: '◆' },
@@ -64,6 +66,8 @@ function App() {
         <main className="flex-1 px-8 py-8">
           {activeSection === 'Executive Overview' ? (
             <ExecutiveOverview />
+          ) : activeSection === 'Map' ? (
+            <MapPage />
           ) : activeSection === 'Events' ? (
             <EventsPage />
           ) : activeSection === 'Exposures' ? (
