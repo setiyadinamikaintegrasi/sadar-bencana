@@ -13,6 +13,7 @@ from alerts import evaluate_and_create_alerts
 from connectors.aisstream import AISStreamConnector
 from connectors.multi_source import MultiSourceConnector
 from connectors.opensky import OpenSkyConnector
+from connectors.vesselfinder import VesselFinderConnector
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
@@ -34,6 +35,7 @@ _scheduler: IngestScheduler | None = None
 _briefing_scheduler: BriefingScheduler | None = None
 _asset_scheduler: AssetScheduler | None = None
 _ais_connector: AISStreamConnector | None = None
+_vf_connector: VesselFinderConnector | None = None
 
 
 async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
@@ -132,10 +134,10 @@ async def _generate_briefing_once() -> dict[str, Any]:
 
 
 async def _asset_poll_cycle() -> dict[str, int]:
-    """Poll OpenSky (REST) + drain AIS buffer, then upsert to DB.
+    """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
     Called every 60s by the AssetScheduler. Degrades gracefully:
-    if OpenSky is unreachable or AIS has no data, it logs and continues.
+    if any source is unreachable or unconfigured, it logs and continues.
     """
     pool = get_pool()
 
@@ -149,7 +151,7 @@ async def _asset_poll_cycle() -> dict[str, int]:
     except Exception as e:
         logger.warning("OpenSky poll failed: %s", e)
 
-    # --- Marine (AIS buffer drain) ---
+    # --- Marine: AISStream (WebSocket buffer drain) ---
     vessel_count = 0
     if _ais_connector and _ais_connector.is_configured:
         try:
@@ -158,6 +160,17 @@ async def _asset_poll_cycle() -> dict[str, int]:
                 vessel_count = await upsert_vessels(pool, vessels)
         except Exception as e:
             logger.warning("AIS drain failed: %s", e)
+
+    # --- Marine: VesselFinder (REST) ---
+    if _vf_connector and _vf_connector.configured:
+        try:
+            vf_positions = await _vf_connector.fetch_positions()
+            if vf_positions:
+                converted = [p.to_vessel_position() for p in vf_positions]
+                vf_count = await upsert_vessels(pool, converted)
+                vessel_count += vf_count
+        except Exception as e:
+            logger.warning("VesselFinder poll failed: %s", e)
 
     return {"vessels": vessel_count, "aircraft": aircraft_count}
 
@@ -172,7 +185,7 @@ async def startup_event() -> None:
     simply log failures each tick and recover once the pool is available.
     """
 
-    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector, _vf_connector
 
     try:
         await init_pool()
@@ -192,7 +205,10 @@ async def startup_event() -> None:
     _ais_connector = AISStreamConnector()
     await _ais_connector.start()
 
-    # Start asset position polling (OpenSky REST + AIS drain, every 60s).
+    # Start VesselFinder REST connector (credit-based, on-demand polling).
+    _vf_connector = VesselFinderConnector()
+
+    # Start asset position polling (OpenSky REST + AIS drain + VesselFinder, every 60s).
     _asset_scheduler = AssetScheduler(poll_fn=_asset_poll_cycle, interval_seconds=60)
     _asset_scheduler.start()
 
@@ -206,7 +222,7 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Stop the schedulers and release the PostgreSQL connection pool."""
 
-    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector, _vf_connector
     if _scheduler is not None:
         await _scheduler.stop()
         _scheduler = None
@@ -222,6 +238,10 @@ async def shutdown_event() -> None:
     if _ais_connector is not None:
         await _ais_connector.stop()
         _ais_connector = None
+
+    if _vf_connector is not None:
+        await _vf_connector.close()
+        _vf_connector = None
 
     await close_pool()
 
