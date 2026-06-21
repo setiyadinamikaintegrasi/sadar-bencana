@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import { getEvents, getMeta, type Event, type Meta } from '../../lib/api/client'
+
+const INDONESIA_CENTER: [number, number] = [-2.5, 118]
+
+function magnitudeColor(mag: number): string {
+  if (mag >= 7) return '#dc2626'
+  if (mag >= 6) return '#f97316'
+  if (mag >= 5) return '#eab308'
+  return '#22c55e'
+}
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
 
@@ -226,12 +236,54 @@ export default function ExecutiveOverview() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-            Event Map
-          </p>
-          <div className="mt-4 flex h-80 items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800 text-center text-sm text-slate-400">
-            Event Map — geo layers coming soon
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
+              Event Map
+            </p>
+            {events.length > 0 && (
+              <span className="text-xs text-slate-500">{events.length} events</span>
+            )}
+          </div>
+          <div className="overflow-hidden rounded-xl border border-slate-800" style={{ height: '320px' }}>
+            {loading ? (
+              <div className="flex h-full items-center justify-center gap-3 text-sm text-slate-400">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
+                Loading map…
+              </div>
+            ) : (
+              <MapContainer
+                center={INDONESIA_CENTER}
+                zoom={4}
+                scrollWheelZoom={false}
+                zoomControl={false}
+                attributionControl={false}
+                style={{ height: '100%', width: '100%', background: '#0f172a' }}
+              >
+                <TileLayer url='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' />
+                {events.map((ev) => (
+                  <CircleMarker
+                    key={ev.event_id}
+                    center={[ev.latitude, ev.longitude]}
+                    radius={3 + ev.magnitude * 1.2}
+                    pathOptions={{
+                      color: magnitudeColor(ev.magnitude),
+                      fillColor: magnitudeColor(ev.magnitude),
+                      fillOpacity: 0.65,
+                      weight: 1,
+                    }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '160px' }}>
+                        <strong>M{ev.magnitude.toFixed(1)} — {ev.place}</strong>
+                        <br />
+                        <span>{new Date(ev.event_time).toLocaleString('id-ID')}</span>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+              </MapContainer>
+            )}
           </div>
         </div>
       </section>
