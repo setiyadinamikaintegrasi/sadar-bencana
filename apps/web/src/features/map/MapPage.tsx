@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { getEvents, type Event } from '../../lib/api/client'
 import { getVessels, getAircraft, type Vessel, type Aircraft } from '../../lib/api/assets'
@@ -149,6 +149,25 @@ function createAircraftIcon(aircraft: Aircraft): L.DivIcon {
   })
 }
 
+function MapController({ events }: { events: Event[] }) {
+  const map = useMap()
+  const hasFlown = useRef(false)
+
+  useEffect(() => {
+    if (events.length === 0 || hasFlown.current) return
+    const lats = events.map((e) => e.latitude)
+    const lngs = events.map((e) => e.longitude)
+    const bounds: L.LatLngBoundsExpression = [
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)],
+    ]
+    map.flyToBounds(bounds, { padding: [40, 40], animate: true, duration: 1.5, maxZoom: 7 })
+    hasFlown.current = true
+  }, [events.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null
+}
+
 // --- main page ------------------------------------------------------------
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
@@ -273,6 +292,7 @@ export default function MapPage() {
               scrollWheelZoom
               style={{ height: '100%', width: '100%', background: '#0f172a' }}
             >
+              <MapController events={events} />
               <TileLayer
                 attribution='&copy; OpenStreetMap contributors'
                 url='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
