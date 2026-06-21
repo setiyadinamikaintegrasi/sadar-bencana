@@ -109,7 +109,7 @@ export default function ExecutiveOverview() {
       </section>
 
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
@@ -162,41 +162,67 @@ export default function ExecutiveOverview() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
-                <thead>
-                  <tr className="text-slate-400">
-                    <th className="pb-3 pr-6 font-medium">Event</th>
-                    <th className="pb-3 pr-6 font-medium">Severity</th>
-                    <th className="pb-3 pr-6 font-medium">Source</th>
-                    <th className="pb-3 font-medium">Time</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {filteredEvents.map((row) => {
-                    const severity = severityFor(row.magnitude)
-                    return (
-                      <tr key={row.id} className="text-slate-200">
-                        <td className="py-4 pr-6">{row.place}</td>
-                        <td className="py-4 pr-6">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[severity]}`}
-                          >
-                            {severity}
-                          </span>
-                        </td>
-                        <td className="py-4 pr-6 align-top">
-                          <SourceBadge source={row.source} timestamp={row.created_at} />
-                        </td>
-                        <td className="py-4 pr-6 text-slate-400">
-                          {new Date(row.event_time).toLocaleString()}
-                        </td>
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
+                    <thead>
+                      <tr className="text-slate-400">
+                        <th className="pb-3 pr-6 font-medium">Event</th>
+                        <th className="pb-3 pr-6 font-medium">Severity</th>
+                        <th className="pb-3 pr-6 font-medium">Source</th>
+                        <th className="pb-3 font-medium">Time</th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {filteredEvents.map((row) => {
+                        const severity = severityFor(row.magnitude)
+                        return (
+                          <tr key={row.id} className="text-slate-200">
+                            <td className="py-4 pr-6">{row.place}</td>
+                            <td className="py-4 pr-6">
+                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[severity]}`}>
+                                {severity}
+                              </span>
+                            </td>
+                            <td className="py-4 pr-6 align-top">
+                              <SourceBadge source={row.source} timestamp={row.created_at} />
+                            </td>
+                            <td className="py-4 pr-6 text-slate-400">
+                              {new Date(row.event_time).toLocaleString()}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="space-y-3 md:hidden">
+                {filteredEvents.map((row) => {
+                  const severity = severityFor(row.magnitude)
+                  return (
+                    <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-800/50 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${severityClasses[severity]}`}>
+                          {severity}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-slate-100">{row.place}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-700 pt-3">
+                        <SourceBadge source={row.source} timestamp={row.created_at} />
+                        <span className="text-xs text-slate-400">
+                          {new Date(row.event_time).toLocaleString()}
+                        </span>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </>
           )}
         </div>
 

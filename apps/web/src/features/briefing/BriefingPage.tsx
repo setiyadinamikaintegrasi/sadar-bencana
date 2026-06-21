@@ -80,7 +80,7 @@ export default function BriefingPage() {
 
   return (
     <div className="space-y-8">
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
@@ -110,7 +110,7 @@ export default function BriefingPage() {
 
       {loading ? (
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="h-4 w-32 animate-pulse rounded bg-slate-800" />
             <div className="mt-4 h-8 w-72 animate-pulse rounded bg-slate-800" />
             <div className="mt-6 space-y-3">
@@ -119,7 +119,7 @@ export default function BriefingPage() {
               <div className="h-4 w-5/6 animate-pulse rounded bg-slate-800" />
             </div>
           </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="flex items-center justify-center gap-3 py-16 text-sm text-slate-400">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
               Loading briefing...
@@ -136,7 +136,7 @@ export default function BriefingPage() {
         </section>
       ) : briefing ? (
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
+          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
                 Briefing Date
@@ -154,7 +154,7 @@ export default function BriefingPage() {
             </div>
           </article>
 
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
+          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">

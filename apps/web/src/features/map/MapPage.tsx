@@ -95,7 +95,7 @@ export default function MapPage() {
             Real-time seismic events, maritime traffic, dan flight tracking.
           </p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-2 md:gap-4">
           <Stat label='Gempa' value={stats.total} sub={`${stats.critical} M≥6`} color='text-red-400' />
           <Stat label='Kapal' value={stats.vessels} color='text-cyan-400' />
           <Stat label='Pesawat' value={stats.aircraft} color='text-amber-400' />
@@ -128,7 +128,7 @@ export default function MapPage() {
 
       {/* Map */}
       <div className='overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/40'>
-        <div style={{ height: '600px', width: '100%' }}>
+        <div style={{ height: 'clamp(300px, 50vh, 600px)', width: '100%' }}>
           {loading ? (
             <div className='flex h-full items-center justify-center text-slate-400'>
               Loading map…

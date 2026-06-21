@@ -193,7 +193,7 @@ export default function AlertsPage() {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-col gap-3 border-t border-slate-800 pt-6 sm:flex-row sm:items-center">
+        <div className="mt-6 flex flex-col gap-3 border-t border-slate-800 pt-6 md:flex-row md:items-center">
           <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
             Status
           </span>
@@ -217,14 +217,14 @@ export default function AlertsPage() {
             })}
           </div>
 
-          <label className="ml-auto inline-flex items-center gap-3 text-sm text-slate-300">
+          <label className="inline-flex items-center gap-3 text-sm text-slate-300 md:ml-auto">
             <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
               Source
             </span>
             <select
               value={sourceFilter}
               onChange={(e) => setSourceFilter(e.target.value)}
-              className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400"
+              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400 md:w-auto"
             >
               <option value={ALL_SOURCES} className="bg-slate-800 text-slate-100">
                 All sources

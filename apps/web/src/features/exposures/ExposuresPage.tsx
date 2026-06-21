@@ -150,47 +150,76 @@ export default function ExposuresPage() {
           </p>
         </section>
       ) : (
-        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
-              <thead>
-                <tr className="text-slate-400">
-                  <th className="pb-3 pr-6 font-medium">Region</th>
-                  <th className="pb-3 pr-6 font-medium">Portfolio</th>
-                  <th className="pb-3 pr-6 font-medium">Total Exposure</th>
-                  <th className="pb-3 pr-6 font-medium">Multiplier</th>
-                  <th className="pb-3 font-medium">Estimated Impact</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {rules.map((rule) => (
-                  <tr key={rule.id} className="text-slate-200">
-                    <td className="py-4 pr-6">
-                      <p className="font-medium text-slate-100">{rule.region_name}</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {rule.region_keywords.join(', ')}
-                      </p>
-                    </td>
-                    <td className="py-4 pr-6 text-slate-300">{rule.portfolio_name}</td>
-                    <td className="py-4 pr-6 text-slate-300">
-                      {formatCurrency(rule.total_exposure, rule.currency)}
-                    </td>
-                    <td className="py-4 pr-6">
-                      <span
-                        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${multiplierClasses(
-                          rule.risk_multiplier,
-                        )}`}
-                      >
-                        × {rule.risk_multiplier.toFixed(2)}
-                      </span>
-                    </td>
-                    <td className="py-4 pr-6 font-semibold text-slate-100">
-                      {formatCurrency(rule.estimated_impact, rule.currency)}
-                    </td>
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
+          {/* Desktop table */}
+          <div className="hidden md:block">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
+                <thead>
+                  <tr className="text-slate-400">
+                    <th className="pb-3 pr-6 font-medium">Region</th>
+                    <th className="pb-3 pr-6 font-medium">Portfolio</th>
+                    <th className="pb-3 pr-6 font-medium">Total Exposure</th>
+                    <th className="pb-3 pr-6 font-medium">Multiplier</th>
+                    <th className="pb-3 font-medium">Estimated Impact</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {rules.map((rule) => (
+                    <tr key={rule.id} className="text-slate-200">
+                      <td className="py-4 pr-6">
+                        <p className="font-medium text-slate-100">{rule.region_name}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {rule.region_keywords.join(', ')}
+                        </p>
+                      </td>
+                      <td className="py-4 pr-6 text-slate-300">{rule.portfolio_name}</td>
+                      <td className="py-4 pr-6 text-slate-300">
+                        {formatCurrency(rule.total_exposure, rule.currency)}
+                      </td>
+                      <td className="py-4 pr-6">
+                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${multiplierClasses(rule.risk_multiplier)}`}>
+                          × {rule.risk_multiplier.toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="py-4 pr-6 font-semibold text-slate-100">
+                        {formatCurrency(rule.estimated_impact, rule.currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile card list */}
+          <div className="space-y-3 md:hidden">
+            {rules.map((rule) => (
+              <article key={rule.id} className="rounded-xl border border-slate-800 bg-slate-800/50 p-4">
+                <p className="font-medium text-slate-100">{rule.region_name}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{rule.region_keywords.join(', ')}</p>
+                <p className="mt-1 text-xs text-slate-400">{rule.portfolio_name}</p>
+                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-700 pt-3">
+                  <div>
+                    <p className="text-xs text-slate-500">Total Exposure</p>
+                    <p className="mt-0.5 text-sm font-medium text-slate-200">
+                      {formatCurrency(rule.total_exposure, rule.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Estimated Impact</p>
+                    <p className="mt-0.5 text-sm font-semibold text-slate-100">
+                      {formatCurrency(rule.estimated_impact, rule.currency)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${multiplierClasses(rule.risk_multiplier)}`}>
+                    × {rule.risk_multiplier.toFixed(2)}
+                  </span>
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       )}
