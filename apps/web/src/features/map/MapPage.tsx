@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import { getEvents, type Event } from '../../lib/api/client'
 import { getVessels, getAircraft, type Vessel, type Aircraft } from '../../lib/api/assets'
@@ -41,6 +41,7 @@ const MAP_ANIMATION_CSS = `
     50%      { transform: scale(1.3); opacity: 0.5;  }
   }
   .vessel-moving { filter: drop-shadow(0 0 4px #06b6d4); }
+  .vessel-anchor { opacity: 0.45; }
   .aircraft-airborne { animation: aircraft-pulse 4s ease-in-out infinite; }
   @keyframes aircraft-pulse {
     0%, 100% { opacity: 1;   transform: scale(1);    }
