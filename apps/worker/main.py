@@ -14,15 +14,18 @@ from connectors.aisstream import AISStreamConnector
 from connectors.hazard import HazardConnector
 from connectors.multi_source import MultiSourceConnector
 from connectors.opensky import OpenSkyConnector
+from connectors.rss_news import RSSNewsConnector
 from connectors.vesselfinder import VesselFinderConnector
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
+from db.news import fetch_news, upsert_news_items
 from db.pool import close_pool, get_pool, init_pool
 from models.event import EarthquakeEvent
 from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
+from schedulers.news import NewsScheduler
 from scoring.risk import score_events
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,7 @@ app = FastAPI(title="Reinsurance Risk Monitor Worker", version="0.1.0")
 _scheduler: IngestScheduler | None = None
 _briefing_scheduler: BriefingScheduler | None = None
 _asset_scheduler: AssetScheduler | None = None
+_news_scheduler: NewsScheduler | None = None
 _ais_connector: AISStreamConnector | None = None
 _vf_connector: VesselFinderConnector | None = None
 
@@ -184,6 +188,19 @@ async def _asset_poll_cycle() -> dict[str, int]:
     return {"vessels": vessel_count, "aircraft": aircraft_count}
 
 
+async def _news_poll_cycle() -> int:
+    """Poll configured RSS feeds and upsert them into news_items."""
+
+    pool = get_pool()
+    connector = RSSNewsConnector()
+    try:
+        items = await connector.fetch_all()
+        id_map = await upsert_news_items(pool, items)
+        return len(id_map)
+    finally:
+        await connector.close()
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     """Bring up long-lived resources: PostgreSQL pool + schedulers.
@@ -194,7 +211,7 @@ async def startup_event() -> None:
     simply log failures each tick and recover once the pool is available.
     """
 
-    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector, _vf_connector
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler, _ais_connector, _vf_connector
 
     try:
         await init_pool()
@@ -221,9 +238,13 @@ async def startup_event() -> None:
     _asset_scheduler = AssetScheduler(poll_fn=_asset_poll_cycle, interval_seconds=60)
     _asset_scheduler.start()
 
+    # Start RSS news polling (every 15 minutes).
+    _news_scheduler = NewsScheduler(poll_fn=_news_poll_cycle)
+    _news_scheduler.start()
+
     logger.info(
         "Worker startup complete; background ingestion, auto-briefing, "
-        "and asset tracking are enabled."
+        "asset tracking, and RSS news polling are enabled."
     )
 
 
@@ -231,7 +252,7 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Stop the schedulers and release the PostgreSQL connection pool."""
 
-    global _scheduler, _briefing_scheduler, _asset_scheduler, _ais_connector, _vf_connector
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler, _ais_connector, _vf_connector
     if _scheduler is not None:
         await _scheduler.stop()
         _scheduler = None
@@ -243,6 +264,10 @@ async def shutdown_event() -> None:
     if _asset_scheduler is not None:
         await _asset_scheduler.stop()
         _asset_scheduler = None
+
+    if _news_scheduler is not None:
+        await _news_scheduler.stop()
+        _news_scheduler = None
 
     if _ais_connector is not None:
         await _ais_connector.stop()
@@ -421,6 +446,26 @@ async def worker_generate_briefing() -> JSONResponse:
             "created_at": saved["created_at"].isoformat() if saved["created_at"] else None,
         },
     )
+
+
+@app.get("/api/v1/worker/news")
+async def worker_news_latest() -> dict[str, Any]:
+    """Return the most recent news items from the database."""
+
+    try:
+        pool = get_pool()
+    except RuntimeError as exc:
+        return {"data": [], "meta": {"count": 0}, "error": str(exc)}
+
+    try:
+        rows = await fetch_news(pool, limit=100)
+        for row in rows:
+            for key, value in list(row.items()):
+                if hasattr(value, "isoformat"):
+                    row[key] = value.isoformat()
+        return {"data": rows, "meta": {"count": len(rows)}}
+    except Exception as exc:
+        return {"data": [], "meta": {"count": 0}, "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
