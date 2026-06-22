@@ -28,6 +28,27 @@ const MAP_ANIMATION_CSS = `
     pointer-events: none;
   }
   .event-dot::after { display: none; }
+  .peril-marker {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .peril-marker::before,
+  .peril-marker::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+    border-radius: 9999px;
+    border: 2px solid var(--color);
+    animation: ring-expand 2s ease-out infinite;
+    pointer-events: none;
+  }
+  .peril-marker::after { display: none; }
   .pulse-critical::before { animation-duration: 1.2s; }
   .pulse-critical::after  { display: block; animation-duration: 1.2s; animation-delay: 0.6s; }
   .pulse-high::before     { animation-duration: 2s; }
@@ -172,7 +193,58 @@ function MapController({ events }: { events: Event[] }) {
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
-type LayerToggle = 'events' | 'vessels' | 'aircraft'
+type LayerToggle = 'events' | 'vessels' | 'aircraft' | 'flood' | 'volcano' | 'wildfire'
+
+function createFloodIcon(magnitude: number): L.DivIcon {
+  const pulseClass = magnitude >= 3 ? 'pulse-high' : magnitude >= 1 ? 'pulse-medium' : ''
+  return L.divIcon({
+    className: '',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    html: `<div class="peril-marker ${pulseClass}" style="--color:#3b82f6;width:24px;height:24px">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M12 2C9.5 5.2 6 9 6 13a6 6 0 1012 0c0-4-3.5-7.8-6-11z" fill="#3b82f6" fill-opacity="0.9"/>
+      </svg>
+    </div>`,
+  })
+}
+
+function createVolcanoIcon(magnitude: number): L.DivIcon {
+  const color = magnitude >= 2 ? '#ef4444' : '#6b7280'
+  const pulseClass =
+    magnitude >= 4 ? 'pulse-critical' :
+    magnitude >= 3 ? 'pulse-high' :
+    magnitude >= 2 ? 'pulse-medium' : ''
+  return L.divIcon({
+    className: '',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    html: `<div class="peril-marker ${pulseClass}" style="--color:${color};width:24px;height:24px">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M4 20L10 8h4l6 12H4z" fill="${color}" fill-opacity="0.9"/>
+        <circle cx="12" cy="6" r="2" fill="#f97316" fill-opacity="0.95"/>
+      </svg>
+    </div>`,
+  })
+}
+
+function createWildfireIcon(magnitude: number): L.DivIcon {
+  const pulseClass =
+    magnitude >= 7 ? 'pulse-critical' :
+    magnitude >= 4 ? 'pulse-high' :
+    magnitude >= 2 ? 'pulse-medium' : ''
+  const opacity = magnitude < 2 ? '0.5' : '0.95'
+  return L.divIcon({
+    className: '',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    html: `<div class="peril-marker ${pulseClass}" style="--color:#f97316;width:24px;height:24px;opacity:${opacity}">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+        <path d="M13 2c1 3-1 4 0 6 1 1 3 2 3 5a4 4 0 11-8 0c0-2 1-3 2-4 1-1 2-2 3-7z" fill="#f97316" fill-opacity="0.95"/>
+      </svg>
+    </div>`,
+  })
+}
 
 export default function MapPage() {
   const [events, setEvents] = useState<Event[]>([])
@@ -229,15 +301,23 @@ export default function MapPage() {
     return () => clearInterval(id)
   }, [loadAll])
 
+  const earthquakeEvents = useMemo(() => events.filter((e) => e.event_type === 'earthquake'), [events])
+  const floodEvents = useMemo(() => events.filter((e) => e.event_type === 'flood'), [events])
+  const volcanoEvents = useMemo(() => events.filter((e) => e.event_type === 'volcano'), [events])
+  const wildfireEvents = useMemo(() => events.filter((e) => e.event_type === 'wildfire'), [events])
+
   const stats = useMemo(() => {
-    const critical = events.filter((e) => e.magnitude >= 6).length
+    const critical = earthquakeEvents.filter((e) => e.magnitude >= 6).length
     return {
-      total: events.length,
+      total: earthquakeEvents.length,
       critical,
       vessels: vessels.length,
       aircraft: aircraft.length,
+      floods: floodEvents.length,
+      volcanoes: volcanoEvents.length,
+      wildfires: wildfireEvents.length,
     }
-  }, [events, vessels, aircraft])
+  }, [earthquakeEvents, vessels, aircraft, floodEvents, volcanoEvents, wildfireEvents])
 
   return (
     <div className="space-y-4">
@@ -246,19 +326,22 @@ export default function MapPage() {
         <div>
           <h3 className="text-xl font-semibold text-slate-100">Risk Map — Indonesia &amp; Sekitar</h3>
           <p className="mt-1 text-sm text-slate-400">
-            Real-time seismic events, maritime traffic, dan flight tracking.
+            Real-time seismic events, flood, volcano, wildfire, maritime traffic, dan flight tracking.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 md:gap-4">
           <Stat label='Gempa' value={stats.total} sub={`${stats.critical} M≥6`} color='text-red-400' />
+          <Stat label='Banjir' value={stats.floods} color='text-blue-400' />
+          <Stat label='Gunung Api' value={stats.volcanoes} color='text-rose-400' />
+          <Stat label='Kebakaran' value={stats.wildfires} color='text-orange-400' />
           <Stat label='Kapal' value={stats.vessels} color='text-cyan-400' />
           <Stat label='Pesawat' value={stats.aircraft} color='text-amber-400' />
         </div>
       </div>
 
       {/* Layer toggles */}
-      <div className="flex gap-3">
-        {(['events', 'vessels', 'aircraft'] as LayerToggle[]).map((layer) => (
+      <div className="flex flex-wrap gap-3">
+        {(['events', 'flood', 'volcano', 'wildfire', 'vessels', 'aircraft'] as LayerToggle[]).map((layer) => (
           <button
             key={layer}
             type='button'
@@ -269,7 +352,11 @@ export default function MapPage() {
                 : 'bg-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
-            {layer === 'events' ? '🔴 Gempa' : layer === 'vessels' ? '⚓ Kapal' : '✈ Pesawat'}
+            {layer === 'events' ? '🔴 Gempa' :
+              layer === 'flood' ? '🌊 Banjir' :
+              layer === 'volcano' ? '🌋 Gunung Api' :
+              layer === 'wildfire' ? '🔥 Kebakaran' :
+              layer === 'vessels' ? '⚓ Kapal' : '✈ Pesawat'}
           </button>
         ))}
       </div>
@@ -318,7 +405,7 @@ export default function MapPage() {
 
               {/* Earthquake events */}
               {activeLayers.has('events') &&
-                events.map((ev) => (
+                earthquakeEvents.map((ev) => (
                   <Marker
                     key={ev.event_id}
                     position={[ev.latitude, ev.longitude]}
@@ -333,6 +420,72 @@ export default function MapPage() {
                         <span>Waktu: {new Date(ev.event_time).toLocaleString('id-ID')}</span>
                         <br />
                         <span>Kedalaman tersedia di detail</span>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+
+              {/* Flood events */}
+              {activeLayers.has('flood') &&
+                floodEvents.map((ev) => (
+                  <Marker
+                    key={ev.event_id}
+                    position={[ev.latitude, ev.longitude]}
+                    icon={createFloodIcon(ev.magnitude)}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '180px' }}>
+                        <strong>🌊 {ev.place}</strong>
+                        <br />
+                        <span>Severity proxy: {ev.magnitude.toFixed(1)}</span>
+                        <br />
+                        <span>Sumber: {ev.source}</span>
+                        <br />
+                        <span>Waktu: {new Date(ev.event_time).toLocaleString('id-ID')}</span>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+
+              {/* Volcano events */}
+              {activeLayers.has('volcano') &&
+                volcanoEvents.map((ev) => (
+                  <Marker
+                    key={ev.event_id}
+                    position={[ev.latitude, ev.longitude]}
+                    icon={createVolcanoIcon(ev.magnitude)}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '180px' }}>
+                        <strong>🌋 {ev.place}</strong>
+                        <br />
+                        <span>Status proxy: {ev.magnitude.toFixed(1)}</span>
+                        <br />
+                        <span>Sumber: {ev.source}</span>
+                        <br />
+                        <span>Waktu: {new Date(ev.event_time).toLocaleString('id-ID')}</span>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+
+              {/* Wildfire events */}
+              {activeLayers.has('wildfire') &&
+                wildfireEvents.map((ev) => (
+                  <Marker
+                    key={ev.event_id}
+                    position={[ev.latitude, ev.longitude]}
+                    icon={createWildfireIcon(ev.magnitude)}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '180px' }}>
+                        <strong>🔥 {ev.place}</strong>
+                        <br />
+                        <span>FRP proxy: {ev.magnitude.toFixed(1)}</span>
+                        <br />
+                        <span>Sumber: {ev.source}</span>
+                        <br />
+                        <span>Waktu: {new Date(ev.event_time).toLocaleString('id-ID')}</span>
                       </div>
                     </Popup>
                   </Marker>
