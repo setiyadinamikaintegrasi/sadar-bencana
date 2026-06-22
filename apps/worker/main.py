@@ -465,6 +465,19 @@ async def worker_generate_briefing() -> JSONResponse:
     )
 
 
+@app.post("/api/v1/worker/news")
+async def worker_news_poll() -> JSONResponse:
+    """Manually trigger an RSS news poll cycle."""
+
+    try:
+        upserted = await _news_poll_cycle()
+        return JSONResponse(status_code=200, content={"upserted": upserted})
+    except RuntimeError as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 @app.get("/api/v1/worker/news")
 async def worker_news_latest() -> dict[str, Any]:
     """Return the most recent news items from the database."""
