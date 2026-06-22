@@ -88,8 +88,19 @@ def _make_item_id(source: str, url: str) -> str:
 
 
 def _infer_perils(title: str, summary: str) -> list[str]:
+    """Infer peril types from title + summary using word-boundary matching.
+
+    Uses \\b word boundaries so metaphorical forms like 'dibanjiri',
+    'membanjiri', 'terbanjiri' do NOT match the keyword 'banjir'.
+    """
     text = f"{title} {summary}".lower()
-    return [peril for peril, keywords in PERIL_KEYWORDS.items() if any(keyword in text for keyword in keywords)]
+    result: list[str] = []
+    for peril, keywords in PERIL_KEYWORDS.items():
+        for kw in keywords:
+            if re.search(rf"\b{re.escape(kw)}\b", text):
+                result.append(peril)
+                break
+    return result
 
 
 def _parse_datetime(pub_raw: str) -> datetime:

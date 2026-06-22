@@ -67,6 +67,23 @@ class RSSNewsParserTests(unittest.TestCase):
         perils = _infer_perils("Gempa picu banjir", "Karhutla tak terkait")
         self.assertEqual(perils, ["earthquake", "flood", "wildfire"])
 
+    def test_infer_perils_rejects_metaphorical_banjir(self) -> None:
+        """'dibanjiri' (metaphorical) must NOT trigger flood peril."""
+        perils = _infer_perils(
+            "HUT ke-499 Balai Kota Jakarta Dibanjiri Karangan Bunga",
+            "Warga dan tamu membanjiri Balai Kota dengan ucapan selamat.",
+        )
+        self.assertNotIn("flood", perils)
+
+    def test_infer_perils_matches_real_banjir(self) -> None:
+        perils = _infer_perils("Banjir bandang melanda Garut", "Evakuasi korban banjir.")
+        self.assertIn("flood", perils)
+
+    def test_infer_perils_rejects_prefixed_forms(self) -> None:
+        """All metaphorical prefix/suffix forms must be rejected."""
+        perils = _infer_perils("Pasar dibanjiri pedagang", "Membanjiri pasar dengan barang murah")
+        self.assertEqual(perils, [])
+
 
 class RSSNewsConnectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_all_skips_failed_feeds_and_keeps_successes(self) -> None:
