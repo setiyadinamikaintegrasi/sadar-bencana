@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import { getEvents, type Event } from '../../lib/api/client'
+import { getEvents, getNews, type Event, type NewsItem } from '../../lib/api/client'
 import { getVessels, getAircraft, type Vessel, type Aircraft } from '../../lib/api/assets'
 
 // --- helpers --------------------------------------------------------------
@@ -250,6 +250,8 @@ export default function MapPage() {
   const [events, setEvents] = useState<Event[]>([])
   const [vessels, setVessels] = useState<Vessel[]>([])
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
+  const [news, setNews] = useState<NewsItem[]>([])
+  const [showNews, setShowNews] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeLayers, setActiveLayers] = useState<Set<LayerToggle>>(new Set(['events']))
@@ -279,14 +281,16 @@ export default function MapPage() {
   const loadAll = useCallback(async () => {
     setRefreshKey((k) => k + 1)
     try {
-      const [ev, vs, ac] = await Promise.allSettled([
+      const [ev, vs, ac, nw] = await Promise.allSettled([
         getEvents(),
         getVessels(),
         getAircraft(),
+        getNews(),
       ])
       if (ev.status === 'fulfilled') setEvents(ev.value)
       if (vs.status === 'fulfilled') setVessels(vs.value)
       if (ac.status === 'fulfilled') setAircraft(ac.value)
+      if (nw.status === 'fulfilled') setNews(nw.value)
       if (ev.status === 'rejected') setError('Gagal memuat data gempa')
     } catch {
       setError('Gagal memuat data')
@@ -305,6 +309,17 @@ export default function MapPage() {
   const floodEvents = useMemo(() => events.filter((e) => e.event_type === 'flood'), [events])
   const volcanoEvents = useMemo(() => events.filter((e) => e.event_type === 'volcano'), [events])
   const wildfireEvents = useMemo(() => events.filter((e) => e.event_type === 'wildfire'), [events])
+  const filteredNews = useMemo(() => {
+    const activePerils = new Set<string>()
+    if (activeLayers.has('events')) activePerils.add('earthquake')
+    if (activeLayers.has('flood')) activePerils.add('flood')
+    if (activeLayers.has('volcano')) activePerils.add('volcano')
+    if (activeLayers.has('wildfire')) activePerils.add('wildfire')
+    if (activePerils.size === 0) return []
+
+    const filtered = news.filter((n) => n.perils.some((p) => activePerils.has(p)))
+    return filtered.slice(0, 30)
+  }, [news, activeLayers])
 
   const stats = useMemo(() => {
     const critical = earthquakeEvents.filter((e) => e.magnitude >= 6).length
@@ -359,6 +374,17 @@ export default function MapPage() {
               layer === 'vessels' ? '⚓ Kapal' : '✈ Pesawat'}
           </button>
         ))}
+        <button
+          type='button'
+          onClick={() => setShowNews((v) => !v)}
+          className={`ml-auto rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            showNews
+              ? 'bg-slate-700 text-slate-100 ring-1 ring-inset ring-slate-500'
+              : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          {`📰 Berita${news.length > 0 ? ` (${news.length})` : ''}`}
+        </button>
       </div>
 
       {error && (
@@ -369,39 +395,40 @@ export default function MapPage() {
 
       {/* Map */}
       <div className='overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/40'>
-        <div style={{ height: 'clamp(300px, 50vh, 600px)', width: '100%', position: 'relative' }}>
-          {/* Countdown bar */}
-          <div
-            key={refreshKey}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '2px',
-              background: '#4f46e5',
-              transformOrigin: 'left',
-              animation: 'countdown 60s linear forwards',
-              zIndex: 1000,
-              pointerEvents: 'none',
-            }}
-          />
-          {loading ? (
-            <div className='flex h-full items-center justify-center text-slate-400'>
-              Loading map…
-            </div>
-          ) : (
-            <MapContainer
-              center={INDONESIA_CENTER}
-              zoom={5}
-              scrollWheelZoom
-              style={{ height: '100%', width: '100%', background: '#0f172a' }}
-            >
-              <MapController events={events} />
-              <TileLayer
-                attribution='&copy; OpenStreetMap contributors'
-                url='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-              />
+        <div style={{ display: 'flex', height: 'clamp(300px, 50vh, 600px)', position: 'relative' }}>
+          <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
+            {/* Countdown bar */}
+            <div
+              key={refreshKey}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: '2px',
+                background: '#4f46e5',
+                transformOrigin: 'left',
+                animation: 'countdown 60s linear forwards',
+                zIndex: 1000,
+                pointerEvents: 'none',
+              }}
+            />
+            {loading ? (
+              <div className='flex h-full items-center justify-center text-slate-400'>
+                Loading map…
+              </div>
+            ) : (
+              <MapContainer
+                center={INDONESIA_CENTER}
+                zoom={5}
+                scrollWheelZoom
+                style={{ height: '100%', width: '100%', background: '#0f172a' }}
+              >
+                <MapController events={events} />
+                <TileLayer
+                  attribution='&copy; OpenStreetMap contributors'
+                  url='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+                />
 
               {/* Earthquake events */}
               {activeLayers.has('events') &&
@@ -513,28 +540,89 @@ export default function MapPage() {
                   </Marker>
                 ))}
 
-              {/* Aircraft */}
-              {activeLayers.has('aircraft') &&
-                aircraft.map((a) => (
-                  <Marker
-                    key={`a-${a.icao24}`}
-                    position={[a.latitude, a.longitude]}
-                    icon={createAircraftIcon(a)}
-                  >
-                    <Popup>
-                      <div>
-                        <strong>✈ {a.callsign?.trim() || a.icao24}</strong>
-                        <br />
-                        <span>{a.origin_country}</span>
-                        <br />
-                        <span>Alt: {a.altitude != null ? `${a.altitude.toFixed(0)}m` : 'N/A'}</span>
-                        <br />
-                        <span>Vel: {a.velocity != null ? `${a.velocity.toFixed(0)} m/s` : 'N/A'}</span>
-                      </div>
-                    </Popup>
-                  </Marker>
-                ))}
-            </MapContainer>
+                {/* Aircraft */}
+                {activeLayers.has('aircraft') &&
+                  aircraft.map((a) => (
+                    <Marker
+                      key={`a-${a.icao24}`}
+                      position={[a.latitude, a.longitude]}
+                      icon={createAircraftIcon(a)}
+                    >
+                      <Popup>
+                        <div>
+                          <strong>✈ {a.callsign?.trim() || a.icao24}</strong>
+                          <br />
+                          <span>{a.origin_country}</span>
+                          <br />
+                          <span>Alt: {a.altitude != null ? `${a.altitude.toFixed(0)}m` : 'N/A'}</span>
+                          <br />
+                          <span>Vel: {a.velocity != null ? `${a.velocity.toFixed(0)} m/s` : 'N/A'}</span>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+              </MapContainer>
+            )}
+          </div>
+
+          {showNews && (
+            <aside className='w-[360px] shrink-0 border-l border-slate-800 bg-slate-950/80'>
+              <div className='flex items-center justify-between border-b border-slate-800 px-4 py-3'>
+                <div>
+                  <h3 className='text-sm font-semibold text-slate-100'>Berita Terkait Hazard</h3>
+                  <p className='text-xs text-slate-400'>Filter mengikuti layer hazard yang aktif</p>
+                </div>
+                <span className='rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300'>
+                  {filteredNews.length}
+                </span>
+              </div>
+
+              <div className='max-h-full overflow-y-auto p-3'>
+                {filteredNews.length === 0 ? (
+                  <div className='rounded-xl border border-slate-800 bg-slate-900 px-4 py-6 text-sm text-slate-400'>
+                    Tidak ada berita yang cocok dengan layer hazard aktif.
+                  </div>
+                ) : (
+                  <div className='space-y-3'>
+                    {filteredNews.map((item) => (
+                      <a
+                        key={item.id}
+                        href={item.url}
+                        target='_blank'
+                        rel='noreferrer'
+                        className='block rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 transition hover:border-slate-700 hover:bg-slate-900/80'
+                      >
+                        <div className='mb-2 flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500'>
+                          <span>{item.source}</span>
+                          <span>•</span>
+                          <span>
+                            {new Date(item.published_at ?? item.created_at).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <h4 className='line-clamp-2 text-sm font-semibold text-slate-100'>
+                          {item.title}
+                        </h4>
+                        <p className='mt-2 line-clamp-3 text-xs leading-5 text-slate-400'>
+                          {item.summary}
+                        </p>
+                        {item.perils.length > 0 && (
+                          <div className='mt-3 flex flex-wrap gap-2'>
+                            {item.perils.map((peril) => (
+                              <span
+                                key={`${item.id}-${peril}`}
+                                className='rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-300'
+                              >
+                                {peril}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </aside>
           )}
         </div>
       </div>

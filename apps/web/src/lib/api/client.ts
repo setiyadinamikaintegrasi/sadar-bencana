@@ -41,6 +41,28 @@ export async function getEvents(): Promise<Event[]> {
   return res.data
 }
 
+export type NewsItem = {
+  id: string
+  item_id: string
+  source: string
+  title: string
+  summary: string
+  url: string
+  published_at: string | null
+  perils: string[]
+  created_at: string
+}
+
+export type NewsResponse = {
+  data: NewsItem[]
+  meta: { count: number; limit: number }
+}
+
+export async function getNews(): Promise<NewsItem[]> {
+  const res = await request<NewsResponse>('/news')
+  return res.data
+}
+
 export type RiskScore = {
   event_id: string
   place: string
