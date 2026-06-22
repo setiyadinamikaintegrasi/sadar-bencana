@@ -427,18 +427,14 @@ async def worker_ingest() -> JSONResponse:
     try:
         result = await _ingest_cycle(pool)
     except Exception as exc:
-        message = str(exc)
-        status_code = 500
-        if "All sources failed" in message or "All hazard sources failed" in message:
-            status_code = 502
         return JSONResponse(
-            status_code=status_code,
+            status_code=500,
             content={
                 "fetched": 0,
                 "upserted": 0,
                 "scored": 0,
                 "alerts_created": 0,
-                "error": message,
+                "error": str(exc),
             },
         )
 
