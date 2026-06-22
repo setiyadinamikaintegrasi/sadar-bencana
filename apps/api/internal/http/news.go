@@ -39,7 +39,7 @@ SELECT id,
        place_name,
        created_at
 FROM news_items
-ORDER BY published_at DESC NULLS LAST
+ORDER BY (perils != '{}') DESC, published_at DESC NULLS LAST
 LIMIT 100
 `
 
