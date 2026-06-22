@@ -266,7 +266,8 @@ function createNewsIcon(item: NewsItem): L.DivIcon {
   const emoji = item.perils[0] === 'earthquake' ? '🔴'
     : item.perils[0] === 'flood' ? '🌊'
     : item.perils[0] === 'volcano' ? '🌋'
-    : item.perils[0] === 'wildfire' ? '🔥' : '📰'
+    : item.perils[0] === 'wildfire' ? '🔥'
+    : item.perils[0] === 'fire' ? '🔥' : '📰'
   return L.divIcon({
     className: '',
     iconSize: [20, 20],
@@ -347,6 +348,7 @@ export default function MapPage() {
     if (activeLayers.has('flood')) activePerils.add('flood')
     if (activeLayers.has('volcano')) activePerils.add('volcano')
     if (activeLayers.has('wildfire')) activePerils.add('wildfire')
+    if (activeLayers.has('wildfire') || activeLayers.has('news_locations')) activePerils.add('fire')
     if (activePerils.size === 0) return []
 
     const filtered = news.filter((n) => n.perils.some((p) => activePerils.has(p)))
