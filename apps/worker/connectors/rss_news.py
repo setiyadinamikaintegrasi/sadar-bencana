@@ -23,6 +23,7 @@ PERIL_KEYWORDS: dict[str, list[str]] = {
     "flood": ["banjir", "banjir bandang", "banjir rob", "flood", "genangan", "luapan"],
     "volcano": ["gunung api", "erupsi", "letusan", "volcanic", "eruption", "magma", "lava"],
     "wildfire": ["kebakaran hutan", "karhutla", "kebakaran lahan", "hotspot", "wildfire", "forest fire"],
+    "fire": ["kebakaran", "damkar", "pemadam kebakaran"],
 }
 
 RSS_SOURCES: list[dict[str, str]] = [

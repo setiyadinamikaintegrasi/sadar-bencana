@@ -84,6 +84,29 @@ class RSSNewsParserTests(unittest.TestCase):
         perils = _infer_perils("Pasar dibanjiri pedagang", "Membanjiri pasar dengan barang murah")
         self.assertEqual(perils, [])
 
+    def test_infer_perils_tags_factory_fire_as_fire(self) -> None:
+        """Kebakaran pabrik/gudang/ruko harus ditag sebagai 'fire'."""
+        perils = _infer_perils(
+            "11 Jam Kebakaran Pabrik Sandal di Tangerang Belum Padam",
+            "19 unit damkar diterjunkan untuk memadamkan api di pabrik karet.",
+        )
+        self.assertIn("fire", perils)
+
+    def test_infer_perils_tags_damkar_as_fire(self) -> None:
+        """Kata 'damkar' saja cukup untuk tag fire."""
+        perils = _infer_perils("Damkar kerahkan 10 unit", "")
+        self.assertIn("fire", perils)
+
+    def test_infer_perils_tags_pemadam_kebakaran_as_fire(self) -> None:
+        perils = _infer_perils("Dinas Pemadam Kebakaran DKI terjunkan personel", "")
+        self.assertIn("fire", perils)
+
+    def test_infer_perils_karhutla_not_tagged_as_fire(self) -> None:
+        """Karhutla dapat wildfire, bukan fire — agar tidak double-count."""
+        perils = _infer_perils("Karhutla meluas di Kalimantan", "Hotspot baru terdeteksi.")
+        self.assertIn("wildfire", perils)
+        self.assertNotIn("fire", perils)
+
 
 class RSSNewsConnectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_all_skips_failed_feeds_and_keeps_successes(self) -> None:
