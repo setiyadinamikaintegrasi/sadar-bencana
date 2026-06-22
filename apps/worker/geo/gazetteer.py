@@ -1,0 +1,137 @@
+"""Indonesian gazetteer — fast local location matching from news text."""
+
+from __future__ import annotations
+
+# GAZETTEER: {canonical_name: (lat, lon)}
+GAZETTEER: dict[str, tuple[float, float]] = {
+    # Provinces
+    "aceh": (4.695, 96.749),
+    "sumatera utara": (2.115, 99.545),
+    "sumut": (2.115, 99.545),
+    "sumatera barat": (-0.739, 100.345),
+    "sumbar": (-0.739, 100.345),
+    "riau": (0.293, 101.706),
+    "kepulauan riau": (1.100, 104.000),
+    "kepri": (1.100, 104.000),
+    "jambi": (-1.610, 103.613),
+    "sumatera selatan": (-3.319, 104.247),
+    "sumsel": (-3.319, 104.247),
+    "bengkulu": (-3.577, 102.346),
+    "lampung": (-5.011, 105.252),
+    "bangka belitung": (-2.668, 107.250),
+    "babel": (-2.668, 107.250),
+    "kepulauan bangka belitung": (-2.668, 107.250),
+    "dki jakarta": (-6.175, 106.828),
+    "jakarta": (-6.175, 106.828),
+    "banten": (-6.405, 106.064),
+    "jawa barat": (-6.914, 107.609),
+    "jabar": (-6.914, 107.609),
+    "jawa tengah": (-7.151, 110.140),
+    "jateng": (-7.151, 110.140),
+    "di yogyakarta": (-7.875, 110.426),
+    "yogyakarta": (-7.875, 110.426),
+    "jogja": (-7.875, 110.426),
+    "jawa timur": (-7.536, 112.238),
+    "jatim": (-7.536, 112.238),
+    "bali": (-8.340, 115.092),
+    "nusa tenggara barat": (-8.652, 117.358),
+    "ntb": (-8.652, 117.358),
+    "nusa tenggara timur": (-8.657, 121.079),
+    "ntt": (-8.657, 121.079),
+    "kalimantan barat": (-0.278, 111.475),
+    "kalbar": (-0.278, 111.475),
+    "kalimantan tengah": (-1.681, 113.382),
+    "kalteng": (-1.681, 113.382),
+    "kalimantan selatan": (-3.092, 115.284),
+    "kalsel": (-3.092, 115.284),
+    "kalimantan timur": (0.539, 116.420),
+    "kaltim": (0.539, 116.420),
+    "kalimantan utara": (3.073, 116.041),
+    "kaltara": (3.073, 116.041),
+    "sulawesi utara": (1.454, 124.839),
+    "sulut": (1.454, 124.839),
+    "gorontalo": (0.543, 123.058),
+    "sulawesi tengah": (-1.430, 121.445),
+    "sulteng": (-1.430, 121.445),
+    "sulawesi barat": (-2.840, 119.232),
+    "sulbar": (-2.840, 119.232),
+    "sulawesi selatan": (-3.668, 119.974),
+    "sulsel": (-3.668, 119.974),
+    "sulawesi tenggara": (-4.145, 122.174),
+    "sultra": (-4.145, 122.174),
+    "maluku utara": (1.571, 127.808),
+    "malut": (1.571, 127.808),
+    "maluku": (-3.237, 130.145),
+    "papua barat": (-1.336, 133.174),
+    "papua": (-4.270, 138.080),
+    # Major cities
+    "banda aceh": (5.549, 95.323),
+    "medan": (3.595, 98.672),
+    "padang": (-0.950, 100.354),
+    "pekanbaru": (0.507, 101.447),
+    "batam": (1.045, 104.030),
+    "palembang": (-2.976, 104.775),
+    "bandar lampung": (-5.453, 105.262),
+    "serang": (-6.120, 106.150),
+    "bandung": (-6.921, 107.607),
+    "semarang": (-6.967, 110.418),
+    "surabaya": (-7.257, 112.752),
+    "malang": (-7.983, 112.621),
+    "denpasar": (-8.670, 115.212),
+    "mataram": (-8.584, 116.118),
+    "kupang": (-10.175, 123.608),
+    "pontianak": (-0.020, 109.343),
+    "palangkaraya": (-2.208, 113.921),
+    "banjarmasin": (-3.321, 114.590),
+    "samarinda": (-0.502, 117.154),
+    "balikpapan": (-1.267, 116.829),
+    "tarakan": (3.297, 117.636),
+    "manado": (1.487, 124.845),
+    "palu": (-0.899, 119.878),
+    "donggala": (-0.769, 119.745),
+    "sigi": (-1.367, 119.849),
+    "poso": (-1.394, 120.754),
+    "mamuju": (-2.675, 118.888),
+    "makassar": (-5.147, 119.432),
+    "kendari": (-3.945, 122.499),
+    "ambon": (-3.695, 128.183),
+    "ternate": (0.794, 127.381),
+    "jayapura": (-2.534, 140.717),
+    "manokwari": (-0.861, 134.062),
+    "sorong": (-0.876, 131.255),
+    "timika": (-4.529, 136.887),
+    # Active volcanoes
+    "merapi": (-7.541, 110.446),
+    "semeru": (-8.108, 112.922),
+    "agung": (-8.343, 115.508),
+    "sinabung": (3.170, 98.392),
+    "krakatau": (-6.102, 105.423),
+    "bromo": (-7.942, 112.953),
+    "rinjani": (-8.412, 116.467),
+    "tambora": (-8.246, 117.994),
+    "kelud": (-7.930, 112.308),
+    "raung": (-8.125, 114.042),
+    "soputan": (1.112, 124.726),
+    "lokon": (1.358, 124.793),
+    "ibu": (1.488, 127.630),
+    "dukono": (1.693, 127.894),
+    "gamalama": (0.800, 127.325),
+}
+
+_SORTED_KEYS = sorted(GAZETTEER.keys(), key=len, reverse=True)
+
+
+def gazetteer_match(text: str) -> tuple[str, float, float] | None:
+    """Return (place_name, lat, lon) for the longest match found in *text*, or None."""
+    t = text.lower()
+    for key in _SORTED_KEYS:
+        if key in t:
+            lat, lon = GAZETTEER[key]
+            return (key.title(), lat, lon)
+    return None
+
+
+__all__ = [
+    "GAZETTEER",
+    "gazetteer_match",
+]

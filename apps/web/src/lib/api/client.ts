@@ -50,6 +50,9 @@ export type NewsItem = {
   url: string
   published_at: string | null
   perils: string[]
+  lat: number | null
+  lon: number | null
+  place_name: string | null
   created_at: string
 }
 

@@ -44,6 +44,10 @@ class NewsItem(BaseModel):
     url: str = ""
     published_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     perils: list[str] = Field(default_factory=list)
+    # Geolocation — set during the news poll cycle before upsert
+    lat: float | None = Field(default=None)
+    lon: float | None = Field(default=None)
+    place_name: str | None = Field(default=None)
 
 
 def _local_name(tag: str) -> str:

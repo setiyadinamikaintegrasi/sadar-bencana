@@ -21,7 +21,9 @@ from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
 from db.news import fetch_news, upsert_news_items
 from db.pool import close_pool, get_pool, init_pool
+from geo.locator import extract_location
 from models.event import EarthquakeEvent
+from news_alerts import process_news_alerts
 from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
@@ -189,13 +191,28 @@ async def _asset_poll_cycle() -> dict[str, int]:
 
 
 async def _news_poll_cycle() -> int:
-    """Poll configured RSS feeds and upsert them into news_items."""
+    """Poll configured RSS feeds, geolocate, upsert, and create alerts."""
 
     pool = get_pool()
     connector = RSSNewsConnector()
     try:
         items = await connector.fetch_all()
+
+        # Geolocate each item before upsert
+        for item in items:
+            result = await extract_location(item.title, item.summary, pool)
+            if result:
+                item.lat = result[1]
+                item.lon = result[2]
+                setattr(item, "place_name", result[0])
+
         id_map = await upsert_news_items(pool, items)
+
+        for item in items:
+            db_uuid = id_map.get(item.item_id)
+            if getattr(item, "lat", None) is not None and db_uuid:
+                await process_news_alerts(pool, item, db_uuid)
+
         return len(id_map)
     finally:
         await connector.close()

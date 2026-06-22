@@ -77,6 +77,11 @@ const MAP_ANIMATION_CSS = `
     from { transform: scaleX(1); }
     to   { transform: scaleX(0); }
   }
+  @keyframes corroborate-ring {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 8px rgba(255,255,255,0.4); }
+    50%       { box-shadow: 0 0 0 3px rgba(255,255,255,0.6), 0 0 14px rgba(255,255,255,0.2); }
+  }
+  .news-corroborated { animation: corroborate-ring 2s ease-in-out infinite; }
   .leaflet-popup-content-wrapper {
     background: #1e293b !important;
     color: #cbd5e1 !important;
@@ -95,7 +100,7 @@ function magnitudeColor(mag: number): string {
   return '#22c55e' // green-500
 }
 
-function createEventIcon(magnitude: number): L.DivIcon {
+function createEventIcon(magnitude: number, corroborated = false): L.DivIcon {
   const color = magnitudeColor(magnitude)
   const size = Math.round(6 + magnitude * 1.8)
   const pulseClass =
@@ -103,12 +108,13 @@ function createEventIcon(magnitude: number): L.DivIcon {
     magnitude >= 6 ? 'pulse-high' :
     magnitude >= 5 ? 'pulse-medium' : ''
   const spread = size * 5
+  const corrClass = corroborated ? ' news-corroborated' : ''
   return L.divIcon({
     className: '',
     iconSize: [spread, spread],
     iconAnchor: [spread / 2, spread / 2],
     html: `<div
-      class="event-dot ${pulseClass}"
+      class="event-dot ${pulseClass}${corrClass}"
       style="--color:${color};width:${size}px;height:${size}px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)"
     ></div>`,
   })
@@ -193,7 +199,7 @@ function MapController({ events }: { events: Event[] }) {
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
-type LayerToggle = 'events' | 'vessels' | 'aircraft' | 'flood' | 'volcano' | 'wildfire'
+type LayerToggle = 'events' | 'vessels' | 'aircraft' | 'flood' | 'volcano' | 'wildfire' | 'news_locations'
 
 function createFloodIcon(magnitude: number): L.DivIcon {
   const pulseClass = magnitude >= 3 ? 'pulse-high' : magnitude >= 1 ? 'pulse-medium' : ''
@@ -243,6 +249,32 @@ function createWildfireIcon(magnitude: number): L.DivIcon {
         <path d="M13 2c1 3-1 4 0 6 1 1 3 2 3 5a4 4 0 11-8 0c0-2 1-3 2-4 1-1 2-2 3-7z" fill="#f97316" fill-opacity="0.95"/>
       </svg>
     </div>`,
+  })
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+    * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+function createNewsIcon(item: NewsItem): L.DivIcon {
+  const emoji = item.perils[0] === 'earthquake' ? '🔴'
+    : item.perils[0] === 'flood' ? '🌊'
+    : item.perils[0] === 'volcano' ? '🌋'
+    : item.perils[0] === 'wildfire' ? '🔥' : '📰'
+  return L.divIcon({
+    className: '',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+    html: `<div style="width:20px;height:20px;border-radius:4px;background:#1e293b;
+                       border:1px solid #475569;display:flex;align-items:center;
+                       justify-content:center;font-size:11px;
+                       box-shadow:0 1px 4px rgba(0,0,0,0.6)">${emoji}</div>`,
   })
 }
 
@@ -321,6 +353,24 @@ export default function MapPage() {
     return filtered.slice(0, 30)
   }, [news, activeLayers])
 
+  const geolocatedNews = useMemo(
+    () => news.filter((n) => n.lat != null && n.lon != null),
+    [news]
+  )
+
+  const correlatedEventIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const n of geolocatedNews) {
+      for (const e of events) {
+        if (n.perils.includes(e.event_type) &&
+            haversineKm(n.lat!, n.lon!, e.latitude, e.longitude) < 50) {
+          ids.add(e.event_id)
+        }
+      }
+    }
+    return ids
+  }, [geolocatedNews, events])
+
   const stats = useMemo(() => {
     const critical = earthquakeEvents.filter((e) => e.magnitude >= 6).length
     return {
@@ -356,7 +406,7 @@ export default function MapPage() {
 
       {/* Layer toggles */}
       <div className="flex flex-wrap gap-3">
-        {(['events', 'flood', 'volcano', 'wildfire', 'vessels', 'aircraft'] as LayerToggle[]).map((layer) => (
+        {(['events', 'flood', 'volcano', 'wildfire', 'vessels', 'aircraft', 'news_locations'] as LayerToggle[]).map((layer) => (
           <button
             key={layer}
             type='button'
@@ -371,7 +421,9 @@ export default function MapPage() {
               layer === 'flood' ? '🌊 Banjir' :
               layer === 'volcano' ? '🌋 Gunung Api' :
               layer === 'wildfire' ? '🔥 Kebakaran' :
-              layer === 'vessels' ? '⚓ Kapal' : '✈ Pesawat'}
+              layer === 'vessels' ? '⚓ Kapal' : 
+              layer === 'news_locations' ? '📍 Berita Lokasi' : 
+              '✈ Pesawat'}
           </button>
         ))}
         <button
@@ -436,7 +488,7 @@ export default function MapPage() {
                   <Marker
                     key={ev.event_id}
                     position={[ev.latitude, ev.longitude]}
-                    icon={createEventIcon(ev.magnitude)}
+                    icon={createEventIcon(ev.magnitude, correlatedEventIds.has(ev.event_id))}
                   >
                     <Popup>
                       <div style={{ minWidth: '180px' }}>
@@ -557,6 +609,34 @@ export default function MapPage() {
                           <span>Alt: {a.altitude != null ? `${a.altitude.toFixed(0)}m` : 'N/A'}</span>
                           <br />
                           <span>Vel: {a.velocity != null ? `${a.velocity.toFixed(0)} m/s` : 'N/A'}</span>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+                {/* News markers */}
+                {activeLayers.has('news_locations') &&
+                  geolocatedNews.map((n) => (
+                    <Marker
+                      key={`news-${n.id}`}
+                      position={[n.lat!, n.lon!]}
+                      icon={createNewsIcon(n)}
+                    >
+                      <Popup>
+                        <div style={{ minWidth: '200px' }}>
+                          <div style={{ marginBottom: '6px' }}>
+                            <strong style={{ color: '#818cf8' }}>{n.source.toUpperCase()}</strong>
+                            {n.perils.map(p => (
+                              <span key={p} style={{ marginLeft: '4px' }}>
+                                {p === 'earthquake' ? '🔴' : p === 'flood' ? '🌊' : p === 'volcano' ? '🌋' : '🔥'}
+                              </span>
+                            ))}
+                          </div>
+                          <p style={{ fontSize: '13px', margin: '0 0 6px' }}>{n.title}</p>
+                          <p style={{ fontSize: '11px', color: '#94a3b8', margin: '0 0 4px' }}>
+                            {n.place_name} · {n.published_at ? new Date(n.published_at).toLocaleString('id-ID') : ''}
+                          </p>
+                          <a href={n.url} target="_blank" rel="noopener noreferrer"
+                             style={{ fontSize: '11px', color: '#6366f1' }}>Baca selengkapnya →</a>
                         </div>
                       </Popup>
                     </Marker>

@@ -19,6 +19,9 @@ type NewsItem struct {
 	URL         string     `json:"url"`
 	PublishedAt *time.Time `json:"published_at"`
 	Perils      []string   `json:"perils"`
+	Lat         *float64   `json:"lat"`
+	Lon         *float64   `json:"lon"`
+	PlaceName   *string    `json:"place_name"`
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
@@ -31,9 +34,12 @@ SELECT id,
        url,
        published_at,
        COALESCE(array_to_json(perils), '[]'::json),
+       lat,
+       lon,
+       place_name,
        created_at
 FROM news_items
-ORDER BY published_at DESC NULLS LAST, created_at DESC
+ORDER BY published_at DESC NULLS LAST
 LIMIT 100
 `
 
@@ -103,6 +109,9 @@ func scanNewsItem(scanner interface {
 		&item.URL,
 		&item.PublishedAt,
 		&perilsJSON,
+		&item.Lat,
+		&item.Lon,
+		&item.PlaceName,
 		&item.CreatedAt,
 	); err != nil {
 		return NewsItem{}, err
