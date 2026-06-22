@@ -140,7 +140,9 @@ export default function AlertsPage() {
 
   const sourceOptions = useMemo(() => {
     const seen = new Set<string>()
-    filteredAlerts.forEach((a) => seen.add(a.source))
+    filteredAlerts.forEach((a) => {
+      if (a.source) seen.add(a.source)
+    })
     return Array.from(seen).sort()
   }, [filteredAlerts])
 
@@ -289,7 +291,7 @@ export default function AlertsPage() {
                     <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 ring-1 ring-inset ring-slate-700">
                       {alert.alert_type}
                     </span>
-                    <SourceBadge source={alert.source} timestamp={alert.created_at} />
+                    <SourceBadge source={alert.source ?? alert.alert_type} timestamp={alert.created_at} />
                     {alert.acknowledged ? (
                       <span className="inline-flex rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
                         Acknowledged
@@ -303,10 +305,10 @@ export default function AlertsPage() {
 
                   <p className="mt-3 break-words text-sm text-slate-200">{alert.message}</p>
                   <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                    <span>M {alert.magnitude.toFixed(1)}</span>
-                    <span>{alert.place}</span>
-                    <span>{new Date(alert.event_time).toLocaleString()}</span>
-                    <span>ID {alert.event_id}</span>
+                    {alert.magnitude != null ? <span>M {alert.magnitude.toFixed(1)}</span> : null}
+                    {alert.place ? <span>{alert.place}</span> : null}
+                    {alert.event_time ? <span>{new Date(alert.event_time).toLocaleString()}</span> : null}
+                    {alert.event_id ? <span>ID {alert.event_id}</span> : null}
                   </div>
                 </div>
 

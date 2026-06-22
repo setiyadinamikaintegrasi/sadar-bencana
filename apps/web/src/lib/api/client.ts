@@ -146,11 +146,11 @@ export type AlertSeverity = 'Critical' | 'High' | 'Moderate'
 
 export type Alert = {
   id: string
-  event_id: string
-  source: string
-  place: string
-  magnitude: number
-  event_time: string
+  event_id: string | null
+  source: string | null
+  place: string | null
+  magnitude: number | null
+  event_time: string | null
   alert_type: string
   severity: AlertSeverity
   message: string
