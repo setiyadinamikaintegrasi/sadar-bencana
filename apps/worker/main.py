@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
 from connectors.aisstream import AISStreamConnector
+from connectors.hazard import HazardConnector
 from connectors.multi_source import MultiSourceConnector
 from connectors.opensky import OpenSkyConnector
 from connectors.vesselfinder import VesselFinderConnector
@@ -48,17 +49,25 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     """
 
     connector = MultiSourceConnector()
+    hazard_connector = HazardConnector()
     try:
         events: list[EarthquakeEvent] = await connector.fetch_recent()
     finally:
         await connector.close()
 
-    upserted = await upsert_events(pool, events)
-    scored = await score_events(pool, events)
-    alerts = await evaluate_and_create_alerts(pool, events)
+    try:
+        hazard_events: list[EarthquakeEvent] = await hazard_connector.fetch_recent()
+    finally:
+        await hazard_connector.close()
+
+    all_events = events + hazard_events
+
+    upserted = await upsert_events(pool, all_events)
+    scored = await score_events(pool, all_events)
+    alerts = await evaluate_and_create_alerts(pool, all_events)
 
     return {
-        "fetched": len(events),
+        "fetched": len(all_events),
         "upserted": upserted,
         "scored": scored,
         "alerts_created": len(alerts),
@@ -262,33 +271,36 @@ async def worker_status() -> dict[str, str]:
 
 @app.get("/api/v1/worker/events")
 async def worker_events() -> dict[str, int | list[dict[str, object]] | str]:
-    """Fetch recent events from BMKG+USGS and return a small response payload."""
+    """Fetch recent earthquake + hazard events and return a small response payload."""
 
     connector = MultiSourceConnector()
+    hazard_connector = HazardConnector()
     try:
         events: list[EarthquakeEvent] = await connector.fetch_recent()
+        hazard_events: list[EarthquakeEvent] = await hazard_connector.fetch_recent()
+        all_events = events + hazard_events
         return {
-            "count": len(events),
-            "events": [event.model_dump() for event in events[:20]],
+            "count": len(all_events),
+            "events": [event.model_dump() for event in all_events[:20]],
         }
     except Exception as exc:
         return {"count": 0, "events": [], "error": str(exc)}
     finally:
         await connector.close()
+        await hazard_connector.close()
 
 
 @app.post("/api/v1/worker/ingest")
 async def worker_ingest() -> JSONResponse:
-    """Fetch BMKG+USGS events, upsert them, and compute risk scores.
+    """Fetch earthquake + hazard events, upsert them, and compute risk scores.
 
     Returns ``{"fetched": N, "upserted": M, "scored": K, "alerts_created": A}`` on success.
     Distinct failure modes map to distinct HTTP status codes:
       * 503 — DB pool not ready
-      * 502 — USGS fetch failed
+      * 502 — upstream connector fetch failed
       * 500 — upsert or scoring failed
     """
 
-    # 1. Acquire the DB pool.
     try:
         pool = get_pool()
     except RuntimeError as exc:
@@ -297,46 +309,25 @@ async def worker_ingest() -> JSONResponse:
             content={"fetched": 0, "upserted": 0, "scored": 0, "alerts_created": 0, "error": str(exc)},
         )
 
-    # 2. Fetch events from BMKG (Indonesia) + USGS (global).
-    connector = MultiSourceConnector()
     try:
-        events: list[EarthquakeEvent] = await connector.fetch_recent()
+        result = await _ingest_cycle(pool)
     except Exception as exc:
+        message = str(exc)
+        status_code = 500
+        if "All sources failed" in message or "All hazard sources failed" in message:
+            status_code = 502
         return JSONResponse(
-            status_code=502,
-            content={"fetched": 0, "upserted": 0, "scored": 0, "alerts_created": 0, "error": str(exc)},
-        )
-    finally:
-        await connector.close()
-
-    # 3. Upsert + score. Both run inside the same step so a scoring
-    #    failure surfaces as 500 (the events were fetched, but persistence
-    #    did not complete cleanly).
-    try:
-        upserted = await upsert_events(pool, events)
-        scored = await score_events(pool, events)
-        alerts = await evaluate_and_create_alerts(pool, events)
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
+            status_code=status_code,
             content={
-                "fetched": len(events),
+                "fetched": 0,
                 "upserted": 0,
                 "scored": 0,
                 "alerts_created": 0,
-                "error": str(exc),
+                "error": message,
             },
         )
 
-    return JSONResponse(
-        status_code=200,
-        content={
-            "fetched": len(events),
-            "upserted": upserted,
-            "scored": scored,
-            "alerts_created": len(alerts),
-        },
-    )
+    return JSONResponse(status_code=200, content=result)
 
 
 @app.post("/api/v1/worker/briefings/generate")
