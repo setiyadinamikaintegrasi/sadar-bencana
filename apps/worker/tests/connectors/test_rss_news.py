@@ -98,10 +98,15 @@ class RSSNewsConnectorTests(unittest.IsolatedAsyncioTestCase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         connector = RSSNewsConnector(http_client=client)
         try:
-            items = await connector.fetch_all()
+            items, health = await connector.fetch_all()
         finally:
             await connector.close()
             await client.aclose()
 
         self.assertEqual(len(items), 3)
         self.assertEqual({item.source for item in items}, {"antara", "cnn"})
+        # Health dict: antara=2 items, cnn=1 item, others=error strings
+        self.assertEqual(health["antara"], 2)
+        self.assertEqual(health["cnn"], 1)
+        self.assertIsInstance(health["detik"], str)
+        self.assertIsInstance(health["tempo"], str)

@@ -11,11 +11,17 @@ from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
 from connectors.aisstream import AISStreamConnector
+from connectors.bmkg import BMKGConnector
+from connectors.gdacs_flood import GDACSFloodConnector
+from connectors.gdacs_volcano import GDACSVolcanoConnector
 from connectors.hazard import HazardConnector
-from connectors.multi_source import MultiSourceConnector
+from connectors.multi_source import MultiSourceConnector, is_in_indonesia
+from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
 from connectors.rss_news import RSSNewsConnector
+from connectors.usgs import USGSConnector
 from connectors.vesselfinder import VesselFinderConnector
+from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
@@ -49,24 +55,79 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     """Run one fetch -> upsert -> score cycle against an active pool.
 
     Shared by both the on-demand ingest endpoint and the background
-    scheduler so they execute identical logic. The caller is responsible
-    for acquiring the pool (and mapping failures to HTTP status codes
-    where applicable). Raises on any failure.
+    scheduler so they execute identical logic. Tracks health per
+    sub-connector in the connector_health table. Raises on any failure.
     """
-
-    connector = MultiSourceConnector()
-    hazard_connector = HazardConnector()
+    # ---- Earthquake sources (BMKG + USGS with geo-aware merge) ----
+    bmkg_conn = BMKGConnector()
+    bmkg_events: list[EarthquakeEvent] = []
+    bmkg_error: str | None = None
     try:
-        events: list[EarthquakeEvent] = await connector.fetch_recent()
+        bmkg_events = await bmkg_conn.fetch_recent()
+        await upsert_connector_health(pool, "bmkg", len(bmkg_events))
+    except Exception as exc:
+        bmkg_error = str(exc)
+        await upsert_connector_health(pool, "bmkg", 0, bmkg_error)
+        logger.warning("BMKG fetch failed: %s", exc)
     finally:
-        await connector.close()
+        await bmkg_conn.close()
 
+    usgs_conn = USGSConnector()
+    usgs_events: list[EarthquakeEvent] = []
     try:
-        hazard_events: list[EarthquakeEvent] = await hazard_connector.fetch_recent()
+        usgs_events = await usgs_conn.fetch_recent()
+        await upsert_connector_health(pool, "usgs", len(usgs_events))
+    except Exception as exc:
+        await upsert_connector_health(pool, "usgs", 0, str(exc))
+        logger.warning("USGS fetch failed: %s", exc)
     finally:
-        await hazard_connector.close()
+        await usgs_conn.close()
 
-    all_events = events + hazard_events
+    # Merge with geo-aware dedup: BMKG wins for Indonesia bbox
+    merged: dict[str, EarthquakeEvent] = {}
+    for ev in bmkg_events:
+        merged[ev.event_id] = ev
+    for ev in usgs_events:
+        if is_in_indonesia(ev.latitude, ev.longitude) and bmkg_error is None:
+            continue
+        merged.setdefault(ev.event_id, ev)
+    earthquake_events = list(merged.values())
+
+    # ---- Hazard sources (GDACS flood, GDACS volcano, NASA FIRMS) ----
+    gdacs_fl_conn = GDACSFloodConnector()
+    flood_events: list[EarthquakeEvent] = []
+    try:
+        flood_events = await gdacs_fl_conn.fetch_recent()
+        await upsert_connector_health(pool, "gdacs_fl", len(flood_events))
+    except Exception as exc:
+        await upsert_connector_health(pool, "gdacs_fl", 0, str(exc))
+        logger.warning("GDACS flood fetch failed: %s", exc)
+    finally:
+        await gdacs_fl_conn.close()
+
+    gdacs_vo_conn = GDACSVolcanoConnector()
+    volcano_events: list[EarthquakeEvent] = []
+    try:
+        volcano_events = await gdacs_vo_conn.fetch_recent()
+        await upsert_connector_health(pool, "gdacs_vo", len(volcano_events))
+    except Exception as exc:
+        await upsert_connector_health(pool, "gdacs_vo", 0, str(exc))
+        logger.warning("GDACS volcano fetch failed: %s", exc)
+    finally:
+        await gdacs_vo_conn.close()
+
+    nasa_conn = NASAFIRMSConnector()
+    wildfire_events: list[EarthquakeEvent] = []
+    try:
+        wildfire_events = await nasa_conn.fetch_recent()
+        await upsert_connector_health(pool, "nasa_firms", len(wildfire_events))
+    except Exception as exc:
+        await upsert_connector_health(pool, "nasa_firms", 0, str(exc))
+        logger.warning("NASA FIRMS fetch failed: %s", exc)
+    finally:
+        await nasa_conn.close()
+
+    all_events = earthquake_events + flood_events + volcano_events + wildfire_events
 
     upserted = await upsert_events(pool, all_events)
     scored = await score_events(pool, all_events)
@@ -163,8 +224,10 @@ async def _asset_poll_cycle() -> dict[str, int]:
         states = await sky.fetch_states()
         if states:
             aircraft_count = await upsert_aircraft(pool, states)
+        await upsert_connector_health(pool, "opensky", aircraft_count)
     except Exception as e:
         logger.warning("OpenSky poll failed: %s", e)
+        await upsert_connector_health(pool, "opensky", 0, str(e))
 
     # --- Marine: AISStream (WebSocket buffer drain) ---
     vessel_count = 0
@@ -173,19 +236,24 @@ async def _asset_poll_cycle() -> dict[str, int]:
             vessels = _ais_connector.drain()
             if vessels:
                 vessel_count = await upsert_vessels(pool, vessels)
+            await upsert_connector_health(pool, "aisstream", vessel_count)
         except Exception as e:
             logger.warning("AIS drain failed: %s", e)
+            await upsert_connector_health(pool, "aisstream", 0, str(e))
 
     # --- Marine: VesselFinder (REST) ---
     if _vf_connector and _vf_connector.configured:
         try:
             vf_positions = await _vf_connector.fetch_positions()
+            vf_count = 0
             if vf_positions:
                 converted = [p.to_vessel_position() for p in vf_positions]
                 vf_count = await upsert_vessels(pool, converted)
                 vessel_count += vf_count
+            await upsert_connector_health(pool, "vesselfinder", vf_count)
         except Exception as e:
             logger.warning("VesselFinder poll failed: %s", e)
+            await upsert_connector_health(pool, "vesselfinder", 0, str(e))
 
     return {"vessels": vessel_count, "aircraft": aircraft_count}
 
@@ -196,15 +264,20 @@ async def _news_poll_cycle() -> int:
     pool = get_pool()
     connector = RSSNewsConnector()
     try:
-        items = await connector.fetch_all()
+        items, health_results = await connector.fetch_all()
 
-        # Geolocate each item before upsert
+        for source_name, health_val in health_results.items():
+            if isinstance(health_val, int):
+                await upsert_connector_health(pool, source_name, health_val)
+            else:
+                await upsert_connector_health(pool, source_name, 0, health_val)
+
         for item in items:
-            result = await extract_location(item.title, item.summary, pool)
-            if result:
-                item.lat = result[1]
-                item.lon = result[2]
-                setattr(item, "place_name", result[0])
+            loc = await extract_location(item.title, item.summary, pool)
+            if loc:
+                item.lat = loc[1]
+                item.lon = loc[2]
+                setattr(item, "place_name", loc[0])
 
         id_map = await upsert_news_items(pool, items)
 

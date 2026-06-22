@@ -180,7 +180,7 @@ class RSSNewsConnector:
         self._client = http_client
         self._owns_client = http_client is None
 
-    async def fetch_all(self) -> list[NewsItem]:
+    async def fetch_all(self) -> tuple[list[NewsItem], dict[str, int | str]]:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
@@ -189,18 +189,23 @@ class RSSNewsConnector:
             )
 
         all_items: list[NewsItem] = []
+        health: dict[str, int | str] = {}
         assert self._client is not None
         for feed in RSS_SOURCES:
             try:
-                response = await self._client.get(feed["url"], headers={"User-Agent": RSS_USER_AGENT})
+                response = await self._client.get(
+                    feed["url"], headers={"User-Agent": RSS_USER_AGENT}
+                )
                 response.raise_for_status()
                 items = _parse_rss(feed["source"], response.text)
                 logger.info("RSS %s: %d items", feed["source"], len(items))
                 all_items.extend(items)
+                health[feed["source"]] = len(items)
             except Exception as exc:
                 logger.warning("RSS feed %s failed: %s", feed["source"], exc)
+                health[feed["source"]] = str(exc)
 
-        return all_items
+        return all_items, health
 
     async def close(self) -> None:
         if self._owns_client and self._client is not None:
