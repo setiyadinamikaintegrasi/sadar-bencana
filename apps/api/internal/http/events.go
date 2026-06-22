@@ -24,13 +24,30 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// eventsQuery selects the most recent 50 events ordered by event_time.
+// eventsQuery returns per-type capped events via UNION ALL so no single
+// event type can crowd out others. Limits: earthquake 50, wildfire 200,
+// flood 30, volcano 30 — total max 310 rows.
 const eventsQuery = `
-SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
-       place, event_time, url, severity, created_at
-FROM events
-ORDER BY event_time DESC
-LIMIT 50
+(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
+        place, event_time, url, severity, created_at
+ FROM events WHERE event_type = 'earthquake'
+ ORDER BY event_time DESC NULLS LAST LIMIT 50)
+UNION ALL
+(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
+        place, event_time, url, severity, created_at
+ FROM events WHERE event_type = 'wildfire'
+ ORDER BY event_time DESC NULLS LAST LIMIT 200)
+UNION ALL
+(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
+        place, event_time, url, severity, created_at
+ FROM events WHERE event_type = 'flood'
+ ORDER BY event_time DESC NULLS LAST LIMIT 30)
+UNION ALL
+(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
+        place, event_time, url, severity, created_at
+ FROM events WHERE event_type = 'volcano'
+ ORDER BY event_time DESC NULLS LAST LIMIT 30)
+ORDER BY event_time DESC NULLS LAST
 `
 
 // Events returns a gin.HandlerFunc that lists the most recent events.
@@ -56,7 +73,7 @@ func Events(db *sql.DB) gin.HandlerFunc {
 		}
 		defer rows.Close()
 
-		events := make([]Event, 0, 50)
+		events := make([]Event, 0, 310)
 		for rows.Next() {
 			var e Event
 			if err := rows.Scan(
@@ -94,7 +111,7 @@ func Events(db *sql.DB) gin.HandlerFunc {
 			"data": events,
 			"meta": gin.H{
 				"count": len(events),
-				"limit": 50,
+				"limit": 310,
 			},
 		})
 	}
