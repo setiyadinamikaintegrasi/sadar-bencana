@@ -50,6 +50,7 @@ func main() {
 	router.GET("/api/v1/exposures/match", apihttp.ExposureMatch(dbPool))
 	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
+	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
 
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
 	log.Printf("API server listening on %s", addr)
