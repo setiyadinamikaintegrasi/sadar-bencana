@@ -120,10 +120,7 @@ export default function EventsPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-              Event Feed
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-50">Catastrophe Events</h3>
+            <h3 className="text-2xl font-semibold text-slate-50">Catastrophe Events</h3>
             <p className="mt-2 text-sm text-slate-400">
               Ingested catastrophe events with magnitude, source, and location filters. Auto-refreshes every 60s.
             </p>
@@ -148,7 +145,7 @@ export default function EventsPage() {
           <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
 
           <label className="inline-flex items-center gap-3 text-sm text-slate-300">
-            <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+            <span className="text-xs font-medium text-slate-400">
               Region
             </span>
             <select
@@ -168,7 +165,7 @@ export default function EventsPage() {
           </label>
 
           <label className="inline-flex items-center gap-3 text-sm text-slate-300">
-            <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+            <span className="text-xs font-medium text-slate-400">
               Source
             </span>
             <select
@@ -188,7 +185,7 @@ export default function EventsPage() {
           </label>
 
           <label className="inline-flex items-center gap-3 text-sm text-slate-300">
-            <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+            <span className="text-xs font-medium text-slate-400">
               Location
             </span>
             <input

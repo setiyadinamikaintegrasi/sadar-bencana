@@ -82,10 +82,7 @@ function CategoryCard({
     <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-            Connectors
-          </p>
-          <h3 className="mt-1 text-lg font-semibold text-slate-50">{label}</h3>
+          <h3 className="text-lg font-semibold text-slate-50">{label}</h3>
         </div>
         <div className="flex gap-2">
           {errorCount > 0 && (
@@ -111,19 +108,19 @@ function CategoryCard({
         <table className="w-full text-left">
           <thead>
             <tr>
-              <th className="pb-3 pr-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+              <th className="pb-3 pr-4 text-[11px] font-medium text-slate-500">
                 Connector
               </th>
-              <th className="pb-3 pr-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+              <th className="pb-3 pr-4 text-[11px] font-medium text-slate-500">
                 Status
               </th>
-              <th className="pb-3 pr-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+              <th className="pb-3 pr-4 text-[11px] font-medium text-slate-500">
                 Last Poll
               </th>
-              <th className="pb-3 pr-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+              <th className="pb-3 pr-4 text-[11px] font-medium text-slate-500">
                 Items
               </th>
-              <th className="pb-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+              <th className="pb-3 text-[11px] font-medium text-slate-500">
                 Error
               </th>
             </tr>
@@ -208,10 +205,7 @@ export default function SourceHealthPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-              Source Health
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-50">Connector Status</h3>
+            <h3 className="text-2xl font-semibold text-slate-50">Connector Status</h3>
             <p className="mt-2 text-sm text-slate-400">
               Status setiap data connector. Auto-refresh setiap 30 detik.
               {lastUpdated && (

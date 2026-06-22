@@ -83,10 +83,7 @@ export default function BriefingPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-              Daily Briefing
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-50">Operational Risk Briefing</h3>
+            <h3 className="text-2xl font-semibold text-slate-50">Operational Risk Briefing</h3>
             <p className="mt-2 text-sm text-slate-400">
               Ringkasan briefing harian untuk pemantauan risiko reasuransi PT Tugure.
             </p>
@@ -138,16 +135,14 @@ export default function BriefingPage() {
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-                Briefing Date
-              </p>
+              <p className="text-[11px] font-medium text-indigo-400">Briefing Date</p>
               <span className="inline-flex rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
                 {briefing.event_count} monitored events
               </span>
             </div>
             <h4 className="mt-3 text-2xl font-semibold text-slate-50">{formattedDate}</h4>
             <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Summary</p>
+              <p className="text-[11px] font-medium text-slate-500">Summary</p>
               <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-300">
                 {briefing.summary}
               </p>
@@ -157,10 +152,7 @@ export default function BriefingPage() {
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-                  Top Events
-                </p>
-                <h4 className="mt-2 text-xl font-semibold text-slate-50">
+                <h4 className="text-xl font-semibold text-slate-50">
                   Priority catastrophe watchlist
                 </h4>
               </div>

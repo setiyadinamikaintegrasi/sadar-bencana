@@ -102,10 +102,7 @@ export default function ExposuresPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-              Exposure Rules
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-50">Regional Exposure Rules</h3>
+            <h3 className="text-2xl font-semibold text-slate-50">Regional Exposure Rules</h3>
             <p className="mt-2 text-sm text-slate-400">
               Mapping of geographic regions to portfolio exposure and impact multipliers. Auto-refreshes every 60s.
             </p>
@@ -227,10 +224,7 @@ export default function ExposuresPage() {
       {/* Match demo */}
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-            Exposure Match
-          </p>
-          <h3 className="mt-2 text-xl font-semibold text-slate-50">Match a location to a rule</h3>
+          <h3 className="text-xl font-semibold text-slate-50">Match a location to a rule</h3>
           <p className="mt-2 text-sm text-slate-400">
             Enter an event place string to simulate how the exposure engine maps it to a regional rule and estimates impact.
           </p>
@@ -271,7 +265,7 @@ export default function ExposuresPage() {
               </div>
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  <p className="text-[11px] font-medium text-slate-500">
                     Portfolio
                   </p>
                   <p className="mt-1 text-sm text-slate-200">
@@ -279,7 +273,7 @@ export default function ExposuresPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  <p className="text-[11px] font-medium text-slate-500">
                     Multiplier
                   </p>
                   <p className="mt-1 text-sm text-slate-200">
@@ -287,7 +281,7 @@ export default function ExposuresPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  <p className="text-[11px] font-medium text-slate-500">
                     Estimated Impact
                   </p>
                   <p className="mt-1 text-sm font-semibold text-emerald-300">

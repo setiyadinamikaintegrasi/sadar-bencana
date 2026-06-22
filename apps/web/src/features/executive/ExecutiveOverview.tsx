@@ -109,7 +109,7 @@ export default function ExecutiveOverview() {
             key={item.label}
             className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40"
           >
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+            <p className="text-[11px] font-medium text-slate-500 leading-none">
               {item.label}
             </p>
             <p className="mt-4 text-4xl font-bold text-slate-50">{item.value}</p>
@@ -122,10 +122,7 @@ export default function ExecutiveOverview() {
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-                Watchlist
-              </p>
-              <h3 className="mt-2 text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
+              <h3 className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
@@ -238,9 +235,7 @@ export default function ExecutiveOverview() {
 
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
           <div className="mb-3 flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-              Event Map
-            </p>
+            <p className="text-sm font-semibold text-slate-300">Event Map</p>
             {events.length > 0 && (
               <span className="text-xs text-slate-500">{events.length} events</span>
             )}

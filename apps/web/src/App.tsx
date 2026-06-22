@@ -48,8 +48,8 @@ function App() {
       {/* Desktop sidebar — hidden on mobile */}
       <aside className="fixed inset-y-0 left-0 z-10 hidden w-64 flex-col border-r border-slate-800 bg-slate-900 md:flex">
         <div className="border-b border-slate-800 px-6 py-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-400">PT Tugure</p>
-          <h1 className="mt-2 text-2xl font-semibold text-slate-50">Risk Monitor</h1>
+          <p className="text-[10px] font-semibold text-indigo-400">PT Tugure</p>
+          <h1 className="mt-1 text-2xl font-semibold text-slate-50">Risk Monitor</h1>
         </div>
 
         <nav className="flex-1 px-4 py-6">
@@ -80,10 +80,7 @@ function App() {
       {/* Main content */}
       <div className="flex min-h-screen flex-col md:ml-64">
         <header className="border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:px-8 md:py-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-400">
-            PT Tugure · Reinsurance Intelligence
-          </p>
-          <h2 className="mt-1 text-xl font-semibold text-slate-50 md:mt-2 md:text-3xl">
+          <h2 className="text-xl font-semibold text-slate-50 md:text-3xl">
             <span className="md:hidden">{activeSection}</span>
             <span className="hidden md:inline">Reinsurance Risk Monitor</span>
           </h2>

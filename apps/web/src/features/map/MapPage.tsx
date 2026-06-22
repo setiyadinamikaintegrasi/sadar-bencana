@@ -68,9 +68,9 @@ const MAP_ANIMATION_CSS = `
     0%, 100% { opacity: 1;   transform: scale(1);    }
     50%      { opacity: 0.6; transform: scale(0.85); }
   }
-  .stat-value { animation: count-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .stat-value { animation: count-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
   @keyframes count-pop {
-    0%   { transform: scale(1.25); opacity: 0.4; }
+    0%   { transform: scale(1.15); opacity: 0.5; }
     100% { transform: scale(1);    opacity: 1;   }
   }
   @keyframes countdown {
@@ -674,7 +674,7 @@ export default function MapPage() {
                         rel='noreferrer'
                         className='block rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 transition hover:border-slate-700 hover:bg-slate-900/80'
                       >
-                        <div className='mb-2 flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500'>
+                        <div className='mb-2 flex items-center gap-2 text-[11px] text-slate-500'>
                           <span>{item.source}</span>
                           <span>•</span>
                           <span>
@@ -715,7 +715,7 @@ export default function MapPage() {
 function Stat({ label, value, sub, color }: { label: string; value: number; sub?: string; color: string }) {
   return (
     <div className='rounded-xl border border-slate-800 bg-slate-900 px-4 py-2'>
-      <p className='text-xs uppercase tracking-wider text-slate-500'>{label}</p>
+      <p className='text-[11px] font-medium text-slate-500'>{label}</p>
       <p className={`text-2xl font-bold ${color}`}>
         <span key={value} className='stat-value inline-block'>{value}</span>
       </p>

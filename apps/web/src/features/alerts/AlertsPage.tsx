@@ -153,10 +153,7 @@ export default function AlertsPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-400">
-              Alerts
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-50">Risk Alerts</h3>
+            <h3 className="text-2xl font-semibold text-slate-50">Risk Alerts</h3>
             <p className="mt-2 text-sm text-slate-400">
               Generated alerts from event-to-portfolio matching. Acknowledge alerts to track triage.
               Auto-refreshes every 60s.
@@ -196,7 +193,7 @@ export default function AlertsPage() {
         </div>
 
         <div className="mt-6 flex flex-col gap-3 border-t border-slate-800 pt-6 md:flex-row md:items-center">
-          <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+          <span className="text-xs font-medium text-slate-400">
             Status
           </span>
           <div className="inline-flex rounded-xl border border-slate-700 bg-slate-800 p-1">
@@ -220,7 +217,7 @@ export default function AlertsPage() {
           </div>
 
           <label className="inline-flex items-center gap-3 text-sm text-slate-300 md:ml-auto">
-            <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+            <span className="text-xs font-medium text-slate-400">
               Source
             </span>
             <select
