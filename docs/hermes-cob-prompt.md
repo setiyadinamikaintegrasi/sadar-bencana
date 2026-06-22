@@ -18,9 +18,11 @@ The dashboard has a **Map page** that renders all three on a Leaflet map. You ne
 
 | Peril | Indonesian Name | OJK COB | `event_type` value | Data Source |
 |-------|----------------|---------|-------------------|------------|
-| Flood | Banjir | Harta Benda / Marine Cargo | `"flood"` | BMKG Cuaca / BNPB InfoBencana |
-| Volcano | Gunung Api | Rekayasa / Properti | `"volcano"` | PVMBG MAGMA Indonesia API |
-| Wildfire/Hotspot | Kebakaran Hutan | Harta Benda | `"wildfire"` | NASA FIRMS VIIRS/MODIS |
+| Flood | Banjir | Harta Benda / Marine Cargo | `"flood"` | GDACS Flood Alerts (global, bbox-filtered) |
+| Volcano | Gunung Api | Rekayasa / Properti | `"volcano"` | GDACS Volcano Alerts (global, bbox-filtered) |
+| Wildfire/Hotspot | Kebakaran Hutan | Harta Benda | `"wildfire"` | NASA FIRMS VIIRS Archive CSV (SE Asia 24h, no-auth) |
+
+> **Data source verification (2026-06-22):** All URLs in this document have been live-probed. Sources marked dead (BNPB API, PVMBG MAGMA, BMKG DigitalForecast) have been removed. Only verified-working endpoints remain. See `docs/data-source-probe-results.md` for details.
 
 ---
 
@@ -321,65 +323,49 @@ The layers are rendered conditionally inside `<MapContainer>`:
 
 ## Target Data APIs (Free, No Auth Required)
 
-### A. Banjir (Flood) — BNPB / BMKG
+### A. Banjir (Flood) — GDACS Global Flood Alerts
 
-**BNPB InfoBencana (primary):**
-```
-GET https://inarisk.bnpb.go.id/api/...
-```
-Note: BNPB API requires investigation. Use the **BMKG Prakiraan Cuaca / Peringatan Dini** as primary:
+> **Verified 2026-06-22.** BNPB API (`inarisk.bnpb.go.id`) and BMKG DigitalForecast (`data.bmkg.go.id/.../DigitalForecast-Indonesia.xml`) are dead/403 — removed from scope. GDACS is the sole source.
 
+**GDACS Flood — global feed, bbox-filter for Indonesia client-side:**
 ```
-GET https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-Indonesia.xml
+GET https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=FL&limit=50
 ```
 
-Simpler alternative — **BNPB Dibi** RSS/JSON feeds or **GDACS** flood alerts:
-```
-GET https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=FL&fromDate=2024-01-01&toDate=2024-12-31
-GET https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=FL&country=IDN
-```
+**⚠️ Do NOT use `country=IDN` filter** — returns HTTP 204 (empty body) when no current events for Indonesia. Query the global feed and filter via bounding box: `lat: -12.0..8.0, lon: 92.0..142.0`.
 
-**Recommended: GDACS for flood** — JSON API, no auth, Indonesia-filtered:
-```
-GET https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=FL&country=IDN&limit=50
-```
-
-GDACS response fields to map:
+Response is GeoJSON (FeatureCollection). Each `features[].properties` has:
 - `eventid` → `event_id` (prefixed `gdacs_fl_`)
-- `alertscore` (0-100) → `magnitude` (scale to 0-4)
+- `alertscore` (0-3.0) → `magnitude` (round to nearest int, clamp 1–4)
+- `alertlevel` (`"Green"` / `"Orange"` / `"Red"`) → severity hint
 - `latitude`, `longitude`
 - `todate` → `time`
-- `htmldescription` → `place`
-- `url` → `url`
+- `name` → `place` (location description)
+- `country` → cross-check with bbox filter
+- Geometry: `features[].geometry` (Point or Polygon)
 
-### B. Gunung Api (Volcano) — PVMBG MAGMA Indonesia
+### B. Gunung Api (Volcano) — GDACS Global Volcano Alerts
 
-```
-GET https://magma.esdm.go.id/api/v1/gunung-api/
-GET https://magma.esdm.go.id/api/v1/vona/
-```
+> **Verified 2026-06-22.** PVMBG MAGMA API (`magma.esdm.go.id/api/v1/gunung-api/` → 404, `/vona/` → 401 auth required) is dead — removed from scope. GDACS is the sole source.
 
-MAGMA API (check current docs at https://magma.esdm.go.id). If the API requires auth, fall back to **GVP Smithsonian / GDACS volcano**:
+**GDACS Volcano — global feed, bbox-filter for Indonesia client-side:**
 ```
-GET https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=VO&country=IDN
+GET https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=VO&limit=50
 ```
 
-GDACS volcano fields:
+**⚠️ Do NOT use `country=IDN` filter** — same 204 behavior as flood. Query global and bbox-filter: `lat: -12.0..8.0, lon: 92.0..142.0`.
+
+GDACS volcano fields (same GeoJSON structure as flood):
 - `eventid` → `event_id` (prefixed `gdacs_vo_`)
-- `alertlevel` (GREEN=1, ORANGE=2, RED=3) → `magnitude` (map: green=1, orange=3, red=4)
+- `alertlevel` (`"Green"` / `"Orange"` / `"Red"`) → `magnitude` (green=1, orange=3, red=4)
 - `latitude`, `longitude`, `name` → `place`
 - `todate` → `time`
 
-### C. Kebakaran Hutan (Wildfire) — NASA FIRMS
+### C. Kebakaran Hutan (Wildfire) — NASA FIRMS VIIRS Archive CSV
 
-**NASA FIRMS NRT API (no auth needed for CSV, JSON requires token):**
+> **Verified 2026-06-22.** FIRMS country CSV endpoint requires a valid MAP_KEY (`FIRMS_API_KEY` placeholder returns HTTP 400). MODIS archive CSV SE Asia returns 404. The **VIIRS NOAA-20 archive CSV (SE Asia 24h)** is the sole viable no-auth source.
 
-Use the **CSV endpoint** (no token required):
-```
-GET https://firms.modaps.eosdis.nasa.gov/api/country/csv/FIRMS_API_KEY/VIIRS_SNPP_NRT/IDN/1
-```
-
-If API key is required, use the **public active fire map data** via WMS or the **FIRMS archive CSV**. Best no-auth option:
+**Primary source — VIIRS NOAA-20 archive CSV, Southeast Asia 24h (no auth):**
 ```
 GET https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_SouthEast_Asia_24h.csv
 ```
@@ -523,7 +509,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS news_items (
     id           UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
     item_id      VARCHAR(512) NOT NULL,     -- deterministic: sha256(source + url)[:16]
-    source       VARCHAR(64)  NOT NULL,     -- "antara" | "bnpb" | "bmkg" | "detik" | "kompas" | "tribun" | "reuters"
+    source       VARCHAR(64)  NOT NULL,     -- "antara" | "detik" | "cnn" | "tempo" | "republika" | "sindo" | "okezone"
     title        TEXT         NOT NULL,
     summary      TEXT,
     url          TEXT,
@@ -543,19 +529,26 @@ Apply this migration inside `db/init-db.sh` (or however existing migrations are 
 
 ### D2. RSS Sources and Feed URLs
 
+> **Verified 2026-06-22.** All 7 original feed URLs in this table were dead or returned HTML instead of RSS. Every URL below has been live-probed and confirmed returning valid `text/xml` or `application/xml`.
+
 | Source | `source` value | RSS URL | Notes |
 |--------|---------------|---------|-------|
-| ANTARA News | `"antara"` | `https://www.antaranews.com/rss/terkini.rss` | Berita terkini, authoritative |
-| BNPB | `"bnpb"` | `https://bnpb.go.id/berita?format=feed&type=rss` | Rilis pers BNPB |
-| BMKG | `"bmkg"` | `https://www.bmkg.go.id/berita/?tag=&p=rss` | Berita resmi BMKG |
-| Detik | `"detik"` | `https://rss.detik.com/index.php/detikcom` | Portal berita utama |
-| Kompas | `"kompas"` | `https://rss.kompas.com/` | Portal berita utama |
-| Tribun | `"tribun"` | `https://rss.tribunnews.com/` | Coverage bencana luas |
-| Reuters | `"reuters"` | `https://feeds.reuters.com/reuters/topNews` | International wire, English |
+| ANTARA News | `"antara"` | `https://www.antaranews.com/rss/terkini.xml` | ✅ `text/xml`. Berita terkini |
+| Detik | `"detik"` | `https://feeds.feedburner.com/detikcom` | ✅ `text/xml`. Via Feedburner (direct `rss.detik.com` DNS dead) |
+| CNN Indonesia | `"cnn"` | `https://www.cnnindonesia.com/nasional/rss` | ✅ `text/xml`. Berita nasional |
+| Tempo | `"tempo"` | `https://rss.tempo.co/nasional` | ✅ `application/xml`. |
+| Republika | `"republika"` | `https://www.republika.co.id/rss` | ✅ `application/xml`. |
+| Sindonews | `"sindo"` | `https://www.sindonews.com/rss` | ✅ `text/xml`. |
+| Okezone | `"okezone"` | `https://www.okezone.com/rss` | ✅ `text/xml`. |
+
+**Removed (dead):** BNPB RSS (HTML not XML), BMKG RSS (HTML SPA — Nuxt.js, no RSS), Kompas RSS (404), Tribun (DNS dead), Reuters (DNS dead).
+
+**⚠️ Critical — User-Agent header required:** All Indonesian news servers reject requests with default `curl`/`python-httpx` User-Agent. The RSS connector MUST set:
+```python
+headers={"User-Agent": "Mozilla/5.0 (compatible; tugure-risk-monitor/1.0)"}
+```
 
 **Fallback:** If a feed URL returns 404 or is unreachable, log a warning and skip that source — do not crash the poll cycle.
-
-**Note on Reuters:** Reuters has restricted some RSS endpoints. If `feeds.reuters.com` is unreachable, try `https://www.reutersagency.com/feed/?best-topics=political-general&post_type=best` as fallback. If both fail, skip gracefully.
 
 ### D3. Backend — RSS Connector (`apps/worker/connectors/rss_news.py`)
 
@@ -646,13 +639,13 @@ def _parse_rss(source: str, xml_text: str) -> list[NewsItem]:
 
 
 RSS_SOURCES: list[dict[str, str]] = [
-    {"source": "antara",  "url": "https://www.antaranews.com/rss/terkini.rss"},
-    {"source": "bnpb",    "url": "https://bnpb.go.id/berita?format=feed&type=rss"},
-    {"source": "bmkg",    "url": "https://www.bmkg.go.id/berita/?tag=&p=rss"},
-    {"source": "detik",   "url": "https://rss.detik.com/index.php/detikcom"},
-    {"source": "kompas",  "url": "https://rss.kompas.com/"},
-    {"source": "tribun",  "url": "https://rss.tribunnews.com/"},
-    {"source": "reuters", "url": "https://feeds.reuters.com/reuters/topNews"},
+    {"source": "antara",    "url": "https://www.antaranews.com/rss/terkini.xml"},
+    {"source": "detik",     "url": "https://feeds.feedburner.com/detikcom"},
+    {"source": "cnn",       "url": "https://www.cnnindonesia.com/nasional/rss"},
+    {"source": "tempo",     "url": "https://rss.tempo.co/nasional"},
+    {"source": "republika", "url": "https://www.republika.co.id/rss"},
+    {"source": "sindo",     "url": "https://www.sindonews.com/rss"},
+    {"source": "okezone",   "url": "https://www.okezone.com/rss"},
 ]
 
 
@@ -665,7 +658,11 @@ class RSSNewsConnector:
 
     async def fetch_all(self) -> list[NewsItem]:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout, follow_redirects=True)
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; tugure-risk-monitor/1.0)"},
+            )
 
         all_items: list[NewsItem] = []
         for feed in RSS_SOURCES:
@@ -1676,9 +1673,11 @@ async def test_skips_item_without_perils():
 - **DB migrations:** `006_news_items.sql` (news_items table with lat/lon/place_name) + `007_news_alerts_extension.sql` (extend alerts + geocode_cache). The `events` table has no changes.
 - **Frontend files to modify:** `apps/web/src/features/map/MapPage.tsx` and `apps/web/src/lib/api/client.ts` only.
 - **`EarthquakeEvent` is the only hazard model** — do not create `FloodEvent`, `VolcanoEvent`, etc.
-- **Indonesia bounding box filter** for FIRMS: lat -12.0..8.0, lon 92.0..142.0.
+- **Indonesia bounding box filter** for GDACS (FL+VO) and FIRMS: lat -12.0..8.0, lon 92.0..142.0. GDACS queries are global — filter client-side.
+- **GDACS `country=IDN` returns HTTP 204** (empty body) — do NOT use this query parameter. Always query global feed + bbox filter.
 - **FIRMS cap:** max 200 hotspots per fetch, confidence >= 70.
 - **RSS cap:** max 50 items per feed per poll, `LIMIT 100` in DB fetch.
+- **⚠️ User-Agent header mandatory for ALL HTTP requests** (GDACS, FIRMS, RSS, Nominatim): `"Mozilla/5.0 (compatible; tugure-risk-monitor/1.0)"`. Indonesian news servers reject default httpx/curl UA with 403/406.
 - **Nominatim rate limit:** 1 req/sec enforced via `asyncio.sleep(1.0)`. Required `User-Agent` header: `tugure-risk-monitor/1.0`.
 - **`event_id` / `item_id` must be deterministic** for upsert idempotency.
 - **All connectors, RSS fetchers, and geocoding tolerate failures gracefully** — per-source failure logs a warning but does not crash the cycle.
