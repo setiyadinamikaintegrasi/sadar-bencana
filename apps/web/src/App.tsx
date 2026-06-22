@@ -5,6 +5,7 @@ import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
 import ExposuresPage from './features/exposures/ExposuresPage'
 import MapPage from './features/map/MapPage'
+import SourceHealthPage from './features/health/SourceHealthPage'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
@@ -14,6 +15,7 @@ const sections = [
   { label: 'Alerts', icon: '◆' },
   { label: 'Claims', icon: '■' },
   { label: 'Briefing', icon: '◇' },
+  { label: 'Source Health', icon: '◈' },
 ] as const
 
 type Section = (typeof sections)[number]['label']
@@ -29,6 +31,7 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
   { label: 'Exposures', section: 'Exposures', icon: '▲' },
   { label: 'Claims', section: 'Claims', icon: '■' },
   { label: 'Briefing', section: 'Briefing', icon: '◇' },
+  { label: 'Source Health', section: 'Source Health', icon: '◈' },
 ]
 
 function App() {
@@ -99,6 +102,8 @@ function App() {
             <AlertsPage />
           ) : activeSection === 'Briefing' ? (
             <BriefingPage />
+          ) : activeSection === 'Source Health' ? (
+            <SourceHealthPage />
           ) : (
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-slate-950/40">
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>

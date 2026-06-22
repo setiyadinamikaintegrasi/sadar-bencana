@@ -172,3 +172,20 @@ export async function acknowledgeAlert(id: string): Promise<void> {
     method: 'PATCH',
   })
 }
+
+export type ConnectorHealth = {
+  name: string
+  status: 'ok' | 'stale' | 'error'
+  last_polled_at: string | null
+  items_fetched: number
+  error_message: string | null
+  threshold_seconds: number
+  updated_at: string | null
+}
+
+export async function getConnectorHealth(): Promise<ConnectorHealth[]> {
+  const res = await request<{ data: ConnectorHealth[]; meta: { count: number } }>(
+    '/health/connectors',
+  )
+  return res.data
+}
