@@ -16,6 +16,13 @@ class RiskSeverityByPerilTests(unittest.TestCase):
         self.assertEqual(classify_severity_by_type(2.0, "volcano"), "Moderate")
         self.assertEqual(classify_severity_by_type(1.0, "volcano"), "Low")
 
+    def test_wildfire_thresholds(self) -> None:
+        self.assertEqual(classify_severity_by_type(7.0, "wildfire"), "Critical")
+        self.assertEqual(classify_severity_by_type(4.0, "wildfire"), "High")
+        self.assertEqual(classify_severity_by_type(2.0, "wildfire"), "Moderate")
+        self.assertEqual(classify_severity_by_type(1.0, "wildfire"), "Low")
+        self.assertEqual(classify_severity_by_type(0.5, "wildfire"), "Minor")
+
     def test_unknown_type_falls_back_to_earthquake_logic(self) -> None:
         self.assertEqual(classify_severity_by_type(6.2, "other"), "Critical")
         self.assertEqual(classify_severity_by_type(4.2, "other"), "Moderate")
