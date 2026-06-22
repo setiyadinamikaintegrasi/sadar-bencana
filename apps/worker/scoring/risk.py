@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # --- Severity classification ----------------------------------------------
 
 def classify_severity(magnitude: float) -> str:
-    """Map a magnitude value to a coarse severity label.
+    """Map an earthquake magnitude to a coarse severity label.
 
     The thresholds are evaluated high-to-low so each band is a half-open
     range anchored on its lower bound.
@@ -56,6 +56,49 @@ def classify_severity(magnitude: float) -> str:
     if magnitude >= 3.0:
         return "Low"
     return "Minor"
+
+
+def classify_severity_by_type(magnitude: float, event_type: str = "earthquake") -> str:
+    """Map a magnitude proxy to severity, dispatching by event type.
+
+    Non-earthquake perils use their own threshold bands since their magnitude
+    is a proxy (flood 1-4, volcano 1-4, wildfire 0-10), not a seismic scale.
+    """
+
+    if event_type == "earthquake":
+        return classify_severity(magnitude)
+
+    if event_type == "flood":
+        if magnitude >= 4.0:
+            return "Critical"
+        if magnitude >= 3.0:
+            return "High"
+        if magnitude >= 2.0:
+            return "Moderate"
+        return "Low"
+
+    if event_type == "volcano":
+        if magnitude >= 4.0:
+            return "Critical"
+        if magnitude >= 3.0:
+            return "High"
+        if magnitude >= 2.0:
+            return "Moderate"
+        return "Low"
+
+    if event_type == "wildfire":
+        if magnitude >= 7.0:
+            return "Critical"
+        if magnitude >= 4.0:
+            return "High"
+        if magnitude >= 2.0:
+            return "Moderate"
+        if magnitude >= 1.0:
+            return "Low"
+        return "Minor"
+
+    # Unknown event_type — fall back to earthquake thresholds.
+    return classify_severity(magnitude)
 
 
 # --- Risk score ------------------------------------------------------------
@@ -115,7 +158,7 @@ def calculate_risk_score(event: EarthquakeEvent) -> tuple[float, dict[str, Any]]
     """
 
     magnitude = float(event.magnitude)
-    severity = classify_severity(magnitude)
+    severity = classify_severity_by_type(magnitude, event.event_type)
 
     base = magnitude * _MAGNITUDE_WEIGHT
 

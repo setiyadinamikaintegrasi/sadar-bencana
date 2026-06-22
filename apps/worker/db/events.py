@@ -15,13 +15,13 @@ from typing import Sequence
 import asyncpg
 
 from models.event import EarthquakeEvent
-from scoring.risk import classify_severity
+from scoring.risk import classify_severity_by_type
 
 logger = logging.getLogger(__name__)
 
 # Columns are listed explicitly so future schema additions don't silently
 # break the upsert. ``severity`` is derived from ``magnitude`` at write
-# time via :func:`scoring.risk.classify_severity`, so callers never need
+# time via :func:`scoring.risk.classify_severity_by_type`, so callers never need
 # to pass it explicitly.
 _UPSERT_SQL = """
 INSERT INTO events (
@@ -72,7 +72,7 @@ async def upsert_events(
     upserted = 0
     async with pool.acquire() as conn:
         for event in events:
-            severity = classify_severity(event.magnitude)
+            severity = classify_severity_by_type(event.magnitude, event.event_type)
             row = await conn.fetchrow(
                 _UPSERT_SQL,
                 event.event_id,
