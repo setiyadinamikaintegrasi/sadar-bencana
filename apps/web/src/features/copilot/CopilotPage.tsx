@@ -144,7 +144,12 @@ export default function CopilotPage() {
                   }`}
                 >
                   {msg.role === 'assistant' ? (
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                    <div className="whitespace-pre-wrap">
+                      {msg.content}
+                      {loading && idx === messages.length - 1 && !msg.content.endsWith('\n') && (
+                        <span className="ml-0.5 animate-pulse text-indigo-400">▍</span>
+                      )}
+                    </div>
                   ) : (
                     <p>{msg.content}</p>
                   )}
@@ -177,13 +182,20 @@ export default function CopilotPage() {
                 {loading ? '…' : 'Kirim'}
               </button>
               {loading && (
-                <button
-                  type="button"
-                  onClick={handleStop}
-                  className="inline-flex items-center justify-center rounded-xl border border-rose-500/50 px-4 py-2 text-xs font-medium text-rose-300 transition hover:bg-rose-500/10"
-                >
-                  Stop
-                </button>
+                <>
+                  <span className="ml-2 self-center text-xs text-slate-500 italic">
+                    {messages[messages.length - 1]?.content
+                      ? 'Menulis...'
+                      : 'Memproses...'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className="inline-flex items-center justify-center rounded-xl border border-rose-500/50 px-4 py-2 text-xs font-medium text-rose-300 transition hover:bg-rose-500/10"
+                  >
+                    Stop
+                  </button>
+                </>
               )}
             </div>
           </div>
