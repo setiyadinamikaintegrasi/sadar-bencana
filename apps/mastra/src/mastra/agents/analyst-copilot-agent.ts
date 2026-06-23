@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent'
 
-import { localChatModel } from '../shared/model'
+import { cloudChatModel } from '../shared/model'
 import { getDashboardContextTool } from '../tools/dashboard-context'
 import { matchExposureTool } from '../tools/exposure-match'
 
@@ -22,7 +22,7 @@ Guardrails:
 - selalu referensikan sumber internal (event_id, alert id, region_name, source)
 - semua jawaban harus bisa diaudit ulang dari endpoint internal
   `,
-  model: localChatModel,
+  model: cloudChatModel,
   tools: {
     getDashboardContextTool,
     matchExposureTool,

@@ -499,8 +499,10 @@ export function streamCopilotChat(
               if (!jsonStr) continue
               try {
                 const event = JSON.parse(jsonStr)
-                // Show tool progress as a subtle indicator
-                if (event.type === 'tool-input-start' && event.toolName) {
+                // Real-time text stream from Mastra chatRoute
+                if (event.type === 'text-delta' && event.delta) {
+                  callbacks.onChunk?.(event.delta)
+                } else if (event.type === 'tool-input-start' && event.toolName) {
                   callbacks.onChunk?.(`[🔍 ${event.toolName}] `)
                 } else if (event.type === 'tool-input-delta' && event.inputTextDelta) {
                   // For tool arguments — show only significant chars to avoid flooding
@@ -509,8 +511,8 @@ export function streamCopilotChat(
                   if (/[a-zA-Z0-9]/.test(delta)) {
                     callbacks.onChunk?.(delta)
                   }
-                } else if (event.type === 'error' && event.error) {
-                  callbacks.onChunk?.(`[Error: ${event.error}] `)
+                } else if (event.type === 'error' && (event.error || event.errorText)) {
+                  callbacks.onChunk?.(`[Error: ${event.error ?? event.errorText}] `)
                 }
               } catch {
                 // Malformed JSON — skip silently
