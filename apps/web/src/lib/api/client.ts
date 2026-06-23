@@ -68,10 +68,10 @@ export async function getNews(): Promise<NewsItem[]> {
 
 export type RiskScore = {
   entity_id: string
-  place: string
-  magnitude: number
+  place: string | null
+  magnitude: number | null
   score: number
-  source: string
+  source: string | null
   calculated_at: string
   factors: {
     severity: string | null
@@ -244,7 +244,7 @@ type ParsedAiBriefingEventMap = {
   status: AiBriefingStatusEvent
   partial: AiBriefingPartialEvent
   final: AiBriefingFinalEvent
-  error: AiBriefingErrorEvent
+  briefing_error: AiBriefingErrorEvent
   done: AiBriefingDoneEvent
 }
 
@@ -392,7 +392,7 @@ export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOpti
         )
         handler?.(parsedEvent)
 
-        if (eventName === 'error') {
+        if (eventName === 'briefing_error') {
           finishError(new Error((parsedEvent as AiBriefingErrorEvent).message || 'AI briefing stream failed.'))
         }
 
@@ -408,7 +408,7 @@ export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOpti
   attach('status', options.onStatus)
   attach('partial', options.onPartial)
   attach('final', options.onFinal)
-  attach('error', options.onError)
+  attach('briefing_error', options.onError)
   attach('done', options.onDone)
 
   eventSource.onerror = () => {

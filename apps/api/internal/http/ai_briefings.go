@@ -107,7 +107,7 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL string, aiBriefingTimeo
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			emitSSE(c, "error", sseErrorPayload{Message: "streaming is not supported by the server", RunID: runID})
+			emitSSE(c, "briefing_error", sseErrorPayload{Message: "streaming is not supported by the server", RunID: runID})
 			return
 		}
 
@@ -120,7 +120,7 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL string, aiBriefingTimeo
 		flusher.Flush()
 
 		if err := createMastraRun(c.Request.Context(), mastraBaseURL, runID); err != nil {
-			handleBriefingFallback(c, flusher, db, runID, fmt.Sprintf("failed to create Mastra run: %v", err))
+			handleBriefingFallback(c, flusher, db, runID, sanitizeFallbackReason(err, aiBriefingTimeout))
 			return
 		}
 
@@ -151,7 +151,7 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL string, aiBriefingTimeo
 		if streamErr != nil || strings.TrimSpace(content) == "" {
 			reason := "workflow Mastra tidak mengembalikan hasil yang bisa dipakai"
 			if streamErr != nil {
-				reason = normalizeBriefingFailure(streamErr, aiBriefingTimeout)
+				reason = sanitizeFallbackReason(streamErr, aiBriefingTimeout)
 			}
 			handleBriefingFallback(c, flusher, db, runID, reason)
 			return
@@ -179,7 +179,7 @@ func handleBriefingFallback(c *gin.Context, flusher http.Flusher, db *sql.DB, ru
 	flusher.Flush()
 
 	if db == nil {
-		emitSSE(c, "error", sseErrorPayload{
+		emitSSE(c, "briefing_error", sseErrorPayload{
 			Message: "database is unavailable; deterministic fallback cannot be generated",
 			RunID:   runID,
 		})
@@ -189,8 +189,8 @@ func handleBriefingFallback(c *gin.Context, flusher http.Flusher, db *sql.DB, ru
 
 	fallbackData, err := loadBriefingFallbackData(c.Request.Context(), db)
 	if err != nil {
-		emitSSE(c, "error", sseErrorPayload{
-			Message: fmt.Sprintf("failed to build deterministic fallback: %v", err),
+		emitSSE(c, "briefing_error", sseErrorPayload{
+			Message: "failed to build deterministic fallback",
 			RunID:   runID,
 		})
 		flusher.Flush()
@@ -238,7 +238,7 @@ func createMastraRun(parent context.Context, mastraBaseURL, runID string) error 
 	defer res.Body.Close()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("mastra create-run returned status %d: %s", res.StatusCode, readResponseSnippet(res.Body))
+		return fmt.Errorf("mastra create-run returned status %d", res.StatusCode)
 	}
 
 	return nil
@@ -284,7 +284,7 @@ func streamMastraBriefing(
 	defer res.Body.Close()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return "", fmt.Errorf("mastra stream returned status %d: %s", res.StatusCode, readResponseSnippet(res.Body))
+		return "", fmt.Errorf("mastra stream returned status %d", res.StatusCode)
 	}
 
 	var buffer []byte
@@ -712,20 +712,18 @@ func buildMastraURL(baseURL, path string, query map[string]string) (string, erro
 	return base.String(), nil
 }
 
-func readResponseSnippet(r io.Reader) string {
-	body, err := io.ReadAll(io.LimitReader(r, 2048))
-	if err != nil {
-		return "unable to read response body"
-	}
-	return strings.TrimSpace(string(body))
-}
-
-func normalizeBriefingFailure(err error, timeout time.Duration) string {
+func sanitizeFallbackReason(err error, timeout time.Duration) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Sprintf("local LLM melewati batas waktu %d detik", int(timeout/time.Second))
+	case err != nil && strings.Contains(err.Error(), "status 404"):
+		return "endpoint workflow Mastra belum tersedia"
+	case err != nil && strings.Contains(err.Error(), "status 4"):
+		return "permintaan ke workflow Mastra ditolak"
+	case err != nil && strings.Contains(err.Error(), "status 5"):
+		return "layanan workflow Mastra sedang bermasalah"
 	case err != nil:
-		return err.Error()
+		return "workflow Mastra sedang tidak tersedia"
 	default:
 		return "workflow Mastra tidak mengembalikan hasil yang bisa dipakai"
 	}
