@@ -1,17 +1,10 @@
+// apps/web/src/features/executive/ExecutiveOverview.tsx
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
-import { getEvents, getMeta, type Event, type Meta } from '../../lib/api/client'
-
-const INDONESIA_CENTER: [number, number] = [-2.5, 118]
-
-function magnitudeColor(mag: number): string {
-  if (mag >= 7) return '#dc2626'
-  if (mag >= 6) return '#f97316'
-  if (mag >= 5) return '#eab308'
-  return '#22c55e'
-}
+import RiskMap from '../../components/RiskMap'
+import NewsPanel from '../../components/NewsPanel'
+import { getEvents, getMeta, getNews, type Event, type Meta, type NewsItem } from '../../lib/api/client'
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
 
@@ -29,22 +22,21 @@ function severityFor(magnitude: number): Severity {
   return 'Low'
 }
 
-
-
 export default function ExecutiveOverview() {
   const [events, setEvents] = useState<Event[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
+  const [news, setNews] = useState<NewsItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [newsLoading, setNewsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [minMagnitude, setMinMagnitude] = useState(0)
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
+  const [activePerilFilter, setActivePerilFilter] = useState('all')
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
-    if (mode === 'initial') {
-      setLoading(true)
-    } else {
-      setRefreshing(true)
-    }
+    if (mode === 'initial') setLoading(true)
+    else setRefreshing(true)
     setError(null)
     try {
       const [eventsData, metaData] = await Promise.all([getEvents(), getMeta()])
@@ -58,13 +50,35 @@ export default function ExecutiveOverview() {
     }
   }, [])
 
+  const loadNews = useCallback(async () => {
+    setNewsLoading(true)
+    try {
+      const data = await getNews()
+      setNews(data)
+    } catch {
+      // News failure is non-blocking — panel shows empty state
+    } finally {
+      setNewsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void load('initial')
-  }, [load])
+    void loadNews()
+  }, [load, loadNews])
 
   const handleRefresh = useCallback(() => {
     void load('refresh')
-  }, [load])
+    void loadNews()
+  }, [load, loadNews])
+
+  const handleEventClick = useCallback((event: Event) => {
+    setSelectedEvent(event)
+  }, [])
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedEvent(null)
+  }, [])
 
   const filteredEvents = useMemo(
     () => events.filter((e) => e.magnitude >= minMagnitude),
@@ -103,27 +117,26 @@ export default function ExecutiveOverview() {
 
   return (
     <div className="space-y-8">
+      {/* KPI cards */}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {kpis.map((item) => (
           <article
             key={item.label}
             className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40"
           >
-            <p className="text-[11px] font-medium text-slate-500 leading-none">
-              {item.label}
-            </p>
+            <p className="text-[11px] font-medium text-slate-500 leading-none">{item.label}</p>
             <p className="mt-4 text-4xl font-bold text-slate-50">{item.value}</p>
             <p className="mt-3 text-sm text-slate-400">{item.caption}</p>
           </article>
         ))}
       </section>
 
+      {/* Main two-column area */}
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+        {/* Left — Watchlist */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h3 className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
-            </div>
+            <h3 className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
               <button
@@ -171,50 +184,66 @@ export default function ExecutiveOverview() {
           ) : (
             <>
               {/* Desktop table */}
-              <div className="hidden md:block">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
-                    <thead>
-                      <tr className="text-slate-400">
-                        <th className="pb-3 pr-6 font-medium">Event</th>
-                        <th className="pb-3 pr-6 font-medium">Severity</th>
-                        <th className="pb-3 pr-6 font-medium">Source</th>
-                        <th className="pb-3 font-medium">Time</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800">
-                      {filteredEvents.map((row) => {
-                        const severity = severityFor(row.magnitude)
-                        return (
-                          <tr key={row.id} className="text-slate-200">
-                            <td className="py-4 pr-6">{row.place}</td>
-                            <td className="py-4 pr-6">
-                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[severity]}`}>
-                                {severity}
-                              </span>
-                            </td>
-                            <td className="py-4 pr-6 align-top">
-                              <SourceBadge source={row.source} timestamp={row.created_at} />
-                            </td>
-                            <td className="py-4 pr-6 text-slate-400">
-                              {new Date(row.event_time).toLocaleString()}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
+                  <thead>
+                    <tr className="text-slate-400">
+                      <th className="pb-3 pr-6 font-medium">Event</th>
+                      <th className="pb-3 pr-6 font-medium">Severity</th>
+                      <th className="pb-3 pr-6 font-medium">Source</th>
+                      <th className="pb-3 font-medium">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {filteredEvents.map((row) => {
+                      const severity = severityFor(row.magnitude)
+                      const isSelected = selectedEvent?.id === row.id
+                      return (
+                        <tr
+                          key={row.id}
+                          className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 ${
+                            isSelected ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-400/20' : ''
+                          }`}
+                          onClick={() => handleEventClick(row)}
+                        >
+                          <td className="py-4 pr-6">{row.place}</td>
+                          <td className="py-4 pr-6">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[severity]}`}
+                            >
+                              {severity}
+                            </span>
+                          </td>
+                          <td className="py-4 pr-6 align-top">
+                            <SourceBadge source={row.source} timestamp={row.created_at} />
+                          </td>
+                          <td className="py-4 pr-6 text-slate-400">
+                            {new Date(row.event_time).toLocaleString()}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
 
               {/* Mobile card list */}
               <div className="space-y-3 md:hidden">
                 {filteredEvents.map((row) => {
                   const severity = severityFor(row.magnitude)
+                  const isSelected = selectedEvent?.id === row.id
                   return (
-                    <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-800/50 p-4">
+                    <article
+                      key={row.id}
+                      className={`rounded-xl border border-slate-800 bg-slate-800/50 p-4 cursor-pointer transition ${
+                        isSelected ? 'ring-1 ring-indigo-400/40' : ''
+                      }`}
+                      onClick={() => handleEventClick(row)}
+                    >
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${severityClasses[severity]}`}>
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${severityClasses[severity]}`}
+                        >
                           {severity}
                         </span>
                       </div>
@@ -233,53 +262,40 @@ export default function ExecutiveOverview() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-300">Event Map</p>
-            {events.length > 0 && (
-              <span className="text-xs text-slate-500">{events.length} events</span>
-            )}
-          </div>
-          <div className="overflow-hidden rounded-xl border border-slate-800" style={{ height: '320px' }}>
+        {/* Right column — Map + News */}
+        <div className="flex flex-col gap-4">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-300">Peta Risiko</p>
+              {events.length > 0 && (
+                <span className="text-xs text-slate-500">{events.length} events</span>
+              )}
+            </div>
+
             {loading ? (
-              <div className="flex h-full items-center justify-center gap-3 text-sm text-slate-400">
+              <div
+                className="flex items-center justify-center gap-3 rounded-xl border border-slate-800 text-sm text-slate-400"
+                style={{ height: '380px' }}
+              >
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
                 Loading map…
               </div>
             ) : (
-              <MapContainer
-                center={INDONESIA_CENTER}
-                zoom={4}
-                scrollWheelZoom={false}
-                zoomControl={false}
-                attributionControl={false}
-                style={{ height: '100%', width: '100%', background: '#0f172a' }}
-              >
-                <TileLayer url='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' />
-                {events.map((ev) => (
-                  <CircleMarker
-                    key={ev.event_id}
-                    center={[ev.latitude, ev.longitude]}
-                    radius={3 + ev.magnitude * 1.2}
-                    pathOptions={{
-                      color: magnitudeColor(ev.magnitude),
-                      fillColor: magnitudeColor(ev.magnitude),
-                      fillOpacity: 0.65,
-                      weight: 1,
-                    }}
-                  >
-                    <Popup>
-                      <div style={{ minWidth: '160px' }}>
-                        <strong>M{ev.magnitude.toFixed(1)} — {ev.place}</strong>
-                        <br />
-                        <span>{new Date(ev.event_time).toLocaleString('id-ID')}</span>
-                      </div>
-                    </Popup>
-                  </CircleMarker>
-                ))}
-              </MapContainer>
+              <RiskMap
+                events={events}
+                activePerilFilter={activePerilFilter}
+                onFilterChange={setActivePerilFilter}
+                onEventClick={handleEventClick}
+              />
             )}
           </div>
+
+          <NewsPanel
+            news={news}
+            loading={newsLoading}
+            selectedEvent={selectedEvent}
+            onClearSelection={handleClearSelection}
+          />
         </div>
       </section>
     </div>
