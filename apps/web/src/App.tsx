@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import AlertsPage from './features/alerts/AlertsPage'
 import BriefingPage from './features/briefing/BriefingPage'
+import CopilotPage from './features/copilot/CopilotPage'
 import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
 import ExposuresPage from './features/exposures/ExposuresPage'
@@ -15,6 +16,7 @@ const sections = [
   { label: 'Alerts', icon: '◆' },
   { label: 'Claims', icon: '■' },
   { label: 'Briefing', icon: '◇' },
+  { label: 'AI Copilot', icon: '✦' },
   { label: 'Source Health', icon: '◈' },
 ] as const
 
@@ -99,6 +101,8 @@ function App() {
             <AlertsPage />
           ) : activeSection === 'Briefing' ? (
             <BriefingPage />
+          ) : activeSection === 'AI Copilot' ? (
+            <CopilotPage />
           ) : activeSection === 'Source Health' ? (
             <SourceHealthPage />
           ) : (

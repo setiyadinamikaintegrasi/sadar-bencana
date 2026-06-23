@@ -423,3 +423,86 @@ export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOpti
     completed,
   }
 }
+
+/**
+ * Stream a chat message to the Analyst Copilot agent via the Go backend proxy.
+ * Returns an abort controller handle so the caller can cancel mid-stream.
+ */
+export function streamCopilotChat(
+  message: string,
+  callbacks: {
+    onChunk?: (text: string) => void
+    onComplete?: () => void
+    onError?: (err: Error) => void
+  },
+): AbortController {
+  const controller = new AbortController()
+
+  fetch(`${BASE_URL}/ai/copilot/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const body = await response.text()
+        throw new Error(`Copilot API error ${response.status}: ${body}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('Response body is not readable')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let done = false
+
+      while (!done) {
+        const { value, done: streamDone } = await reader.read()
+        done = streamDone
+
+        if (value) {
+          buffer += decoder.decode(value, { stream: true })
+
+          // Parse AI SDK v5 SSE format lines: "0:Hello\n" and "d:{...}\n"
+          const lines = buffer.split('\n')
+          // Keep the last (potentially incomplete) line in the buffer
+          buffer = lines.pop() ?? ''
+
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed) continue
+
+            // "0:..." is a text chunk (AI SDK v5 format)
+            if (trimmed.startsWith('0:')) {
+              const text = trimmed.slice(2)
+              if (text) {
+                callbacks.onChunk?.(text)
+              }
+            }
+          }
+        }
+      }
+
+      // Flush remaining buffer
+      if (buffer.trim()) {
+        const trimmed = buffer.trim()
+        if (trimmed.startsWith('0:')) {
+          const text = trimmed.slice(2)
+          if (text) {
+            callbacks.onChunk?.(text)
+          }
+        }
+      }
+
+      callbacks.onComplete?.()
+    })
+    .catch((err) => {
+      if (err.name === 'AbortError') return
+      callbacks.onError?.(err instanceof Error ? err : new Error(String(err)))
+    })
+
+  return controller
+}

@@ -1,5 +1,6 @@
 import { Mastra } from '@mastra/core/mastra'
 import { LibSQLStore } from '@mastra/libsql'
+import { chatRoute } from '@mastra/ai-sdk'
 
 import { executiveBriefingAgent } from './agents/executive-briefing-agent'
 import { analystCopilotAgent } from './agents/analyst-copilot-agent'
@@ -23,4 +24,15 @@ export const mastra = new Mastra({
     dailyBriefingWorkflow,
   },
   storage,
+  server: {
+    apiRoutes: [
+      chatRoute({
+        path: '/chat/:agentId',
+        sendStart: false,
+        sendFinish: false,
+        sendReasoning: false,
+        sendSources: false,
+      }),
+    ],
+  },
 })
