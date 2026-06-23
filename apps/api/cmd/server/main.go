@@ -44,6 +44,7 @@ func main() {
 	router.GET("/api/v1/news", apihttp.News(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
+	router.GET("/api/v1/ai/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(dbPool, cfg.MastraBaseURL, cfg.AIBriefingTimeout))
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
 	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/exposures", apihttp.Exposures(dbPool))

@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import SourceBadge from '../../components/SourceBadge'
-import { getBriefing, type Briefing } from '../../lib/api/client'
+import {
+  getBriefing,
+  type AiExecutiveBriefing,
+  type AiBriefingDoneEvent,
+  type AiBriefingErrorEvent,
+  type AiBriefingFinalEvent,
+  type AiBriefingStatusEvent,
+  type Briefing,
+  streamAiExecutiveBriefing,
+} from '../../lib/api/client'
 
 const REFRESH_INTERVAL_MS = 60_000
 
@@ -28,11 +37,36 @@ function magnitudeClasses(magnitude: number): string {
   return magnitudeBadgeClasses.low
 }
 
+type ProgressItem = {
+  id: string
+  stage: string
+  message: string
+}
+
 export default function BriefingPage() {
   const [briefing, setBriefing] = useState<Briefing | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [aiBriefing, setAiBriefing] = useState<AiExecutiveBriefing | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiStatus, setAiStatus] = useState<string>('Menunggu briefing harian.')
+  const [aiProgress, setAiProgress] = useState<ProgressItem[]>([])
+  const [aiLiveContent, setAiLiveContent] = useState('')
+  const activeAiStreamRef = useRef<ReturnType<typeof streamAiExecutiveBriefing> | null>(null)
+
+  const stopAiStream = useCallback(() => {
+    activeAiStreamRef.current?.close()
+    activeAiStreamRef.current = null
+  }, [])
+
+  const appendAiProgress = useCallback((stage: string, message: string) => {
+    setAiProgress((current) => {
+      const next = [...current, { id: `${Date.now()}-${current.length}`, stage, message }]
+      return next.slice(-6)
+    })
+  }, [])
 
   const loadBriefing = useCallback(async (mode: 'initial' | 'refresh') => {
     if (mode === 'initial') {
@@ -57,6 +91,81 @@ export default function BriefingPage() {
     }
   }, [])
 
+  const loadAiBriefing = useCallback((triggerWorkerRefresh = false) => {
+    stopAiStream()
+    setAiLoading(true)
+    setAiError(null)
+    setAiBriefing(null)
+    setAiLiveContent('')
+    setAiStatus('Menghubungkan ke stream AI executive briefing…')
+    setAiProgress([
+      {
+        id: `${Date.now()}-start`,
+        stage: 'start',
+        message: 'Menghubungkan ke backend wrapper untuk memulai briefing.',
+      },
+    ])
+
+    const handleStatus = (event: AiBriefingStatusEvent) => {
+      setAiStatus(event.message)
+      appendAiProgress(event.stage, event.message)
+    }
+
+    const handleFinal = (event: AiBriefingFinalEvent) => {
+      setAiLiveContent(event.content)
+      setAiBriefing({
+        content: event.content,
+        mode: event.mode,
+        note: event.note,
+        runId: event.runId,
+      })
+    }
+
+    const handleError = (event: AiBriefingErrorEvent) => {
+      setAiError(event.message || 'Failed to generate AI briefing.')
+      setAiStatus('Stream AI briefing berhenti karena error.')
+      appendAiProgress('error', event.message || 'Terjadi error pada stream AI briefing.')
+      setAiLoading(false)
+      activeAiStreamRef.current = null
+    }
+
+    const handleDone = (event: AiBriefingDoneEvent) => {
+      setAiStatus(
+        event.mode === 'fallback'
+          ? 'Briefing selesai dengan mode fallback.'
+          : 'Briefing selesai dihasilkan oleh AI.',
+      )
+      appendAiProgress('done', `Stream selesai untuk run ${event.runId}.`)
+      setAiLoading(false)
+      activeAiStreamRef.current = null
+    }
+
+    const stream = streamAiExecutiveBriefing({
+      triggerWorkerRefresh,
+      onStatus: handleStatus,
+      onPartial: (event) => {
+        setAiLiveContent(event.content)
+      },
+      onFinal: handleFinal,
+      onError: handleError,
+      onDone: handleDone,
+    })
+
+    activeAiStreamRef.current = stream
+
+    void stream.completed.catch((error) => {
+      if (activeAiStreamRef.current !== stream) return
+      setAiError(error instanceof Error ? error.message : 'Failed to generate AI briefing.')
+      setAiStatus('Koneksi AI briefing terputus.')
+      appendAiProgress(
+        'error',
+        error instanceof Error ? error.message : 'Koneksi AI briefing terputus.',
+      )
+      setAiLoading(false)
+      activeAiStreamRef.current = null
+    })
+  }, [appendAiProgress, stopAiStream])
+
   useEffect(() => {
     void loadBriefing('initial')
   }, [loadBriefing])
@@ -69,6 +178,13 @@ export default function BriefingPage() {
     return () => window.clearInterval(intervalId)
   }, [loadBriefing])
 
+  useEffect(() => {
+    if (!briefing || aiBriefing || aiLoading) return
+    void loadAiBriefing(false)
+  }, [aiBriefing, aiLoading, briefing, loadAiBriefing])
+
+  useEffect(() => stopAiStream, [stopAiStream])
+
   const formattedDate = useMemo(
     () => (briefing ? formatBriefingDate(briefing.date) : '—'),
     [briefing],
@@ -76,7 +192,12 @@ export default function BriefingPage() {
 
   const handleRefresh = useCallback(() => {
     void loadBriefing('refresh')
-  }, [loadBriefing])
+    loadAiBriefing(true)
+  }, [loadAiBriefing, loadBriefing])
+
+  const handleAiRefresh = useCallback(() => {
+    loadAiBriefing(true)
+  }, [loadAiBriefing])
 
   return (
     <div className="space-y-8">
@@ -132,69 +253,166 @@ export default function BriefingPage() {
           </p>
         </section>
       ) : briefing ? (
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="text-[11px] font-medium text-indigo-400">Briefing Date</p>
-              <span className="inline-flex rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
-                {briefing.event_count} monitored events
-              </span>
-            </div>
-            <h4 className="mt-3 text-2xl font-semibold text-slate-50">{formattedDate}</h4>
-            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5">
-              <p className="text-[11px] font-medium text-slate-500">Summary</p>
-              <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-300">
-                {briefing.summary}
-              </p>
-            </div>
-          </article>
-
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
-            <div className="flex items-center justify-between gap-4">
+        <>
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <h4 className="text-xl font-semibold text-slate-50">
-                  Priority catastrophe watchlist
-                </h4>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h4 className="text-xl font-semibold text-slate-50">AI Executive Briefing</h4>
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
+                      aiBriefing?.mode === 'fallback'
+                        ? 'bg-amber-500/15 text-amber-300 ring-amber-400/30'
+                        : 'bg-indigo-500/15 text-indigo-300 ring-indigo-400/30'
+                    }`}
+                  >
+                    {aiBriefing?.mode === 'fallback' ? 'Fallback API' : 'Mastra + Local LLM'}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">
+                  Ringkasan assistive yang di-stream dari backend wrapper. Jika backend memutuskan fallback, hasil akhir tetap ditampilkan dengan penanda yang sama.
+                </p>
+                {aiBriefing ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Run ID: {aiBriefing.runId} · {aiBriefing.note}
+                  </p>
+                ) : null}
               </div>
+
+              <button
+                type="button"
+                onClick={handleAiRefresh}
+                disabled={aiLoading}
+                className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {aiLoading ? 'Generating…' : aiBriefing ? 'Refresh AI Briefing' : 'Generate AI Briefing'}
+              </button>
             </div>
 
-            {briefing.event_count === 0 || briefing.top_events.length === 0 ? (
-              <div className="mt-6 rounded-xl border border-dashed border-slate-700 bg-slate-800/50 p-8 text-center">
-                <p className="text-sm font-medium text-slate-200">No events in today&apos;s briefing</p>
-                <p className="mt-2 text-sm text-slate-400">
-                  The API returned an empty daily briefing. Refresh again after the next ingest cycle.
+            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5">
+              <div className="mb-4 rounded-xl border border-slate-800/80 bg-slate-900/70 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Current status
+                    </p>
+                    <p className="mt-2 text-sm text-slate-300">{aiStatus}</p>
+                  </div>
+                  {aiLoading ? (
+                    <span className="mt-1 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
+                  ) : null}
+                </div>
+                {aiProgress.length > 0 ? (
+                  <ol className="mt-4 space-y-2 text-sm text-slate-400">
+                    {aiProgress.map((item, index) => (
+                      <li key={item.id} className="flex gap-3">
+                        <span className="mt-0.5 text-xs font-semibold text-slate-500">
+                          {index + 1}.
+                        </span>
+                        <div>
+                          <p className="font-medium capitalize text-slate-300">{item.stage}</p>
+                          <p className="text-slate-400">{item.message}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+              </div>
+
+              {aiLoading && aiLiveContent.length === 0 ? (
+                <div className="flex items-center gap-3 text-sm text-slate-400">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
+                  Menunggu potongan briefing pertama dari backend stream...
+                </div>
+              ) : aiError ? (
+                <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+                  <p className="font-semibold">AI briefing gagal dimuat</p>
+                  <p className="mt-2 break-words text-rose-200/80">{aiError}</p>
+                </div>
+              ) : aiBriefing || aiLiveContent ? (
+                <>
+                  {aiBriefing?.mode === 'fallback' ? (
+                    <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                      <p className="font-semibold">Fallback aktif</p>
+                      <p className="mt-1 text-amber-100/80">{aiBriefing.note}</p>
+                    </div>
+                  ) : null}
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words font-sans text-sm leading-7 text-slate-300">
+                    {aiLiveContent || aiBriefing?.content}
+                  </pre>
+                </>
+              ) : (
+                <p className="text-sm text-slate-400">
+                  AI briefing belum dibuat. Tekan tombol generate untuk memulai stream dari backend wrapper.
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-[11px] font-medium text-indigo-400">Briefing Date</p>
+                <span className="inline-flex rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+                  {briefing.event_count} monitored events
+                </span>
+              </div>
+              <h4 className="mt-3 text-2xl font-semibold text-slate-50">{formattedDate}</h4>
+              <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/70 p-5">
+                <p className="text-[11px] font-medium text-slate-500">Summary</p>
+                <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-300">
+                  {briefing.summary}
                 </p>
               </div>
-            ) : (
-              <div className="mt-6 space-y-4">
-                {briefing.top_events.map((event) => (
-                  <div
-                    key={event.event_id}
-                    className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${magnitudeClasses(event.magnitude)}`}
-                          >
-                            M {event.magnitude.toFixed(1)}
-                          </span>
-                          <p className="text-sm font-semibold text-slate-100">
-                            {event.place ?? 'Unknown location'}
-                          </p>
-                        </div>
-                        <p className="mt-3 text-xs text-slate-500">Event ID: {event.event_id}</p>
-                      </div>
+            </article>
 
-                      {event.source ? <SourceBadge source={event.source} /> : null}
-                    </div>
-                  </div>
-                ))}
+            <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xl font-semibold text-slate-50">
+                    Priority catastrophe watchlist
+                  </h4>
+                </div>
               </div>
-            )}
-          </article>
-        </section>
+
+              {briefing.event_count === 0 || briefing.top_events.length === 0 ? (
+                <div className="mt-6 rounded-xl border border-dashed border-slate-700 bg-slate-800/50 p-8 text-center">
+                  <p className="text-sm font-medium text-slate-200">No events in today&apos;s briefing</p>
+                  <p className="mt-2 text-sm text-slate-400">
+                    The API returned an empty daily briefing. Refresh again after the next ingest cycle.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-6 space-y-4">
+                  {briefing.top_events.map((event) => (
+                    <div
+                      key={event.event_id}
+                      className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${magnitudeClasses(event.magnitude)}`}
+                            >
+                              M {event.magnitude.toFixed(1)}
+                            </span>
+                            <p className="text-sm font-semibold text-slate-100">
+                              {event.place ?? 'Unknown location'}
+                            </p>
+                          </div>
+                          <p className="mt-3 text-xs text-slate-500">Event ID: {event.event_id}</p>
+                        </div>
+
+                        {event.source ? <SourceBadge source={event.source} /> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </section>
+        </>
       ) : (
         <section className="rounded-2xl border border-dashed border-slate-700 bg-slate-900 p-8 text-center shadow-2xl shadow-slate-950/40">
           <p className="text-sm font-medium text-slate-200">No briefing data available</p>

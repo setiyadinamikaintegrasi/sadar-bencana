@@ -67,14 +67,18 @@ export async function getNews(): Promise<NewsItem[]> {
 }
 
 export type RiskScore = {
-  event_id: string
+  entity_id: string
   place: string
   magnitude: number
   score: number
-  band: string
-  currency: string
-  estimated_loss: number
-  updated_at: string
+  source: string
+  calculated_at: string
+  factors: {
+    severity: string | null
+    magnitude: number | null
+    base_score: number | null
+    estimated_impact: string | null
+  }
 }
 
 export type RiskScoresResponse = {
@@ -188,4 +192,234 @@ export async function getConnectorHealth(): Promise<ConnectorHealth[]> {
     '/health/connectors',
   )
   return res.data
+}
+
+export type AiExecutiveBriefing = {
+  content: string
+  mode: 'ai' | 'fallback'
+  runId: string
+  note: string
+}
+
+export type AiBriefingStatusEvent = {
+  stage: string
+  message: string
+  runId: string
+  mode?: 'ai' | 'fallback'
+}
+
+export type AiBriefingPartialEvent = {
+  content: string
+  runId: string
+  mode: 'ai' | 'fallback'
+}
+
+export type AiBriefingFinalEvent = {
+  content: string
+  runId: string
+  mode: 'ai' | 'fallback'
+  note: string
+}
+
+export type AiBriefingErrorEvent = {
+  message: string
+  runId?: string
+}
+
+export type AiBriefingDoneEvent = {
+  runId: string
+  mode: 'ai' | 'fallback'
+}
+
+export type StreamAiExecutiveBriefingOptions = {
+  triggerWorkerRefresh?: boolean
+  onStatus?: (event: AiBriefingStatusEvent) => void
+  onPartial?: (event: AiBriefingPartialEvent) => void
+  onFinal?: (event: AiBriefingFinalEvent) => void
+  onError?: (event: AiBriefingErrorEvent) => void
+  onDone?: (event: AiBriefingDoneEvent) => void
+}
+
+type ParsedAiBriefingEventMap = {
+  status: AiBriefingStatusEvent
+  partial: AiBriefingPartialEvent
+  final: AiBriefingFinalEvent
+  error: AiBriefingErrorEvent
+  done: AiBriefingDoneEvent
+}
+
+function parseStreamEvent<T>(event: MessageEvent<string>): T {
+  return JSON.parse(event.data) as T
+}
+
+function buildDeterministicBriefing(
+  briefing: Briefing,
+  alerts: Alert[],
+  riskScores: RiskScore[],
+  reason: string,
+): string {
+  const topEvents = briefing.top_events.slice(0, 3)
+  const topAlerts = alerts.slice(0, 3)
+  const topRisks = riskScores.slice(0, 3)
+
+  const lines = [
+    'Ringkasan situasi',
+    briefing.summary,
+    '',
+    'Top risk movers',
+    ...(topEvents.length > 0
+      ? topEvents.map(
+          (event, index) =>
+            `${index + 1}. ${event.place ?? 'Lokasi belum tersedia'} — event_id ${event.event_id} · source ${event.source ?? 'n/a'} · M${event.magnitude.toFixed(1)}`,
+        )
+      : ['1. Tidak ada top event pada briefing hari ini.']),
+    '',
+    'Probable impact',
+    ...(topRisks.length > 0
+      ? topRisks.map(
+          (risk, index) =>
+            `${index + 1}. ${risk.place} — event_id ${risk.entity_id} · source ${risk.source} · score ${risk.score} · severity ${risk.factors.severity ?? 'n/a'}`,
+        )
+      : ['1. Risk score belum tersedia dari endpoint saat ini.']),
+    '',
+    'Recommended follow-up actions',
+    ...(topAlerts.length > 0
+      ? topAlerts.map(
+          (alert, index) =>
+            `${index + 1}. Tinjau alert ${alert.id} (${alert.severity})${alert.source ? ` · source ${alert.source}` : ''}${alert.event_id ? ` · event_id ${alert.event_id}` : ''} — ${alert.message}`,
+        )
+      : ['1. Tidak ada alert prioritas yang perlu ditindaklanjuti saat ini.']),
+    '',
+    `Catatan fallback: ${reason}`,
+  ]
+
+  return lines.join('\n')
+}
+
+export async function getAiExecutiveBriefing(
+  options?: { triggerWorkerRefresh?: boolean },
+): Promise<AiExecutiveBriefing> {
+  return new Promise<AiExecutiveBriefing>((resolve, reject) => {
+    let finalEvent: AiBriefingFinalEvent | null = null
+    let settled = false
+
+    const stream = streamAiExecutiveBriefing({
+      triggerWorkerRefresh: options?.triggerWorkerRefresh,
+      onFinal: (event) => {
+        finalEvent = event
+      },
+      onError: (event) => {
+        if (settled) return
+        settled = true
+        reject(new Error(event.message || 'Failed to generate AI briefing.'))
+      },
+      onDone: () => {
+        if (settled) return
+        if (!finalEvent) {
+          settled = true
+          reject(new Error('AI briefing stream selesai tanpa payload final.'))
+          return
+        }
+
+        settled = true
+        resolve({
+          content: finalEvent.content,
+          mode: finalEvent.mode,
+          runId: finalEvent.runId,
+          note: finalEvent.note,
+        })
+      },
+    })
+
+    void stream.completed.catch((error) => {
+      if (settled) return
+      settled = true
+      reject(error instanceof Error ? error : new Error('Failed to generate AI briefing.'))
+    })
+  })
+}
+
+export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOptions = {}) {
+  const params = new URLSearchParams()
+
+  if (options.triggerWorkerRefresh) {
+    params.set('triggerWorkerRefresh', 'true')
+  }
+
+  params.set('_ts', Date.now().toString())
+
+  const url = `${BASE_URL}/ai/briefings/executive/stream?${params.toString()}`
+  const eventSource = new EventSource(url)
+
+  let closed = false
+  let settled = false
+  let resolveCompleted!: () => void
+  let rejectCompleted!: (error: Error) => void
+
+  const completed = new Promise<void>((resolve, reject) => {
+    resolveCompleted = resolve
+    rejectCompleted = reject
+  })
+
+  const cleanup = () => {
+    if (closed) return
+    closed = true
+    eventSource.close()
+  }
+
+  const finishSuccess = () => {
+    if (settled) return
+    settled = true
+    cleanup()
+    resolveCompleted()
+  }
+
+  const finishError = (error: Error) => {
+    if (settled) return
+    settled = true
+    cleanup()
+    rejectCompleted(error)
+  }
+
+  const attach = <K extends keyof ParsedAiBriefingEventMap>(
+    eventName: K,
+    handler?: (event: ParsedAiBriefingEventMap[K]) => void,
+  ) => {
+    eventSource.addEventListener(eventName, (rawEvent) => {
+      try {
+        const parsedEvent = parseStreamEvent<ParsedAiBriefingEventMap[K]>(
+          rawEvent as MessageEvent<string>,
+        )
+        handler?.(parsedEvent)
+
+        if (eventName === 'error') {
+          finishError(new Error((parsedEvent as AiBriefingErrorEvent).message || 'AI briefing stream failed.'))
+        }
+
+        if (eventName === 'done') {
+          finishSuccess()
+        }
+      } catch (error) {
+        finishError(error instanceof Error ? error : new Error('Invalid AI briefing stream payload.'))
+      }
+    })
+  }
+
+  attach('status', options.onStatus)
+  attach('partial', options.onPartial)
+  attach('final', options.onFinal)
+  attach('error', options.onError)
+  attach('done', options.onDone)
+
+  eventSource.onerror = () => {
+    finishError(new Error('Koneksi AI briefing terputus sebelum selesai.'))
+  }
+
+  return {
+    close: () => {
+      cleanup()
+      finishSuccess()
+    },
+    completed,
+  }
 }
