@@ -35,6 +35,7 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
   { label: 'Exposures', section: 'Exposures', icon: '▲' },
   { label: 'Claims', section: 'Claims', icon: '■' },
   { label: 'Briefing', section: 'Briefing', icon: '◇' },
+  { label: 'AI Copilot', section: 'AI Copilot', icon: '✦' },
   { label: 'Source Health', section: 'Source Health', icon: '◈' },
 ]
 

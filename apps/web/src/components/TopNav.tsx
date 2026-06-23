@@ -73,7 +73,7 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
         {overflowOpen && (
           <>
             <div
-              className="fixed inset-0 z-10"
+              className="fixed inset-0 z-[15]"
               onClick={() => setOverflowOpen(false)}
             />
             <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-xl border border-slate-700 bg-slate-900 py-2 shadow-2xl shadow-slate-950/60">
