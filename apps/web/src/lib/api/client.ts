@@ -466,7 +466,10 @@ export function streamCopilotChat(
         if (value) {
           buffer += decoder.decode(value, { stream: true })
 
-          // Parse AI SDK v5 SSE format lines: "0:Hello\n" and "d:{...}\n"
+          // Parse Mastra chatRoute SSE format:
+          //   data: {"type":"tool-input-delta","inputTextDelta":"..."}   — tool progress (intermediate)
+          //   data: {"type":"result","...":"final answer..."}            — result event
+          //   0:"some text\n"                                            — AI SDK v5 text chunk (final generation)
           const lines = buffer.split('\n')
           // Keep the last (potentially incomplete) line in the buffer
           buffer = lines.pop() ?? ''
@@ -475,12 +478,44 @@ export function streamCopilotChat(
             const trimmed = line.trim()
             if (!trimmed) continue
 
-            // "0:..." is a text chunk (AI SDK v5 format)
+            // "0:..." — AI SDK v5 text chunk (final generation text)
             if (trimmed.startsWith('0:')) {
-              const text = trimmed.slice(2)
+              let text = trimmed.slice(2)
+              // AI SDK wraps text in quotes: 0:"Hello\n"  — unwrap
+              if (text.startsWith('"') && text.endsWith('"')) {
+                text = text.slice(1, -1)
+              }
+              // Unescape \n to actual newline
+              text = text.replace(/\\n/g, '\n')
               if (text) {
                 callbacks.onChunk?.(text)
               }
+              continue
+            }
+
+            // "data: {...}" — Mastra chatRoute event (tool calls, intermediate progress)
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim()
+              if (!jsonStr) continue
+              try {
+                const event = JSON.parse(jsonStr)
+                // Show tool progress as a subtle indicator
+                if (event.type === 'tool-input-start' && event.toolName) {
+                  callbacks.onChunk?.(`[🔍 ${event.toolName}] `)
+                } else if (event.type === 'tool-input-delta' && event.inputTextDelta) {
+                  // For tool arguments — show only significant chars to avoid flooding
+                  const delta = event.inputTextDelta
+                  // Filter out punctuation-only deltas
+                  if (/[a-zA-Z0-9]/.test(delta)) {
+                    callbacks.onChunk?.(delta)
+                  }
+                } else if (event.type === 'error' && event.error) {
+                  callbacks.onChunk?.(`[Error: ${event.error}] `)
+                }
+              } catch {
+                // Malformed JSON — skip silently
+              }
+              continue
             }
           }
         }
@@ -490,7 +525,11 @@ export function streamCopilotChat(
       if (buffer.trim()) {
         const trimmed = buffer.trim()
         if (trimmed.startsWith('0:')) {
-          const text = trimmed.slice(2)
+          let text = trimmed.slice(2)
+          if (text.startsWith('"') && text.endsWith('"')) {
+            text = text.slice(1, -1)
+          }
+          text = text.replace(/\\n/g, '\n')
           if (text) {
             callbacks.onChunk?.(text)
           }
