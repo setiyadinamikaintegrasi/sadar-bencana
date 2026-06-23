@@ -1,3 +1,4 @@
+// apps/web/src/App.tsx
 import { useState } from 'react'
 import AlertsPage from './features/alerts/AlertsPage'
 import BriefingPage from './features/briefing/BriefingPage'
@@ -7,6 +8,7 @@ import ExecutiveOverview from './features/executive/ExecutiveOverview'
 import ExposuresPage from './features/exposures/ExposuresPage'
 import MapPage from './features/map/MapPage'
 import SourceHealthPage from './features/health/SourceHealthPage'
+import TopNav from './components/TopNav'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
@@ -40,52 +42,21 @@ function App() {
   const [activeSection, setActiveSection] = useState<Section>('Executive Overview')
   const [moreOpen, setMoreOpen] = useState(false)
 
-  const navigate = (section: Section) => {
-    setActiveSection(section)
+  const navigate = (section: string) => {
+    setActiveSection(section as Section)
     setMoreOpen(false)
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Desktop sidebar — hidden on mobile */}
-      <aside className="fixed inset-y-0 left-0 z-10 hidden w-64 flex-col border-r border-slate-800 bg-slate-900 md:flex">
-        <div className="border-b border-slate-800 px-6 py-6">
-          <p className="text-[10px] font-semibold text-indigo-400">PT Tugure</p>
-          <h1 className="mt-1 text-2xl font-semibold text-slate-50">Risk Monitor</h1>
-        </div>
-
-        <nav className="flex-1 px-4 py-6">
-          <ul className="space-y-2">
-            {sections.map((section) => {
-              const isActive = section.label === activeSection
-              return (
-                <li key={section.label}>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSection(section.label)}
-                    className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
-                      isActive
-                        ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-inset ring-indigo-400/40'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
-                    }`}
-                  >
-                    <span className={`text-xs ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>{section.icon}</span>
-                    <span>{section.label}</span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        </nav>
-      </aside>
+      {/* Desktop top nav — hidden on mobile */}
+      <TopNav activeSection={activeSection} onNavigate={navigate} />
 
       {/* Main content */}
-      <div className="flex min-h-screen flex-col md:ml-64">
-        <header className="border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:px-8 md:py-6">
-          <h2 className="text-xl font-semibold text-slate-50 md:text-3xl">
-            <span className="md:hidden">{activeSection}</span>
-            <span className="hidden md:inline">Reinsurance Risk Monitor</span>
-          </h2>
+      <div className="flex min-h-screen flex-col md:pt-14">
+        {/* Mobile-only header */}
+        <header className="border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:hidden">
+          <h2 className="text-xl font-semibold text-slate-50">{activeSection}</h2>
         </header>
 
         <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
@@ -113,7 +84,7 @@ function App() {
         </main>
       </div>
 
-      {/* Mobile bottom tab bar */}
+      {/* Mobile bottom tab bar — unchanged */}
       <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-slate-800 bg-slate-900 md:hidden">
         {bottomTabs.map((tab) => {
           const isActive = tab.section === activeSection
