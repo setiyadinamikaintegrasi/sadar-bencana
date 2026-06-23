@@ -20,8 +20,12 @@ function magnitudeColor(mag: number): string {
   return '#22c55e'
 }
 
+const pulseIconCache = new Map<string, L.DivIcon>()
+
 function createPulseIcon(color: string): L.DivIcon {
-  return L.divIcon({
+  const cached = pulseIconCache.get(color)
+  if (cached) return cached
+  const icon = L.divIcon({
     className: '',
     iconSize: [24, 24],
     iconAnchor: [12, 12],
@@ -30,6 +34,8 @@ function createPulseIcon(color: string): L.DivIcon {
       <div style="position:absolute;top:6px;left:6px;width:12px;height:12px;border-radius:9999px;background:${color};"></div>
     </div>`,
   })
+  pulseIconCache.set(color, icon)
+  return icon
 }
 
 interface RiskMapProps {
