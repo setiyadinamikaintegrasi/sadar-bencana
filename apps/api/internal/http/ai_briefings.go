@@ -21,7 +21,7 @@ import (
 
 const (
 	defaultFallbackBriefingSummary = "Briefing module not yet active"
-	mastraWorkflowPath             = "/workflows/dailyBriefingWorkflow"
+	mastraWorkflowPath             = "/api/workflows/daily-briefing-workflow"
 	mastraRecordSeparator          = byte(0x1e)
 	mastraCreateRunTimeout         = 15 * time.Second
 )

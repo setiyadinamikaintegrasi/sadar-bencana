@@ -115,6 +115,9 @@ Keluaran wajib:
 4. Recommended follow-up actions
 5. Setiap poin wajib menyebut event_id / source / alert id bila tersedia
 6. Jangan sebut field teknis kosong/undefined
+7. Jangan menulis label atau narasi tentang fallback, mode sistem, stabilitas model, atau mekanisme runtime internal
+8. Jangan menulis judul status seperti "Fallback Lokal", "Mode AI", "LLM Stabil", atau frasa sejenis
+9. Tulis langsung isi briefing secara profesional dan ringkas, fokus pada posture risiko dan tindakan
 
 Context JSON:
 ${inputData.prompt}

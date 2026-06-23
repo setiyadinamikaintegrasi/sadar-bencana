@@ -38,7 +38,7 @@ func Load() Config {
 		Env:               getEnv("API_ENV", "local"),
 		DatabaseURL:       getEnv("DATABASE_URL", DefaultDatabaseURL()),
 		MastraBaseURL:     getEnv("MASTRA_BASE_URL", "http://127.0.0.1:4111"),
-		AIBriefingTimeout: getEnvDuration("AI_BRIEFING_TIMEOUT", 45*time.Second),
+		AIBriefingTimeout: getEnvDuration("AI_BRIEFING_TIMEOUT", 150*time.Second),
 	}
 }
 
