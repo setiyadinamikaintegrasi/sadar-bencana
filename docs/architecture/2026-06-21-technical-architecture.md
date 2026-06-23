@@ -13,7 +13,8 @@
 | Frontend | React + TypeScript + Vite + Tailwind | cepat, ringan, cocok dashboard interaktif |
 | Mapping | MapLibre GL + deck.gl | kuat untuk heatmap, layer, clustering |
 | Core API | Go + Gin | performa baik, cocok service enterprise |
-| Analytics/AI sidecar | FastAPI | fleksibel untuk scoring dan LLM orchestration |
+| Analytics/AI sidecar | FastAPI | fleksibel untuk scoring dan pipeline data |
+| AI orchestration | Mastra (Node.js/TypeScript) | agent/workflow/tooling untuk briefing, copilot underwriting, dan explainability |
 | Database | PostgreSQL | relational kuat untuk domain reasuransi |
 | Cache / queue ringan | Redis | caching, job coordination, transient state |
 | Background jobs | worker Python / Go | ingestion, scoring, summarization |
@@ -42,10 +43,18 @@ Tanggung jawab:
 - konektor BMKG, USGS, GDACS, news feeds
 - normalization pipeline
 - risk scoring engine
-- AI summarization / briefing
+- penyusunan context briefing
 - alert generation
 
-### D. database
+### D. apps/mastra (Node.js/TypeScript)
+Tanggung jawab:
+- agent dan workflow AI
+- tool wrapper ke Go API / worker API
+- executive briefing generation dengan citation
+- underwriter copilot / analyst Q&A
+- orchestrasi approval-ready narrative tanpa mengambil alih source of record
+
+### E. database
 Schema utama:
 - master entities
 - normalized event store
@@ -142,16 +151,20 @@ Schema utama:
 - connector -> raw landing -> normalizer -> canonical event -> scoring -> alert
 
 ## 8. AI proposal
-### Use cases
+### AI use cases
 - executive daily briefing
 - event summary per region
 - alert explanation
 - probable impact narrative
+- analyst copilot untuk tanya-jawab situasional berbasis source internal dashboard
 
 ### AI operating model
 - **default:** local LLM (`localhost:8080`) untuk data sensitif
 - cloud model hanya untuk data publik/non-rahasia bila diizinkan
 - semua output AI wajib menyimpan citation/source ids
+- **Mastra sebagai orchestration layer**, bukan pengganti Go API atau worker Python
+- agent hanya membaca lewat tool terkontrol (`events`, `alerts`, `exposures`, `news`, `briefings`)
+- semua write operation tetap lewat service domain yang eksplisit dan teraudit
 
 ### Guardrails
 - no direct claim PII to external LLM

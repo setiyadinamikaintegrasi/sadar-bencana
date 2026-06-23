@@ -6,6 +6,7 @@
   "scripts": {
     "dev:web": "npm run dev --workspace apps/web",
     "dev:api": "cd apps/api && go run ./cmd/server",
+    "dev:mastra": "npm run dev --workspace apps/mastra",
     "verify": "bash scripts/verify-structure.sh"
   }
 }
