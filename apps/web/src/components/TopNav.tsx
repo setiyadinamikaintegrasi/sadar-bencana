@@ -8,7 +8,7 @@ const PRIMARY_TABS = [
 ] as const
 
 const OVERFLOW_TABS = [
-  { label: 'Exposures', icon: '▲' },
+  { label: 'Kontrak / Risiko', icon: '▲' },
   { label: 'Claims', icon: '■' },
   { label: 'Briefing', icon: '◇' },
   { label: 'AI Copilot', icon: '✦' },
