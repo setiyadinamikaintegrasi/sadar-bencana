@@ -356,7 +356,7 @@ export default function ExecutiveOverview() {
               </span>
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              Peta utama ditempatkan paling atas agar cepat diakses untuk zoom, pan, monitoring event, news pin, dan layer risiko.
+              Peta interaktif real-time yang menampilkan sebaran event bencana (gempa, karhutla, vulkanik, banjir) dan titik berita geolocated. Dilengkapi filter layer per kategori, zoom & pan, serta legenda warna untuk identifikasi risiko kawasan secara cepat.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
