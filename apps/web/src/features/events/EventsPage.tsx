@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
-import { getEvents, getExposures, type Event, type ExposureRule } from '../../lib/api/client'
+import { getEvents, getAccumulation, type Event, type AccumulationResult } from '../../lib/api/client'
+import { eventTypeToPerilClient } from '../../components/perilMap'
+import { formatIDRCompact } from '../contracts/format'
 
 const REFRESH_INTERVAL_MS = 60_000
 
@@ -22,17 +24,16 @@ function severityFor(magnitude: number): Severity {
 }
 
 const ALL_SOURCES = '__all__'
-const ALL_REGIONS = '__all__'
 
 export default function EventsPage() {
   const [events, setEvents] = useState<Event[]>([])
-  const [regions, setRegions] = useState<ExposureRule[]>([])
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
+  const [acc, setAcc] = useState<AccumulationResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [minMagnitude, setMinMagnitude] = useState(0)
   const [sourceFilter, setSourceFilter] = useState<string>(ALL_SOURCES)
-  const [regionFilter, setRegionFilter] = useState<string>(ALL_REGIONS)
   const [placeQuery, setPlaceQuery] = useState('')
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
@@ -43,22 +44,15 @@ export default function EventsPage() {
     }
     setError(null)
     try {
-      const [eventData, exposureData] = await Promise.all([
-        getEvents(),
-        // Regions rarely change — still refetch on refresh to stay in sync.
-        regions.length === 0 ? getExposures().catch(() => null) : Promise.resolve(null),
-      ])
+      const eventData = await getEvents()
       setEvents(eventData)
-      if (exposureData) {
-        setRegions(exposureData.data)
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load events.')
     } finally {
       if (mode === 'initial') setLoading(false)
       else setRefreshing(false)
     }
-  }, [regions.length])
+  }, [])
 
   useEffect(() => {
     void load('initial')
@@ -71,6 +65,21 @@ export default function EventsPage() {
     return () => window.clearInterval(intervalId)
   }, [load])
 
+  useEffect(() => {
+    if (!selectedEvent) { setAcc(null); return }
+    let cancelled = false
+    getAccumulation({
+      lat: selectedEvent.latitude,
+      lon: selectedEvent.longitude,
+      radiusKm: 50,
+      peril: eventTypeToPerilClient(selectedEvent.event_type),
+      activeOn: selectedEvent.event_time?.slice(0, 10),
+    })
+      .then((res) => { if (!cancelled) setAcc(res.data) })
+      .catch(() => { if (!cancelled) setAcc(null) })
+    return () => { cancelled = true }
+  }, [selectedEvent])
+
   const handleRefresh = useCallback(() => {
     void load('refresh')
   }, [load])
@@ -82,37 +91,19 @@ export default function EventsPage() {
     return Array.from(seen).sort((a, b) => a.localeCompare(b))
   }, [events])
 
-  // Build a lookup: region_name → lowercase keywords for O(1) matching.
-  const regionKeywordsMap = useMemo(() => {
-    const m = new Map<string, string[]>()
-    regions.forEach((r) => {
-      m.set(r.region_name, (r.region_keywords ?? []).map((k) => k.toLowerCase()))
-    })
-    return m
-  }, [regions])
-
   const filteredEvents = useMemo(() => {
     const query = placeQuery.trim().toLowerCase()
-    const selectedKeywords =
-      regionFilter !== ALL_REGIONS ? regionKeywordsMap.get(regionFilter) ?? [] : []
     return events.filter((event) => {
       if (event.magnitude < minMagnitude) return false
       if (sourceFilter !== ALL_SOURCES && event.source !== sourceFilter) return false
       if (query.length > 0 && !event.place.toLowerCase().includes(query)) return false
-      // Region filter: event.place must contain at least one keyword from the
-      // selected region's keyword list (case-insensitive substring match).
-      if (selectedKeywords.length > 0) {
-        const placeLower = event.place.toLowerCase()
-        if (!selectedKeywords.some((kw) => placeLower.includes(kw))) return false
-      }
       return true
     })
-  }, [events, minMagnitude, sourceFilter, placeQuery, regionFilter, regionKeywordsMap])
+  }, [events, minMagnitude, sourceFilter, placeQuery])
 
   const activeFilterCount =
     (minMagnitude > 0 ? 1 : 0) +
     (sourceFilter !== ALL_SOURCES ? 1 : 0) +
-    (regionFilter !== ALL_REGIONS ? 1 : 0) +
     (placeQuery.trim().length > 0 ? 1 : 0)
 
   return (
@@ -143,26 +134,6 @@ export default function EventsPage() {
 
         <div className="mt-6 flex flex-col gap-3 border-t border-slate-800 pt-6 md:flex-row md:items-center md:justify-between">
           <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
-
-          <label className="inline-flex items-center gap-3 text-sm text-slate-300">
-            <span className="text-xs font-medium text-slate-400">
-              Region
-            </span>
-            <select
-              value={regionFilter}
-              onChange={(e) => setRegionFilter(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400 md:w-auto"
-            >
-              <option value={ALL_REGIONS} className="bg-slate-800 text-slate-100">
-                All regions
-              </option>
-              {regions.map((r) => (
-                <option key={r.id} value={r.region_name} className="bg-slate-800 text-slate-100">
-                  {r.region_name}
-                </option>
-              ))}
-            </select>
-          </label>
 
           <label className="inline-flex items-center gap-3 text-sm text-slate-300">
             <span className="text-xs font-medium text-slate-400">
@@ -205,6 +176,19 @@ export default function EventsPage() {
           </p>
         ) : null}
       </section>
+
+      {acc && (
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <h4 className="text-sm font-semibold text-slate-100">Akumulasi dalam radius 50 km</h4>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <Stat label="Objek" value={`${acc.summary.count}`} />
+            <Stat label="TSI" value={formatIDRCompact(acc.summary.sum_insured)} />
+            <Stat label="Share" value={formatIDRCompact(acc.summary.share_amount)} />
+            <Stat label="Premi" value={formatIDRCompact(acc.summary.premium)} />
+            <Stat label="Klaim" value={formatIDRCompact(acc.summary.claim_amount)} />
+          </div>
+        </section>
+      )}
 
       {loading ? (
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/40">
@@ -253,8 +237,13 @@ export default function EventsPage() {
                 <tbody className="divide-y divide-slate-800">
                   {filteredEvents.map((row) => {
                     const severity = severityFor(row.magnitude)
+                    const isSelected = selectedEvent?.id === row.id
                     return (
-                      <tr key={row.id} className="text-slate-200">
+                      <tr
+                        key={row.id}
+                        onClick={() => setSelectedEvent(isSelected ? null : row)}
+                        className={`cursor-pointer transition hover:bg-slate-800/50 ${isSelected ? 'bg-indigo-500/10 text-slate-50' : 'text-slate-200'}`}
+                      >
                         <td className="py-4 pr-6">
                           <p className="font-medium text-slate-100">{row.place}</p>
                           <p className="mt-1 text-xs text-slate-500">
@@ -289,8 +278,13 @@ export default function EventsPage() {
           <div className="space-y-3 md:hidden">
             {filteredEvents.map((row) => {
               const severity = severityFor(row.magnitude)
+              const isSelected = selectedEvent?.id === row.id
               return (
-                <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-800/50 p-4">
+                <article
+                  key={row.id}
+                  onClick={() => setSelectedEvent(isSelected ? null : row)}
+                  className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition ${isSelected ? 'ring-1 ring-inset ring-indigo-400/40' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -319,6 +313,15 @@ export default function EventsPage() {
           </div>
         </section>
       )}
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] text-slate-500">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-slate-100">{value}</p>
     </div>
   )
 }

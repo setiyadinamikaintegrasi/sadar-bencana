@@ -5,14 +5,14 @@ import BriefingPage from './features/briefing/BriefingPage'
 import CopilotPage from './features/copilot/CopilotPage'
 import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
-import ExposuresPage from './features/exposures/ExposuresPage'
+import ContractsPage from './features/contracts/ContractsPage'
 import SourceHealthPage from './features/health/SourceHealthPage'
 import TopNav from './components/TopNav'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
   { label: 'Events', icon: '●' },
-  { label: 'Exposures', icon: '▲' },
+  { label: 'Kontrak / Risiko', icon: '▲' },
   { label: 'Alerts', icon: '◆' },
   { label: 'Claims', icon: '■' },
   { label: 'Briefing', icon: '◇' },
@@ -29,7 +29,7 @@ const bottomTabs = [
 ] as const
 
 const moreSections: { label: string; section: Section; icon: string }[] = [
-  { label: 'Exposures', section: 'Exposures', icon: '▲' },
+  { label: 'Kontrak / Risiko', section: 'Kontrak / Risiko', icon: '▲' },
   { label: 'Claims', section: 'Claims', icon: '■' },
   { label: 'Briefing', section: 'Briefing', icon: '◇' },
   { label: 'AI Copilot', section: 'AI Copilot', icon: '✦' },
@@ -62,8 +62,8 @@ function App() {
             <ExecutiveOverview />
           ) : activeSection === 'Events' ? (
             <EventsPage />
-          ) : activeSection === 'Exposures' ? (
-            <ExposuresPage />
+          ) : activeSection === 'Kontrak / Risiko' ? (
+            <ContractsPage />
           ) : activeSection === 'Alerts' ? (
             <AlertsPage />
           ) : activeSection === 'Briefing' ? (

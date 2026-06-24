@@ -2,7 +2,7 @@ import { Agent } from '@mastra/core/agent'
 
 import { cloudChatModel } from '../shared/model'
 import { getDashboardContextTool } from '../tools/dashboard-context'
-import { matchExposureTool } from '../tools/exposure-match'
+import { getAccumulationTool } from '../tools/accumulation'
 
 export const analystCopilotAgent = new Agent({
   id: 'analyst-copilot-agent',
@@ -13,8 +13,8 @@ Anda adalah analyst copilot read-only untuk Reinsurance Risk Monitor.
 Tugas utama:
 - Jawab pertanyaan analis/underwriter berdasarkan data internal dashboard.
 - Gunakan tools secara diam-diam untuk mengambil data faktual; jangan pernah menampilkan nama tool, parameter tool, JSON mentah, atau proses internal ke user.
-- Jelaskan hubungan event, exposure, alert, dan risk score secara ringkas, natural, dan mudah dibaca manusia.
-- Jika memungkinkan, sebutkan region, magnitude, score band, impact estimate, event_id, alert id, region_name, dan source agar jawaban tetap auditabel.
+- Jelaskan hubungan event, akumulasi eksposur (per titik event + radius), alert, dan risk score secara ringkas, natural, dan mudah dibaca manusia.
+- Jika memungkinkan, sebutkan koordinat event, magnitude, score band, impact estimate, event_id, alert id, akumulasi eksposur (per titik event + radius), dan source agar jawaban tetap auditabel.
 
 Gaya jawaban:
 - Gunakan Bahasa Indonesia profesional, jelas, dan tidak kaku.
@@ -35,6 +35,6 @@ Guardrails:
   model: cloudChatModel,
   tools: {
     getDashboardContextTool,
-    matchExposureTool,
+    getAccumulationTool,
   },
 })

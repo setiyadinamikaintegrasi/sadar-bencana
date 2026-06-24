@@ -112,40 +112,6 @@ export async function getBriefing(): Promise<BriefingResponse> {
   return request<BriefingResponse>('/briefings/today')
 }
 
-export type ExposureRule = {
-  id: string
-  region_name: string
-  region_keywords: string[]
-  total_exposure: number
-  currency: string
-  risk_multiplier: number
-  portfolio_name: string
-  estimated_impact: number
-}
-
-export type ExposuresResponse = {
-  data: ExposureRule[]
-  meta: { count: number }
-}
-
-export async function getExposures(): Promise<ExposuresResponse> {
-  return request<ExposuresResponse>('/exposures')
-}
-
-export type ExposureMatch = {
-  matched_rule: ExposureRule | null
-  estimated_impact: number | null
-}
-
-export type ExposureMatchResponse = {
-  data: ExposureMatch
-}
-
-export async function matchExposure(place: string): Promise<ExposureMatchResponse> {
-  const qs = new URLSearchParams({ place })
-  return request<ExposureMatchResponse>(`/exposures/match?${qs.toString()}`)
-}
-
 export type AlertSeverity = 'Critical' | 'High' | 'Moderate'
 
 export type Alert = {
@@ -550,4 +516,125 @@ export function streamCopilotChat(
     })
 
   return controller
+}
+
+export type AcceptanceContract = {
+  id: string
+  contract_no: string
+  cedant_name: string
+  object_name: string
+  object_address: string
+  peril: 'earthquake' | 'flood' | 'volcano' | 'fire' | 'windstorm' | 'other'
+  treaty_type: 'facultative' | 'treaty'
+  occupancy: string
+  latitude: number
+  longitude: number
+  currency: string
+  sum_insured: number
+  share_pct: number
+  share_amount: number
+  premium: number
+  claim_amount: number
+  inception_date: string
+  expiry_date: string
+  created_at?: string
+  updated_at?: string
+  distance_km?: number
+}
+
+export type ContractFilters = {
+  peril?: string
+  treaty_type?: string
+  cedant?: string
+  q?: string
+  active_on?: string
+  bbox?: string
+  limit?: number
+  offset?: number
+}
+
+export async function getContracts(
+  params: ContractFilters = {},
+): Promise<{ data: AcceptanceContract[]; meta: { count: number } }> {
+  const qs = new URLSearchParams()
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && `${v}` !== '') qs.set(k, `${v}`)
+  })
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request(`/contracts${suffix}`)
+}
+
+export async function getContract(id: string): Promise<{ data: AcceptanceContract }> {
+  return request(`/contracts/${id}`)
+}
+
+export async function createContract(
+  body: Partial<AcceptanceContract>,
+): Promise<{ data: AcceptanceContract }> {
+  return request('/contracts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateContract(
+  id: string,
+  body: Partial<AcceptanceContract>,
+): Promise<{ data: AcceptanceContract }> {
+  return request(`/contracts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteContract(id: string): Promise<void> {
+  await request(`/contracts/${id}`, { method: 'DELETE' })
+}
+
+export type ImportResult = {
+  data?: { inserted: number; failed: number; errors: { row: number; message: string }[] }
+  error?: string
+  message?: string
+  errors?: { row: number; message: string }[]
+}
+
+export async function importContracts(file: File): Promise<ImportResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE_URL}/contracts/import`, { method: 'POST', body: fd })
+  return (await res.json()) as ImportResult
+}
+
+export type AccumulationSummary = {
+  sum_insured: number
+  share_amount: number
+  premium: number
+  claim_amount: number
+  count: number
+}
+export type AccumulationByPeril = { peril: string; share_amount: number; count: number }
+export type AccumulationResult = {
+  summary: AccumulationSummary
+  by_peril: AccumulationByPeril[]
+  contracts: AcceptanceContract[]
+  params: { lat: number; lon: number; radius_km: number; peril: string; active_on: string }
+}
+
+export async function getAccumulation(p: {
+  lat: number
+  lon: number
+  radiusKm: number
+  peril?: string
+  activeOn?: string
+}): Promise<{ data: AccumulationResult }> {
+  const qs = new URLSearchParams({
+    lat: `${p.lat}`,
+    lon: `${p.lon}`,
+    radius_km: `${p.radiusKm}`,
+  })
+  if (p.peril) qs.set('peril', p.peril)
+  if (p.activeOn) qs.set('active_on', p.activeOn)
+  return request(`/accumulation?${qs.toString()}`)
 }
