@@ -1,9 +1,24 @@
 import { useCallback, useRef, useState } from 'react'
+import MarkdownMessage from '../../components/MarkdownMessage'
 import { streamCopilotChat } from '../../lib/api/client'
 
 type Message = {
   role: 'user' | 'assistant'
   content: string
+}
+
+function cleanAssistantContent(content: string) {
+  return content
+    .replace(/^(Saya\s+(akan|coba|perlu)\s+[^.?!]+[.?!]\s*)/i, '')
+    .replace(/^(Saya\s+sudah\s+(cek|memeriksa|melihat|menemukan|mengambil|menganalisis)[^.?!]+[.?!]\s*)/i, '')
+    .replace(/^Berdasarkan\s+data\s+yang\s+saya\s+(cek|lihat|temukan)[^.?!]+[.?!]\s*/i, '')
+    .replace(/\n\s*(Apakah\s+(Anda|Bapak|Pak Joko)[^?]+\?\s*)$/i, '')
+    .replace(/\n\s*(Ada\s+yang\s+ingin\s+ditanyakan\s+lagi\??\s*)$/i, '')
+    .replace(/\n\s*(Bila\s+(Anda|Bapak|Pak Joko)[^\n]+saya\s+siap\s+membantu\.?)\s*$/i, '')
+    .replace(/\n\s*(Jika\s+(Anda|Bapak|Pak Joko)[^\n]+saya\s+siap\s+membantu\.?)\s*$/i, '')
+    .replace(/^\s*---+\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 export default function CopilotPage() {
@@ -21,17 +36,14 @@ export default function CopilotPage() {
     const trimmed = input.trim()
     if (!trimmed || loading) return
 
-    // Add user message
     const userMessage: Message = { role: 'user', content: trimmed }
     setMessages((current) => [...current, userMessage])
     setInput('')
     setLoading(true)
 
-    // Add placeholder assistant message
     const assistantMessage: Message = { role: 'assistant', content: '' }
     setMessages((current) => [...current, assistantMessage])
 
-    // Abort previous stream if any
     abortRef.current?.abort()
 
     const controller = streamCopilotChat(trimmed, {
@@ -46,6 +58,13 @@ export default function CopilotPage() {
         scrollToBottom()
       },
       onComplete: () => {
+        setMessages((current) => {
+          const last = current[current.length - 1]
+          if (last?.role === 'assistant') {
+            return [...current.slice(0, -1), { ...last, content: cleanAssistantContent(last.content) }]
+          }
+          return current
+        })
         setLoading(false)
         abortRef.current = null
         scrollToBottom()
@@ -113,7 +132,6 @@ export default function CopilotPage() {
         </div>
       </section>
 
-      {/* Chat messages */}
       <section className="flex min-h-[400px] flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/40">
         {messages.length === 0 ? (
           <div className="flex flex-1 items-center justify-center p-8">
@@ -131,36 +149,32 @@ export default function CopilotPage() {
           </div>
         ) : (
           <div className="flex-1 space-y-3 overflow-y-auto p-4 md:p-6">
-            {messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
-                    msg.role === 'user'
-                      ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/30'
-                      : 'bg-slate-800 text-slate-200 ring-1 ring-inset ring-slate-700'
-                  }`}
-                >
-                  {msg.role === 'assistant' ? (
-                    <div className="whitespace-pre-wrap">
-                      {msg.content}
-                      {loading && idx === messages.length - 1 && !msg.content.endsWith('\n') && (
-                        <span className="ml-0.5 animate-pulse text-indigo-400">▍</span>
-                      )}
-                    </div>
-                  ) : (
-                    <p>{msg.content}</p>
-                  )}
+            {messages.map((msg, idx) => {
+              const isAssistant = msg.role === 'assistant'
+              const isStreamingLastMessage = loading && idx === messages.length - 1 && isAssistant
+
+              return (
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                      msg.role === 'user'
+                        ? 'max-w-[80%] bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/30'
+                        : 'max-w-[96%] bg-slate-800 text-slate-200 ring-1 ring-inset ring-slate-700 md:max-w-[88%]'
+                    }`}
+                  >
+                    {isAssistant ? (
+                      <MarkdownMessage content={msg.content} streaming={isStreamingLastMessage} />
+                    ) : (
+                      <p>{msg.content}</p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
             <div ref={listEndRef} />
           </div>
         )}
 
-        {/* Input area */}
         <div className="border-t border-slate-800 p-4 md:p-6">
           <div className="flex gap-3">
             <textarea
@@ -183,10 +197,8 @@ export default function CopilotPage() {
               </button>
               {loading && (
                 <>
-                  <span className="ml-2 self-center text-xs text-slate-500 italic">
-                    {messages[messages.length - 1]?.content
-                      ? 'Menulis...'
-                      : 'Memproses...'}
+                  <span className="ml-2 self-center text-xs italic text-slate-500">
+                    {messages[messages.length - 1]?.content ? 'Menulis...' : 'Memproses...'}
                   </span>
                   <button
                     type="button"

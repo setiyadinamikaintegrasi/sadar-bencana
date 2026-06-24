@@ -262,35 +262,45 @@ function buildDeterministicBriefing(
   const topAlerts = alerts.slice(0, 3)
   const topRisks = riskScores.slice(0, 3)
 
+  const eventRows = topEvents.length > 0
+    ? topEvents.map(
+        (event) =>
+          `| ${event.place ?? 'Lokasi belum tersedia'} | ${event.event_id} | ${event.source ?? 'n/a'} | M${event.magnitude.toFixed(1)} |`,
+      )
+    : ['| Tidak ada top event | - | - | - |']
+
+  const riskRows = topRisks.length > 0
+    ? topRisks.map(
+        (risk) =>
+          `| ${risk.place} | ${risk.entity_id} | ${risk.source} | ${risk.score} | ${risk.factors.severity ?? 'n/a'} |`,
+      )
+    : ['| Risk score belum tersedia | - | - | - | - |']
+
+  const actionRows = topAlerts.length > 0
+    ? topAlerts.map(
+        (alert) =>
+          `- Tinjau alert **${alert.id}** (${alert.severity})${alert.source ? ` · source ${alert.source}` : ''}${alert.event_id ? ` · event_id ${alert.event_id}` : ''}: ${alert.message}`,
+      )
+    : ['- Tidak ada alert prioritas yang perlu ditindaklanjuti saat ini.']
+
   const lines = [
-    'Ringkasan situasi',
+    '## Ringkasan Situasi',
     briefing.summary,
     '',
-    'Top risk movers',
-    ...(topEvents.length > 0
-      ? topEvents.map(
-          (event, index) =>
-            `${index + 1}. ${event.place ?? 'Lokasi belum tersedia'} — event_id ${event.event_id} · source ${event.source ?? 'n/a'} · M${event.magnitude.toFixed(1)}`,
-        )
-      : ['1. Tidak ada top event pada briefing hari ini.']),
+    '## Top Risk Movers',
+    '| Lokasi | Event ID | Source | Magnitude |',
+    '|---|---|---|---|',
+    ...eventRows,
     '',
-    'Probable impact',
-    ...(topRisks.length > 0
-      ? topRisks.map(
-          (risk, index) =>
-            `${index + 1}. ${risk.place} — event_id ${risk.entity_id} · source ${risk.source} · score ${risk.score} · severity ${risk.factors.severity ?? 'n/a'}`,
-        )
-      : ['1. Risk score belum tersedia dari endpoint saat ini.']),
+    '## Probable Impact',
+    '| Lokasi | Event ID | Source | Score | Severity |',
+    '|---|---|---|---|---|',
+    ...riskRows,
     '',
-    'Recommended follow-up actions',
-    ...(topAlerts.length > 0
-      ? topAlerts.map(
-          (alert, index) =>
-            `${index + 1}. Tinjau alert ${alert.id} (${alert.severity})${alert.source ? ` · source ${alert.source}` : ''}${alert.event_id ? ` · event_id ${alert.event_id}` : ''} — ${alert.message}`,
-        )
-      : ['1. Tidak ada alert prioritas yang perlu ditindaklanjuti saat ini.']),
+    '## Recommended Follow-up Actions',
+    ...actionRows,
     '',
-    `Catatan fallback: ${reason}`,
+    `*Catatan fallback: ${reason}*`,
   ]
 
   return lines.join('\n')
@@ -502,18 +512,12 @@ export function streamCopilotChat(
                 // Real-time text stream from Mastra chatRoute
                 if (event.type === 'text-delta' && event.delta) {
                   callbacks.onChunk?.(event.delta)
-                } else if (event.type === 'tool-input-start' && event.toolName) {
-                  callbacks.onChunk?.(`[🔍 ${event.toolName}] `)
-                } else if (event.type === 'tool-input-delta' && event.inputTextDelta) {
-                  // For tool arguments — show only significant chars to avoid flooding
-                  const delta = event.inputTextDelta
-                  // Filter out punctuation-only deltas
-                  if (/[a-zA-Z0-9]/.test(delta)) {
-                    callbacks.onChunk?.(delta)
-                  }
                 } else if (event.type === 'error' && (event.error || event.errorText)) {
                   callbacks.onChunk?.(`[Error: ${event.error ?? event.errorText}] `)
                 }
+                // Tool-call events are intentionally hidden from the chat UI.
+                // They are useful for tracing, but showing tool names/arguments makes
+                // the copilot answer look machine-generated and noisy for analysts.
               } catch {
                 // Malformed JSON — skip silently
               }

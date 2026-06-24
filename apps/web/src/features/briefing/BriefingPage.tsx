@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import MarkdownMessage from '../../components/MarkdownMessage'
 import SourceBadge from '../../components/SourceBadge'
 import {
   getBriefing,
@@ -43,6 +44,51 @@ type ProgressItem = {
   message: string
 }
 
+function cleanAiBriefingContent(content: string) {
+  return content
+    .replace(/^(Saya\s+(akan|coba|perlu)\s+[^.?!]+[.?!]\s*)/i, '')
+    .replace(/^(Saya\s+sudah\s+(menyusun|membuat|menyiapkan|menganalisis|merangkum)[^.?!]+[.?!]\s*)/i, '')
+    .replace(/^Berdasarkan\s+data\s+yang\s+saya\s+(cek|lihat|temukan|analisis)[^.?!]+[.?!]\s*/i, '')
+    .replace(/\n\s*(Apakah\s+(Anda|Bapak|Pak Joko)[^?]+\?\s*)$/i, '')
+    .replace(/\n\s*(Ada\s+yang\s+ingin\s+ditanyakan\s+lagi\??\s*)$/i, '')
+    .replace(/\n\s*(Bila\s+(Anda|Bapak|Pak Joko)[^\n]+saya\s+siap\s+membantu\.?)\s*$/i, '')
+    .replace(/\n\s*(Jika\s+(Anda|Bapak|Pak Joko)[^\n]+saya\s+siap\s+membantu\.?)\s*$/i, '')
+    .replace(/^\s*---+\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function getBriefingProgressLabel(stage: string, message?: string) {
+  const normalizedStage = stage.toLowerCase()
+  const normalizedMessage = message?.toLowerCase() ?? ''
+
+  if (normalizedStage.includes('start') || normalizedMessage.includes('workflow started')) {
+    return 'Memulai penyusunan executive briefing.'
+  }
+
+  if (normalizedStage.includes('context')) {
+    return 'Menyiapkan data dan konteks briefing harian.'
+  }
+
+  if (normalizedStage.includes('generation') || normalizedStage.includes('partial')) {
+    return 'Menyusun narasi ringkasan eksekutif.'
+  }
+
+  if (normalizedStage.includes('final')) {
+    return 'Merapikan format briefing untuk dibaca.'
+  }
+
+  if (normalizedStage.includes('done')) {
+    return 'Briefing selesai disusun.'
+  }
+
+  if (normalizedStage.includes('error')) {
+    return message || 'Terjadi kendala saat menyusun briefing.'
+  }
+
+  return message || 'Memproses briefing harian.'
+}
+
 export default function BriefingPage() {
   const [briefing, setBriefing] = useState<Briefing | null>(null)
   const [loading, setLoading] = useState(true)
@@ -62,9 +108,16 @@ export default function BriefingPage() {
   }, [])
 
   const appendAiProgress = useCallback((stage: string, message: string) => {
+    const progressMessage = getBriefingProgressLabel(stage, message)
+
     setAiProgress((current) => {
-      const next = [...current, { id: `${Date.now()}-${current.length}`, stage, message }]
-      return next.slice(-6)
+      if (current[current.length - 1]?.message === progressMessage) return current
+
+      const next = [
+        ...current,
+        { id: `${Date.now()}-${current.length}`, stage, message: progressMessage },
+      ]
+      return next.slice(-4)
     })
   }, [])
 
@@ -97,24 +150,25 @@ export default function BriefingPage() {
     setAiError(null)
     setAiBriefing(null)
     setAiLiveContent('')
-    setAiStatus('Menghubungkan ke stream AI executive briefing…')
+    setAiStatus('Menyiapkan executive briefing…')
     setAiProgress([
       {
         id: `${Date.now()}-start`,
         stage: 'start',
-        message: 'Menghubungkan ke backend wrapper untuk memulai briefing.',
+        message: 'Menyiapkan data dan konteks briefing harian.',
       },
     ])
 
     const handleStatus = (event: AiBriefingStatusEvent) => {
-      setAiStatus(event.message)
+      setAiStatus(getBriefingProgressLabel(event.stage, event.message))
       appendAiProgress(event.stage, event.message)
     }
 
     const handleFinal = (event: AiBriefingFinalEvent) => {
-      setAiLiveContent(event.content)
+      const content = cleanAiBriefingContent(event.content)
+      setAiLiveContent(content)
       setAiBriefing({
-        content: event.content,
+        content,
         mode: event.mode,
         note: event.note,
         runId: event.runId,
@@ -263,14 +317,20 @@ export default function BriefingPage() {
                     className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
                       aiBriefing?.mode === 'fallback'
                         ? 'bg-amber-500/15 text-amber-300 ring-amber-400/30'
-                        : 'bg-indigo-500/15 text-indigo-300 ring-indigo-400/30'
+                        : aiLoading
+                          ? 'bg-cyan-500/15 text-cyan-300 ring-cyan-400/30'
+                          : 'bg-indigo-500/15 text-indigo-300 ring-indigo-400/30'
                     }`}
                   >
-                    {aiBriefing?.mode === 'fallback' ? 'Fallback API' : 'Mastra + Local LLM'}
+                    {aiBriefing?.mode === 'fallback'
+                      ? 'Fallback API'
+                      : aiLoading
+                        ? 'Sedang disusun'
+                        : 'AI Briefing'}
                   </span>
                 </div>
                 <p className="mt-2 text-sm text-slate-400">
-                  Ringkasan assistive yang di-stream dari backend wrapper. Jika backend memutuskan fallback, hasil akhir tetap ditampilkan dengan penanda yang sama.
+                  Ringkasan eksekutif otomatis dari briefing harian, disajikan dalam format siap baca untuk pemantauan operasional.
                 </p>
                 {aiBriefing ? (
                   <p className="mt-2 text-xs text-slate-500">
@@ -285,7 +345,7 @@ export default function BriefingPage() {
                 disabled={aiLoading}
                 className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {aiLoading ? 'Generating…' : aiBriefing ? 'Refresh AI Briefing' : 'Generate AI Briefing'}
+                {aiLoading ? 'Menyusun Briefing…' : aiBriefing ? 'Refresh AI Briefing' : 'Generate AI Briefing'}
               </button>
             </div>
 
@@ -294,7 +354,7 @@ export default function BriefingPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Current status
+                      Status briefing
                     </p>
                     <p className="mt-2 text-sm text-slate-300">{aiStatus}</p>
                   </div>
@@ -303,26 +363,30 @@ export default function BriefingPage() {
                   ) : null}
                 </div>
                 {aiProgress.length > 0 ? (
-                  <ol className="mt-4 space-y-2 text-sm text-slate-400">
-                    {aiProgress.map((item, index) => (
-                      <li key={item.id} className="flex gap-3">
-                        <span className="mt-0.5 text-xs font-semibold text-slate-500">
-                          {index + 1}.
-                        </span>
-                        <div>
-                          <p className="font-medium capitalize text-slate-300">{item.stage}</p>
-                          <p className="text-slate-400">{item.message}</p>
-                        </div>
-                      </li>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {aiProgress.slice(-3).map((item) => (
+                      <span
+                        key={item.id}
+                        className="inline-flex rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-xs text-slate-400"
+                      >
+                        {item.message}
+                      </span>
                     ))}
-                  </ol>
+                  </div>
                 ) : null}
               </div>
 
               {aiLoading && aiLiveContent.length === 0 ? (
-                <div className="flex items-center gap-3 text-sm text-slate-400">
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
-                  Menunggu potongan briefing pertama dari backend stream...
+                <div className="space-y-4 rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-4">
+                  <div className="flex items-center gap-3 text-sm text-slate-300">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
+                    Menyusun ringkasan eksekutif dari data briefing harian…
+                  </div>
+                  <div className="space-y-3">
+                    <div className="h-4 w-11/12 animate-pulse rounded bg-slate-800" />
+                    <div className="h-4 w-4/5 animate-pulse rounded bg-slate-800" />
+                    <div className="h-4 w-2/3 animate-pulse rounded bg-slate-800" />
+                  </div>
                 </div>
               ) : aiError ? (
                 <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
@@ -337,9 +401,11 @@ export default function BriefingPage() {
                       <p className="mt-1 text-amber-100/80">{aiBriefing.note}</p>
                     </div>
                   ) : null}
-                  <pre className="overflow-x-auto whitespace-pre-wrap break-words font-sans text-sm leading-7 text-slate-300">
-                    {aiLiveContent || aiBriefing?.content}
-                  </pre>
+                  <MarkdownMessage
+                    content={aiLiveContent || aiBriefing?.content || ''}
+                    streaming={aiLoading}
+                    emptyLabel="Menyusun ringkasan eksekutif…"
+                  />
                 </>
               ) : (
                 <p className="text-sm text-slate-400">
