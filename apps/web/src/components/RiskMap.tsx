@@ -155,14 +155,20 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
       return
     }
     if (hasInitialFit.current || events.length === 0) return
-    const lats = events.map((e) => e.latitude)
-    const lngs = events.map((e) => e.longitude)
+    hasInitialFit.current = true
+
+    // Batasi initial view ke Indonesia — tidak zoom out ke seluruh dunia
+    const inaEvents = events.filter(
+      (e) => e.latitude > -12 && e.latitude < 7 && e.longitude > 94 && e.longitude < 142,
+    )
+    const pool = inaEvents.length >= 5 ? inaEvents : events
+    const lats = pool.map((e) => e.latitude)
+    const lngs = pool.map((e) => e.longitude)
     const bounds: L.LatLngBoundsExpression = [
       [Math.min(...lats), Math.min(...lngs)],
       [Math.max(...lats), Math.max(...lngs)],
     ]
-    map.fitBounds(bounds, { padding: [24, 24], maxZoom: 6 })
-    hasInitialFit.current = true
+    map.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 })
   }, [events, map, selectedEvent])
 
   return null
