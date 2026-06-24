@@ -6,6 +6,8 @@ import {
   type ContractFilters,
 } from '../../lib/api/client'
 import { PERIL_LABELS, formatIDRCompact } from './format'
+import ContractFormModal from './ContractFormModal'
+import ImportModal from './ImportModal'
 
 const PERIL_OPTIONS = ['', 'earthquake', 'flood', 'volcano', 'fire', 'windstorm', 'other']
 
@@ -14,6 +16,9 @@ export default function ContractsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filters, setFilters] = useState<ContractFilters>({})
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<AcceptanceContract | undefined>(undefined)
+  const [importOpen, setImportOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -55,7 +60,20 @@ export default function ContractsPage() {
             <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 ring-1 ring-inset ring-slate-700">
               {rows.length} kontrak
             </span>
-            {/* Create + Import buttons are added in Task 11 */}
+            <button
+              type="button"
+              onClick={() => { setEditing(undefined); setFormOpen(true) }}
+              className="rounded-xl border border-indigo-400 bg-indigo-500/20 px-3 py-1.5 text-xs font-semibold text-indigo-200"
+            >
+              + Kontrak
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200"
+            >
+              Import CSV
+            </button>
           </div>
         </div>
 
@@ -120,6 +138,13 @@ export default function ContractsPage() {
                     <td className="py-3">
                       <button
                         type="button"
+                        onClick={() => { setEditing(r); setFormOpen(true) }}
+                        className="mr-3 text-xs font-semibold text-indigo-300 hover:text-indigo-200"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleDelete(r.id)}
                         className="text-xs font-semibold text-rose-300 hover:text-rose-200"
                       >
@@ -132,6 +157,19 @@ export default function ContractsPage() {
             </table>
           </div>
         </section>
+      )}
+      {formOpen && (
+        <ContractFormModal
+          initial={editing}
+          onClose={() => setFormOpen(false)}
+          onSaved={() => { setFormOpen(false); void load() }}
+        />
+      )}
+      {importOpen && (
+        <ImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={() => { setImportOpen(false); void load() }}
+        />
       )}
     </div>
   )
