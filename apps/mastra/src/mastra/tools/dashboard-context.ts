@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 
+import { accumulationsForEvents, type EventAccumulation } from '../shared/accumulation'
 import { config } from '../shared/config'
 import { fetchJson } from '../shared/http'
 
@@ -49,24 +50,20 @@ const alertsResponseSchema = z.object({
   }),
 })
 
-const exposuresResponseSchema = z.object({
-  data: z.array(
-    z.object({
-      id: z.string(),
-      region_name: z.string(),
-      region_keywords: z.array(z.string()),
-      total_exposure: z.number(),
-      treaty_category: z.string().nullable().optional(),
-      risk_multiplier: z.number(),
-      is_active: z.boolean(),
-      created_at: z.string(),
-      updated_at: z.string(),
-    }),
-  ),
-  meta: z.object({
+const accumulationsSchema = z.array(
+  z.object({
+    event_id: z.string(),
+    place: z.string().nullable(),
+    magnitude: z.number(),
+    peril: z.string(),
+    radius_km: z.number(),
     count: z.number(),
+    sum_insured: z.number(),
+    share_amount: z.number(),
+    premium: z.number(),
+    claim_amount: z.number(),
   }),
-})
+)
 
 const newsResponseSchema = z.object({
   data: z.array(
@@ -164,17 +161,16 @@ export const getDashboardContextTool = createTool({
   outputSchema: z.object({
     events: eventsResponseSchema,
     alerts: alertsResponseSchema,
-    exposures: exposuresResponseSchema,
+    accumulations: accumulationsSchema,
     riskScores: riskScoresResponseSchema,
     briefing: briefingResponseSchema,
     news: newsResponseSchema.optional(),
     connectorHealth: connectorHealthResponseSchema.optional(),
   }),
   execute: async ({ includeNews = true, includeConnectorHealth = true }) => {
-    const [eventsRaw, alertsRaw, exposuresRaw, riskScoresRaw, briefing, newsRaw, connectorHealthRaw] = await Promise.all([
+    const [eventsRaw, alertsRaw, riskScoresRaw, briefing, newsRaw, connectorHealthRaw] = await Promise.all([
       fetchJson<any>(`${config.apiBaseUrl}/events`),
       fetchJson<any>(`${config.apiBaseUrl}/alerts`),
-      fetchJson<any>(`${config.apiBaseUrl}/exposures`),
       fetchJson<any>(`${config.apiBaseUrl}/risk-scores`),
       fetchJson<z.infer<typeof briefingResponseSchema>>(`${config.apiBaseUrl}/briefings/today`),
       includeNews ? fetchJson<any>(`${config.apiBaseUrl}/news`) : Promise.resolve(undefined),
@@ -202,6 +198,8 @@ export const getDashboardContextTool = createTool({
       },
     }
 
+    const accumulations = await accumulationsForEvents(eventsRaw?.data, 3, 50)
+
     const alerts = {
       data: pickTop(alertsRaw?.data, 5).map((item: any) => ({
         id: item.id,
@@ -219,23 +217,6 @@ export const getDashboardContextTool = createTool({
       meta: {
         count: alertsRaw?.meta?.count ?? alertsRaw?.data?.length ?? 0,
         unacknowledged: alertsRaw?.meta?.unacknowledged ?? 0,
-      },
-    }
-
-    const exposures = {
-      data: pickTop(exposuresRaw?.data, 5).map((item: any) => ({
-        id: item.id,
-        region_name: item.region_name,
-        region_keywords: pickStrings(item.region_keywords, 5),
-        total_exposure: item.total_exposure,
-        treaty_category: item.treaty_category ?? null,
-        risk_multiplier: item.risk_multiplier,
-        is_active: item.is_active,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-      })),
-      meta: {
-        count: exposuresRaw?.meta?.count ?? exposuresRaw?.data?.length ?? 0,
       },
     }
 
@@ -306,7 +287,7 @@ export const getDashboardContextTool = createTool({
     return {
       events,
       alerts,
-      exposures,
+      accumulations,
       riskScores,
       briefing,
       ...(news ? { news } : {}),

@@ -2,6 +2,7 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
 
 import { executiveBriefingAgent } from '../agents/executive-briefing-agent'
+import { accumulationsForEvents } from '../shared/accumulation'
 import { config } from '../shared/config'
 import { fetchJson } from '../shared/http'
 
@@ -24,15 +25,16 @@ const gatherContextStep = createStep({
       })
     }
 
-    const [eventsRaw, alertsRaw, exposuresRaw, riskScoresRaw, briefing, newsRaw, connectorHealthRaw] = await Promise.all([
+    const [eventsRaw, alertsRaw, riskScoresRaw, briefing, newsRaw, connectorHealthRaw] = await Promise.all([
       fetchJson<any>(`${config.apiBaseUrl}/events`),
       fetchJson<any>(`${config.apiBaseUrl}/alerts`),
-      fetchJson<any>(`${config.apiBaseUrl}/exposures`),
       fetchJson<any>(`${config.apiBaseUrl}/risk-scores`),
       fetchJson<any>(`${config.apiBaseUrl}/briefings/today`),
       fetchJson<any>(`${config.apiBaseUrl}/news`).catch(() => undefined),
       fetchJson<any>(`${config.apiBaseUrl}/health/connectors`).catch(() => undefined),
     ])
+
+    const accumulationHotspots = await accumulationsForEvents(eventsRaw?.data, 3, 50)
 
     const compactContext = {
       briefing: briefing?.data,
@@ -64,11 +66,15 @@ const gatherContextStep = createStep({
         severity: item.factors?.severity ?? null,
         estimated_impact: item.factors?.estimated_impact ?? null,
       })),
-      exposureWatchlist: pickTop(exposuresRaw?.data, 5).map((item: any) => ({
-        region_name: item.region_name,
-        treaty_category: item.treaty_category ?? null,
-        total_exposure: item.total_exposure,
-        risk_multiplier: item.risk_multiplier,
+      accumulationHotspots: accumulationHotspots.map((a) => ({
+        event_id: a.event_id,
+        place: a.place,
+        peril: a.peril,
+        radius_km: a.radius_km,
+        contracts: a.count,
+        sum_insured: a.sum_insured,
+        share_amount: a.share_amount,
+        claim_amount: a.claim_amount,
       })),
       newsSignals: pickTop(newsRaw?.data, 3).map((item: any) => ({
         source: item.source,
