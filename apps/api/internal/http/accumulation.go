@@ -79,6 +79,7 @@ func Accumulation(db *sql.DB) gin.HandlerFunc {
 			byPeril[ct.Peril] = agg
 		}
 
+		totalCount := len(affected)
 		sort.Slice(affected, func(i, j int) bool { return affected[i].ShareAmount > affected[j].ShareAmount })
 		if len(affected) > 500 {
 			affected = affected[:500]
@@ -94,7 +95,7 @@ func Accumulation(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{
 			"summary": gin.H{
 				"sum_insured": sumInsured, "share_amount": shareAmount,
-				"premium": premium, "claim_amount": claim, "count": len(affected),
+				"premium": premium, "claim_amount": claim, "count": totalCount,
 			},
 			"by_peril":  perilList,
 			"contracts": affected,
