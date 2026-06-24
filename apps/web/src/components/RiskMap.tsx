@@ -1,9 +1,12 @@
 // apps/web/src/components/RiskMap.tsx
-import { useEffect, useMemo, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, useMap, Circle, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { Event, NewsItem } from '../lib/api/client'
+import { getAccumulation, type AccumulationResult } from '../lib/api/client'
 import RiskLayer from './RiskLayer'
+import AccumulationPanel from './AccumulationPanel'
+import { eventTypeToPerilClient } from './perilMap'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
@@ -207,6 +210,23 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
   return null
 }
 
+function AccumulationController({
+  center, radiusKm, whatIf, onPick,
+}: {
+  center: [number, number] | null
+  radiusKm: number
+  whatIf: boolean
+  onPick: (lat: number, lon: number) => void
+}) {
+  useMapEvents({
+    click: (e) => {
+      if (whatIf) onPick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  if (!center) return null
+  return <Circle center={center} radius={radiusKm * 1000} pathOptions={{ color: '#a78bfa', weight: 1, fillOpacity: 0.08 }} />
+}
+
 interface RiskMapProps {
   events: Event[]
   news?: NewsItem[]
@@ -233,6 +253,40 @@ export default function RiskMap({
     style.textContent = MAP_ANIMATION_CSS
     document.head.appendChild(style)
   }, [])
+
+  const [radiusKm, setRadiusKm] = useState(50)
+  const [accPeril, setAccPeril] = useState('')
+  const [whatIf, setWhatIf] = useState(false)
+  const [accCenter, setAccCenter] = useState<[number, number] | null>(null)
+  const [accResult, setAccResult] = useState<AccumulationResult | null>(null)
+  const [accActiveOn, setAccActiveOn] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (selectedEvent) {
+      setWhatIf(false)
+      setAccCenter([selectedEvent.latitude, selectedEvent.longitude])
+      setAccPeril(eventTypeToPerilClient(selectedEvent.event_type))
+      setAccActiveOn(selectedEvent.event_time ? selectedEvent.event_time.slice(0, 10) : undefined)
+    }
+  }, [selectedEvent])
+
+  useEffect(() => {
+    if (!accCenter) {
+      setAccResult(null)
+      return
+    }
+    let cancelled = false
+    getAccumulation({
+      lat: accCenter[0],
+      lon: accCenter[1],
+      radiusKm,
+      peril: accPeril || undefined,
+      activeOn: accActiveOn,
+    })
+      .then((res) => { if (!cancelled) setAccResult(res.data) })
+      .catch(() => { if (!cancelled) setAccResult(null) })
+    return () => { cancelled = true }
+  }, [accCenter, radiusKm, accPeril, accActiveOn])
 
   const currentFilter = LAYER_FILTERS.some((filter) => filter.key === activePerilFilter)
     ? (activePerilFilter as PerilFilter)
@@ -385,8 +439,27 @@ export default function RiskMap({
             ))}
 
             <RiskLayer active={currentFilter === 'risiko'} />
+            <AccumulationController
+              center={accCenter}
+              radiusKm={radiusKm}
+              whatIf={whatIf}
+              onPick={(lat, lon) => { setAccActiveOn(undefined); setAccCenter([lat, lon]) }}
+            />
           </MapContainer>
         </div>
+
+        {(currentFilter === 'risiko' || selectedEvent) && (
+          <AccumulationPanel
+            result={accResult}
+            radiusKm={radiusKm}
+            onRadiusChange={setRadiusKm}
+            peril={accPeril}
+            onPerilChange={setAccPeril}
+            whatIf={whatIf}
+            onToggleWhatIf={() => setWhatIf((v) => !v)}
+            onClear={() => { setAccCenter(null); setAccResult(null); setWhatIf(false) }}
+          />
+        )}
       </div>
     </div>
   )
