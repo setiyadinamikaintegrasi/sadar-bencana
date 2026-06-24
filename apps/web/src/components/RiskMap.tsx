@@ -3,10 +3,11 @@ import { useEffect, useMemo, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { Event, NewsItem } from '../lib/api/client'
+import RiskLayer from './RiskLayer'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
-type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news'
+type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news' | 'risiko'
 
 const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; accent: string }> = [
   { key: 'all', label: 'Semua', icon: '◎', accent: 'text-indigo-200' },
@@ -15,6 +16,7 @@ const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; acce
   { key: 'volcano', label: 'Vulkanik', icon: '▲', accent: 'text-red-300' },
   { key: 'flood', label: 'Banjir', icon: '◒', accent: 'text-sky-300' },
   { key: 'news', label: 'News', icon: '✦', accent: 'text-emerald-300' },
+  { key: 'risiko', label: 'Risiko', icon: '◉', accent: 'text-violet-300' },
 ]
 
 const MAP_ANIMATION_CSS = `
@@ -245,6 +247,7 @@ export default function RiskMap({
       volcano: countFor('volcano'),
       flood: countFor('flood'),
       news: news.filter((item) => item.lat != null && item.lon != null).length,
+      risiko: 0,
     }
   }, [events, news])
 
@@ -380,6 +383,8 @@ export default function RiskMap({
                 </Popup>
               </Marker>
             ))}
+
+            <RiskLayer active={currentFilter === 'risiko'} />
           </MapContainer>
         </div>
       </div>
