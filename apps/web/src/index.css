@@ -29,6 +29,41 @@
   animation: rrm-marquee 42s linear infinite;
 }
 
+/* --- Map scroll-zoom hint overlay --- */
+.rrm-map-inactive {
+  cursor: pointer;
+  position: relative;
+}
+.rrm-map-inactive::after {
+  content: "📥 Klik peta untuk zoom & pan — scroll untuk menjelajah halaman";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  padding: 8px 20px;
+  border-radius: 9999px;
+  background: rgba(2, 6, 23, 0.9);
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.rrm-map-inactive:hover::after {
+  opacity: 1;
+}
+.rrm-map-active {
+  cursor: grab;
+}
+.rrm-map-active:active {
+  cursor: grabbing;
+}
+
 .rrm-news-ticker:hover .rrm-news-ticker__track {
   animation-play-state: paused;
 }

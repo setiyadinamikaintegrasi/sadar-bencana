@@ -149,6 +149,37 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
   const map = useMap()
   const hasInitialFit = useRef(false)
 
+  // --- Scroll-zoom conditional: enable saat map focused, disable saat blur ---
+  useEffect(() => {
+    const container = map.getContainer()
+
+    const enableZoom = () => {
+      map.scrollWheelZoom.enable()
+      container.classList.add('rrm-map-active')
+      container.classList.remove('rrm-map-inactive')
+    }
+    const disableZoom = () => {
+      map.scrollWheelZoom.disable()
+      container.classList.remove('rrm-map-active')
+      container.classList.add('rrm-map-inactive')
+    }
+
+    // Init state: inactive
+    disableZoom()
+
+    container.addEventListener('mousedown', enableZoom)
+    container.addEventListener('focus', enableZoom)
+    container.addEventListener('mouseleave', disableZoom)
+    container.addEventListener('blur', disableZoom)
+
+    return () => {
+      container.removeEventListener('mousedown', enableZoom)
+      container.removeEventListener('focus', enableZoom)
+      container.removeEventListener('mouseleave', disableZoom)
+      container.removeEventListener('blur', disableZoom)
+    }
+  }, [map])
+
   useEffect(() => {
     if (selectedEvent) {
       map.flyTo([selectedEvent.latitude, selectedEvent.longitude], 7, { animate: true, duration: 0.8 })
@@ -278,7 +309,7 @@ export default function RiskMap({
           <MapContainer
             center={INDONESIA_CENTER}
             zoom={4}
-            scrollWheelZoom
+            scrollWheelZoom={false}
             zoomControl
             doubleClickZoom
             touchZoom
