@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { Event, NewsItem } from '../lib/api/client'
-import { getAccumulation, type AccumulationResult } from '../lib/api/client'
+import { getAccumulation, getContracts, type AccumulationResult } from '../lib/api/client'
 import RiskLayer from './RiskLayer'
 import AccumulationPanel from './AccumulationPanel'
 import { eventTypeToPerilClient } from './perilMap'
@@ -292,6 +292,17 @@ export default function RiskMap({
     ? (activePerilFilter as PerilFilter)
     : 'all'
 
+  // Total acceptance contracts (risk objects) for the RISIKO layer badge — fetched
+  // once; independent of any event, since the portfolio always exists.
+  const [contractCount, setContractCount] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    getContracts({ limit: 2000 })
+      .then((res) => { if (!cancelled) setContractCount(res.meta?.count ?? res.data.length) })
+      .catch(() => { /* leave at 0 if API unreachable */ })
+    return () => { cancelled = true }
+  }, [])
+
   const counts = useMemo(() => {
     const countFor = (filter: PerilFilter) => events.filter((event) => eventMatchesFilter(event, filter)).length
     return {
@@ -301,9 +312,9 @@ export default function RiskMap({
       volcano: countFor('volcano'),
       flood: countFor('flood'),
       news: news.filter((item) => item.lat != null && item.lon != null).length,
-      risiko: 0,
+      risiko: contractCount,
     }
-  }, [events, news])
+  }, [events, news, contractCount])
 
   const visibleEvents = useMemo(() => {
     if (currentFilter === 'news') return []
