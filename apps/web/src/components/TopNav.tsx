@@ -3,7 +3,6 @@ import { useState } from 'react'
 
 const PRIMARY_TABS = [
   { label: 'Executive Overview', icon: '◼' },
-  { label: 'Map', icon: '◉' },
   { label: 'Events', icon: '●' },
   { label: 'Alerts', icon: '◆' },
 ] as const
