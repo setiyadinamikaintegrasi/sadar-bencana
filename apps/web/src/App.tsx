@@ -6,13 +6,11 @@ import CopilotPage from './features/copilot/CopilotPage'
 import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
 import ExposuresPage from './features/exposures/ExposuresPage'
-import MapPage from './features/map/MapPage'
 import SourceHealthPage from './features/health/SourceHealthPage'
 import TopNav from './components/TopNav'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
-  { label: 'Map', icon: '◉' },
   { label: 'Events', icon: '●' },
   { label: 'Exposures', icon: '▲' },
   { label: 'Alerts', icon: '◆' },
@@ -26,7 +24,6 @@ type Section = (typeof sections)[number]['label']
 
 const bottomTabs = [
   { label: 'Overview', section: 'Executive Overview' as Section, icon: '◼' },
-  { label: 'Map', section: 'Map' as Section, icon: '◉' },
   { label: 'Events', section: 'Events' as Section, icon: '●' },
   { label: 'Alerts', section: 'Alerts' as Section, icon: '◆' },
 ] as const
@@ -63,8 +60,6 @@ function App() {
         <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
           {activeSection === 'Executive Overview' ? (
             <ExecutiveOverview />
-          ) : activeSection === 'Map' ? (
-            <MapPage />
           ) : activeSection === 'Events' ? (
             <EventsPage />
           ) : activeSection === 'Exposures' ? (
