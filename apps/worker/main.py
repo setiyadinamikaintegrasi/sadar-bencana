@@ -14,10 +14,12 @@ from connectors.aisstream import AISStreamConnector
 from connectors.bmkg import BMKGConnector
 from connectors.gdacs_flood import GDACSFloodConnector
 from connectors.gdacs_volcano import GDACSVolcanoConnector
+from connectors.gvp_volcano import GVPVolcanoConnector
 from connectors.hazard import HazardConnector
 from connectors.multi_source import MultiSourceConnector, is_in_indonesia
 from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
+from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
 from connectors.vesselfinder import VesselFinderConnector
@@ -25,6 +27,7 @@ from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
+from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
 from db.pool import close_pool, get_pool, init_pool
 from geo.locator import extract_location
@@ -93,28 +96,58 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
         merged.setdefault(ev.event_id, ev)
     earthquake_events = list(merged.values())
 
-    # ---- Hazard sources (GDACS flood, GDACS volcano, NASA FIRMS) ----
+    # ---- Hazard sources (flood, volcano, NASA FIRMS) ----
+    # Flood: GDACS (major alerts) + PetaBencana (real-time Indonesia reports).
     gdacs_fl_conn = GDACSFloodConnector()
-    flood_events: list[EarthquakeEvent] = []
+    gdacs_flood_events: list[EarthquakeEvent] = []
     try:
-        flood_events = await gdacs_fl_conn.fetch_recent()
-        await upsert_connector_health(pool, "gdacs_fl", len(flood_events))
+        gdacs_flood_events = await gdacs_fl_conn.fetch_recent()
+        await upsert_connector_health(pool, "gdacs_fl", len(gdacs_flood_events))
     except Exception as exc:
         await upsert_connector_health(pool, "gdacs_fl", 0, str(exc))
         logger.warning("GDACS flood fetch failed: %s", exc)
     finally:
         await gdacs_fl_conn.close()
 
-    gdacs_vo_conn = GDACSVolcanoConnector()
-    volcano_events: list[EarthquakeEvent] = []
+    petabencana_conn = PetaBencanaFloodConnector()
+    petabencana_flood_events: list[EarthquakeEvent] = []
     try:
-        volcano_events = await gdacs_vo_conn.fetch_recent()
-        await upsert_connector_health(pool, "gdacs_vo", len(volcano_events))
+        petabencana_flood_events = await petabencana_conn.fetch_recent()
+        await upsert_connector_health(pool, "petabencana", len(petabencana_flood_events))
+    except Exception as exc:
+        await upsert_connector_health(pool, "petabencana", 0, str(exc))
+        logger.warning("PetaBencana flood fetch failed: %s", exc)
+    finally:
+        await petabencana_conn.close()
+
+    # PetaBencana points are the fresher signal; GDACS area centroids fill gaps.
+    flood_events = merge_events_by_proximity(petabencana_flood_events, gdacs_flood_events)
+
+    # Volcano: GVP weekly report (fresh, Indonesia-rich) + GDACS VO (alerts).
+    gvp_vo_conn = GVPVolcanoConnector()
+    gvp_volcano_events: list[EarthquakeEvent] = []
+    try:
+        gvp_volcano_events = await gvp_vo_conn.fetch_recent()
+        await upsert_connector_health(pool, "gvp", len(gvp_volcano_events))
+    except Exception as exc:
+        await upsert_connector_health(pool, "gvp", 0, str(exc))
+        logger.warning("GVP volcano fetch failed: %s", exc)
+    finally:
+        await gvp_vo_conn.close()
+
+    gdacs_vo_conn = GDACSVolcanoConnector()
+    gdacs_volcano_events: list[EarthquakeEvent] = []
+    try:
+        gdacs_volcano_events = await gdacs_vo_conn.fetch_recent()
+        await upsert_connector_health(pool, "gdacs_vo", len(gdacs_volcano_events))
     except Exception as exc:
         await upsert_connector_health(pool, "gdacs_vo", 0, str(exc))
         logger.warning("GDACS volcano fetch failed: %s", exc)
     finally:
         await gdacs_vo_conn.close()
+
+    # GVP refreshes weekly and is preferred; drop GDACS duplicates of the same volcano.
+    volcano_events = merge_events_by_proximity(gvp_volcano_events, gdacs_volcano_events)
 
     nasa_conn = NASAFIRMSConnector()
     wildfire_events: list[EarthquakeEvent] = []
