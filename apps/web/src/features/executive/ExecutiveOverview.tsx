@@ -296,52 +296,38 @@ export default function ExecutiveOverview() {
   }, [events, meta, unacknowledgedAlerts])
 
   return (
-    <div className="space-y-8">
-      <section className="overflow-hidden rounded-3xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(79,70,229,0.25),_transparent_34%),linear-gradient(135deg,_rgba(15,23,42,0.98),_rgba(2,6,23,0.98))] p-5 shadow-2xl shadow-slate-950/50 md:p-7">
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
-          <div>
-            <div className="mb-4 flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-200">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /> Live Risk Intelligence
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(79,70,229,0.25),_transparent_40%),linear-gradient(135deg,_rgba(15,23,42,0.98),_rgba(2,6,23,0.98))] px-4 py-3 shadow-xl shadow-slate-950/40 md:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live Risk Intelligence
               </span>
-              <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs text-slate-400">
-                Events · RSS · Alerts · Source Health
-              </span>
+              <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 md:text-xl">
+                Situational Awareness Dashboard
+              </h1>
             </div>
-            <h1 className="max-w-4xl text-3xl font-bold tracking-tight text-slate-50 md:text-5xl">
-              Situational Awareness Dashboard
-            </h1>
-            <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-300 md:text-base">
-              Menggabungkan sinyal bencana, berita RSS, alert operasional, dan kesehatan source untuk
-              memberi gambaran risiko reasuransi secara lebih cepat — mengikuti pola correlation surface
-              seperti World Monitor, tetapi disesuaikan untuk konteks portofolio Tugure.
+            <p className="mt-1 truncate text-xs text-slate-400">
+              {topRiskScore?.place
+                ? `Top risk: ${topRiskScore.place} · M${topRiskScore.magnitude ?? '—'} · ${topRiskScore.source?.toUpperCase() ?? 'SOURCE'}`
+                : 'Events · RSS · Alerts · Source Health'}
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-700/80 bg-slate-950/60 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-200">Correlation Pulse</p>
-              <span className="text-xs text-slate-500">auto-refreshed data</span>
+          <div className="hidden shrink-0 items-stretch gap-2 sm:flex">
+            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
+              <p className="text-[9px] uppercase tracking-wide text-slate-500">Top Risk</p>
+              <p className="text-lg font-bold leading-tight text-rose-300">{topRiskScore?.score ?? '—'}</p>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl bg-slate-900/80 p-3">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">Top Risk</p>
-                <p className="mt-2 text-2xl font-bold text-rose-300">{topRiskScore?.score ?? '—'}</p>
-              </div>
-              <div className="rounded-xl bg-slate-900/80 p-3">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">News</p>
-                <p className="mt-2 text-2xl font-bold text-emerald-300">{news.length}</p>
-              </div>
-              <div className="rounded-xl bg-slate-900/80 p-3">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">Sources OK</p>
-                <p className="mt-2 text-2xl font-bold text-indigo-300">{connectorSummary.ok}</p>
-              </div>
+            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
+              <p className="text-[9px] uppercase tracking-wide text-slate-500">News</p>
+              <p className="text-lg font-bold leading-tight text-emerald-300">{news.length}</p>
             </div>
-            <p className="mt-4 line-clamp-2 text-xs text-slate-400">
-              {topRiskScore?.place
-                ? `Highest current score: ${topRiskScore.place} · M${topRiskScore.magnitude ?? '—'} · ${topRiskScore.source?.toUpperCase() ?? 'SOURCE'}`
-                : 'Risk score belum tersedia dari backend.'}
-            </p>
+            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
+              <p className="text-[9px] uppercase tracking-wide text-slate-500">Sources OK</p>
+              <p className="text-lg font-bold leading-tight text-indigo-300">{connectorSummary.ok}</p>
+            </div>
           </div>
         </div>
       </section>
@@ -355,8 +341,8 @@ export default function ExecutiveOverview() {
                 Interactive command map
               </span>
             </div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              Peta interaktif real-time yang menampilkan sebaran event bencana (gempa, karhutla, vulkanik, banjir) dan titik berita geolocated. Dilengkapi filter layer per kategori, zoom & pan, serta legenda warna untuk identifikasi risiko kawasan secara cepat.
+            <p className="mt-1 hidden text-xs leading-5 text-slate-500 lg:block">
+              Peta interaktif real-time: sebaran event bencana & titik berita geolocated, dengan filter layer per kategori dan zoom/pan.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
