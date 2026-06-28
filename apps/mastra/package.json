@@ -14,7 +14,7 @@
     "@mastra/core": "^1.45.0",
     "@mastra/libsql": "^1.14.0",
     "ai": "^5.0.74",
-    "zod": "^4.1.8"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
