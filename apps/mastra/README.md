@@ -22,8 +22,8 @@ Layer ini menambahkan **AI orchestration** ke project existing tanpa mengganti a
 Lihat `.env.example`.
 
 Yang penting:
-- `RRM_API_BASE_URL`
-- `RRM_WORKER_BASE_URL`
+- `SADAR_API_BASE_URL`
+- `SADAR_WORKER_BASE_URL`
 - `MASTRA_MODEL`
 - `OPENAI_API_KEY`
 

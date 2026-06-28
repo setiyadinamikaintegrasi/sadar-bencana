@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # init-db.sh — bootstrap local PostgreSQL + Redis and apply baseline schema
-# Project : Reinsurance Risk Monitor
+# Project : Sadar Bencana
 # Usage   : bash infra/local/init-db.sh
 # Requires: Docker Desktop (or colima) running. Start it from the UI first.
 # =============================================================================
@@ -18,8 +18,8 @@ if [[ -f "${SCRIPT_DIR}/.env" ]]; then
   set -a; . "${SCRIPT_DIR}/.env"; set +a
 fi
 
-PG_USER="${POSTGRES_USER:-rrm}"
-PG_DB="${POSTGRES_DB:-reinsurance_risk_monitor}"
+PG_USER="${POSTGRES_USER:-sadar}"
+PG_DB="${POSTGRES_DB:-sadar_bencana}"
 
 # --- Validate schema file exists ---------------------------------------------
 if [[ ! -f "${SCHEMA_FILE}" ]]; then

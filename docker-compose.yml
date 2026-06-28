@@ -1,24 +1,24 @@
-name: reinsurance-risk-monitor
+name: sadar-bencana
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: rrm-postgres
+    container_name: sadar-postgres
     restart: unless-stopped
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-rrm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rrm_password}
-      POSTGRES_DB: ${POSTGRES_DB:-reinsurance_risk_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-sadar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-sadar_bencana}
     volumes:
-      - rrm-pgdata:/var/lib/postgresql/data
+      - sadar-pgdata:/var/lib/postgresql/data
       - ./db/schema:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-rrm} -d ${POSTGRES_DB:-reinsurance_risk_monitor}",
+          "pg_isready -U ${POSTGRES_USER:-sadar} -d ${POSTGRES_DB:-sadar_bencana}",
         ]
       interval: 10s
       timeout: 5s
@@ -27,13 +27,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: rrm-redis
+    container_name: sadar-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     volumes:
-      - rrm-redis-data:/data
+      - sadar-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -45,7 +45,7 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile.api
-    container_name: rrm-api
+    container_name: sadar-api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -54,7 +54,7 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: "8001"
       API_ENV: ${API_ENV:-docker}
-      DATABASE_URL: ${DATABASE_URL:-postgres://rrm:rrm_password@postgres:5432/reinsurance_risk_monitor}
+      DATABASE_URL: ${DATABASE_URL:-postgres://sadar:changeme@postgres:5432/sadar_bencana}
     ports:
       - "8001:8001"
 
@@ -62,7 +62,7 @@ services:
     build:
       context: ./apps/worker
       dockerfile: Dockerfile.worker
-    container_name: rrm-worker
+    container_name: sadar-worker
     restart: unless-stopped
     depends_on:
       postgres:
@@ -70,7 +70,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://rrm:rrm_password@postgres:5432/reinsurance_risk_monitor}
+      DATABASE_URL: ${DATABASE_URL:-postgres://sadar:changeme@postgres:5432/sadar_bencana}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080}
       LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
@@ -88,7 +88,7 @@ services:
       dockerfile: apps/web/Dockerfile.web
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
-    container_name: rrm-web
+    container_name: sadar-web
     restart: unless-stopped
     depends_on:
       api:
@@ -97,5 +97,5 @@ services:
       - "3001:3001"
 
 volumes:
-  rrm-pgdata:
-  rrm-redis-data:
+  sadar-pgdata:
+  sadar-redis-data:

@@ -3,16 +3,17 @@ set -euo pipefail
 
 required=(
   "README.md"
+  "LICENSE"
+  "SECURITY.md"
+  "CONTRIBUTING.md"
+  "CODE_OF_CONDUCT.md"
   ".env.example"
-  "docs/blueprint/2026-06-21-product-blueprint.md"
+  "docker-compose.yml"
   "docs/architecture/2026-06-21-technical-architecture.md"
-  "docs/superpowers/plans/2026-06-21-mvp-implementation-plan.md"
-  "docs/adr/ADR-001-greenfield-not-fork-worldmonitor.md"
+  "docs/ews-setup.md"
   "apps/web/README.md"
   "apps/api/README.md"
   "apps/worker/README.md"
-  "packages/domain/README.md"
-  "packages/design-system/README.md"
   "db/schema/README.md"
   "infra/local/README.md"
 )

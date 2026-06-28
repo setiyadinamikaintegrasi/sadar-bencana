@@ -31,9 +31,27 @@ logs/
 *.test
 *.out
 apps/api/server
-apps/api/rrm-api
+apps/api/sadar-api
 
 # Dev tools & internal
 .logs/
 .superpowers/
 .impeccable/
+# Local databases / state
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+.mastra/
+apps/mastra/.mastra/
+
+# Certificates / private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Coverage / build output
+coverage/
+build/

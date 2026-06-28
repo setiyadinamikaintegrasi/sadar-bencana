@@ -114,7 +114,7 @@ docker compose up -d postgres redis
 cp .env.example .env
 cat > .env.local << 'EOF'
 # .env.local: hanya untuk pengembangan lokal
-DATABASE_URL=postgres://rrm:changeme_pg_password@localhost:5433/sadar_bencana
+DATABASE_URL=postgres://sadar:changeme_pg_password@localhost:5433/sadar_bencana
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_JWT_SECRET=your-jwt-secret-here
 RISK_FREE_LIMIT=0
@@ -216,7 +216,7 @@ API_PORT=8001
 API_ENV=local
 MASTRA_BASE_URL=http://127.0.0.1:4111
 RISK_FREE_LIMIT=0
-DATABASE_URL=postgres://rrm:rrm_dev_2026@localhost:5433/sadar_bencana
+DATABASE_URL=postgres://sadar:changeme@localhost:5433/sadar_bencana
 ```
 
 ---
@@ -261,8 +261,8 @@ Karena host umumnya tidak memiliki `psql` CLI, terapkan migrasi melalui containe
 
 ```bash
 # Untuk setiap file migrasi (001_init.sql, 002_*, etc.):
-docker exec -i rrm-postgres psql -U rrm -d sadar_bencana < db/schema/001_init.sql
-docker exec -i rrm-postgres psql -U rrm -d sadar_bencana < db/schema/002_*.sql
+docker exec -i sadar-postgres psql -U sadar -d sadar_bencana < db/schema/001_init.sql
+docker exec -i sadar-postgres psql -U sadar -d sadar_bencana < db/schema/002_*.sql
 # ... lanjutkan untuk semua file
 ```
 
@@ -275,7 +275,7 @@ Atau, jika menggunakan Supabase:
 
 ```bash
 # Cek tabel di dalam container postgres
-docker exec rrm-postgres psql -U rrm -d sadar_bencana -c '\dt'
+docker exec sadar-postgres psql -U sadar -d sadar_bencana -c '\dt'
 ```
 
 ---
@@ -357,7 +357,7 @@ npm run build --workspace apps/web
 # Output: apps/web/dist/
 
 # API (Go)
-cd apps/api && go build -o rrm-api ./cmd/server
+cd apps/api && go build -o sadar-api ./cmd/server
 
 # Worker (Python)
 cd apps/worker && pip install -r requirements.txt

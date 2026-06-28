@@ -29,13 +29,13 @@ class EmailChannel(BaseChannel):
         port = int(os.getenv("SMTP_PORT", "587"))
         user = os.getenv("SMTP_USER")
         password = os.getenv("SMTP_PASSWORD")
-        from_addr = os.getenv("SMTP_FROM", "ews@tugure.co.id")
+        from_addr = os.getenv("SMTP_FROM", "ews@example.com")
 
         if not host or not user:
             return {"success": False, "provider_id": None,
                     "error": "SMTP not configured"}
 
-        subject = kwargs.get("subject", "[RRM EWS] Alert Notification")
+        subject = kwargs.get("subject", "[Sadar Bencana EWS] Alert Notification")
 
         msg = MIMEMultipart("alternative")
         msg["From"] = from_addr

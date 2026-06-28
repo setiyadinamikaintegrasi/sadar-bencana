@@ -9,7 +9,7 @@ import { dailyBriefingWorkflow } from './workflows/daily-briefing-workflow'
 const storageUrl = `file:${new URL('../../.mastra/mastra.db', import.meta.url).pathname}`
 
 const storage = new LibSQLStore({
-  id: 'rrm-mastra-store',
+  id: 'sadar-mastra-store',
   url: storageUrl,
 })
 

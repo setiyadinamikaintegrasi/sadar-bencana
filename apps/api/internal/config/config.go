@@ -11,11 +11,11 @@ import (
 // It is constructed from individual parts so the default credentials are
 // explicit in source without hard-to-read escaping.
 const (
-	defaultPgUser = "rrm"
-	defaultPgPass = "rrm_dev_2026"
+	defaultPgUser = "sadar"
+	defaultPgPass = "changeme"
 	defaultPgHost = "localhost"
 	defaultPgPort = "5433"
-	defaultPgDB   = "risk_monitor"
+	defaultPgDB   = "sadar_bencana"
 )
 
 // DefaultDatabaseURL constructs the default DATABASE_URL used when the

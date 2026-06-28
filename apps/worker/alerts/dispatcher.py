@@ -151,7 +151,7 @@ async def dispatch_alert(
             send_kwargs: dict[str, Any] = {}
             if channel == "email":
                 send_kwargs["subject"] = (
-                    f"[RRM EWS][{severity.upper()}] {alert_type}"
+                    f"[Sadar Bencana EWS][{severity.upper()}] {alert_type}"
                 )
 
             result = await adapter.send(recipient, message, **send_kwargs)

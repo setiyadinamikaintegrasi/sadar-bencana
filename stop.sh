@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# RRM Stop Script — hentikan semua service
+# Sadar Bencana Stop Script — hentikan semua service
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$PROJECT_DIR/.logs"
 
-echo "🛑 Stopping Reinsurance Risk Monitor services..."
+echo "🛑 Stopping Sadar Bencana services..."
 
 for port in 8001 4111 3001; do
   pids=$(lsof -nP -iTCP:$port -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u)

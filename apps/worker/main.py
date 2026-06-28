@@ -681,7 +681,7 @@ async def ews_test_dispatch(subscriber_id: str) -> JSONResponse:
         )
 
     message = (
-        f"[RRM EWS] Test notification for {target['name']}. "
+        f"[Sadar Bencana EWS] Test notification for {target['name']}. "
         f"If you received this, EWS is working correctly."
     )
 

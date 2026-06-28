@@ -42,13 +42,13 @@ class SubscriberHelpersTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_active_subscribers_returns_dicts(self) -> None:
         conn = AsyncMock()
         conn.fetch.return_value = [
-            {"id": uuid4(), "name": "Joko", "email": "j@x.id",
+            {"id": uuid4(), "name": "Demo User", "email": "j@x.id",
              "phone_whatsapp": None, "telegram_chat_id": 1, "role": "admin"},
         ]
         pool = _PoolStub(conn)
         result = await fetch_active_subscribers(cast(Any, pool))
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["name"], "Joko")
+        self.assertEqual(result[0]["name"], "Demo User")
 
     async def test_fetch_active_subscribers_empty(self) -> None:
         conn = AsyncMock()
