@@ -1,0 +1,39 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+# Local docker-compose dev env (contains dev DB credentials) — keep .env.example tracked
+infra/local/.env
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Go
+*.test
+*.out
+apps/api/server
+apps/api/rrm-api
+
+# Dev tools & internal
+.logs/
+.superpowers/
+.impeccable/

@@ -1,0 +1,135 @@
+import unittest
+
+import httpx
+
+from connectors.rss_news import (
+    RSSNewsConnector,
+    RSS_USER_AGENT,
+    _infer_perils,
+    _make_item_id,
+    _parse_rss,
+)
+
+
+RSS_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<rss version='2.0'>
+  <channel>
+    <title>Test Feed</title>
+    <item>
+      <title>Gempa kuat guncang Maluku</title>
+      <link>https://example.test/gempa-maluku</link>
+      <description><![CDATA[BMKG melaporkan gempa dan banjir susulan kecil.]]></description>
+      <pubDate>Mon, 22 Jun 2026 10:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Karhutla meluas di Sumatra</title>
+      <guid>https://example.test/karhutla</guid>
+      <description><![CDATA[Hotspot baru terdeteksi di beberapa area.]]></description>
+      <pubDate>2026-06-22T11:00:00Z</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+
+ATOM_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom'>
+  <entry>
+    <title>Erupsi gunung api meningkat</title>
+    <link href='https://example.test/erupsi'/>
+    <summary>Aktivitas magma naik signifikan.</summary>
+    <updated>2026-06-22T12:00:00Z</updated>
+  </entry>
+</feed>
+"""
+
+
+class RSSNewsParserTests(unittest.TestCase):
+    def test_parse_rss_extracts_items_and_infers_perils(self) -> None:
+        items = _parse_rss("antara", RSS_XML)
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0].item_id, _make_item_id("antara", "https://example.test/gempa-maluku"))
+        self.assertEqual(items[0].perils, ["earthquake", "flood"])
+        self.assertTrue(items[0].published_at.startswith("2026-06-22T10:30:00+00:00"))
+        self.assertEqual(items[1].perils, ["wildfire"])
+
+    def test_parse_atom_handles_namespaced_entries(self) -> None:
+        items = _parse_rss("tempo", ATOM_XML)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].url, "https://example.test/erupsi")
+        self.assertEqual(items[0].perils, ["volcano"])
+
+    def test_parse_error_returns_empty_list(self) -> None:
+        self.assertEqual(_parse_rss("cnn", "<rss><broken>"), [])
+
+    def test_infer_perils_returns_multiple_matches(self) -> None:
+        perils = _infer_perils("Gempa picu banjir", "Karhutla tak terkait")
+        self.assertEqual(perils, ["earthquake", "flood", "wildfire"])
+
+    def test_infer_perils_rejects_metaphorical_banjir(self) -> None:
+        """'dibanjiri' (metaphorical) must NOT trigger flood peril."""
+        perils = _infer_perils(
+            "HUT ke-499 Balai Kota Jakarta Dibanjiri Karangan Bunga",
+            "Warga dan tamu membanjiri Balai Kota dengan ucapan selamat.",
+        )
+        self.assertNotIn("flood", perils)
+
+    def test_infer_perils_matches_real_banjir(self) -> None:
+        perils = _infer_perils("Banjir bandang melanda Garut", "Evakuasi korban banjir.")
+        self.assertIn("flood", perils)
+
+    def test_infer_perils_rejects_prefixed_forms(self) -> None:
+        """All metaphorical prefix/suffix forms must be rejected."""
+        perils = _infer_perils("Pasar dibanjiri pedagang", "Membanjiri pasar dengan barang murah")
+        self.assertEqual(perils, [])
+
+    def test_infer_perils_tags_factory_fire_as_fire(self) -> None:
+        """Kebakaran pabrik/gudang/ruko harus ditag sebagai 'fire'."""
+        perils = _infer_perils(
+            "11 Jam Kebakaran Pabrik Sandal di Tangerang Belum Padam",
+            "19 unit damkar diterjunkan untuk memadamkan api di pabrik karet.",
+        )
+        self.assertIn("fire", perils)
+
+    def test_infer_perils_tags_damkar_as_fire(self) -> None:
+        """Kata 'damkar' saja cukup untuk tag fire."""
+        perils = _infer_perils("Damkar kerahkan 10 unit", "")
+        self.assertIn("fire", perils)
+
+    def test_infer_perils_tags_pemadam_kebakaran_as_fire(self) -> None:
+        perils = _infer_perils("Dinas Pemadam Kebakaran DKI terjunkan personel", "")
+        self.assertIn("fire", perils)
+
+    def test_infer_perils_karhutla_not_tagged_as_fire(self) -> None:
+        """Karhutla dapat wildfire, bukan fire — agar tidak double-count."""
+        perils = _infer_perils("Karhutla meluas di Kalimantan", "Hotspot baru terdeteksi.")
+        self.assertIn("wildfire", perils)
+        self.assertNotIn("fire", perils)
+
+
+class RSSNewsConnectorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_all_skips_failed_feeds_and_keeps_successes(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.headers.get("User-Agent"), RSS_USER_AGENT)
+            if "antaranews" in str(request.url):
+                return httpx.Response(200, text=RSS_XML)
+            if "cnnindonesia" in str(request.url):
+                return httpx.Response(200, text=ATOM_XML)
+            return httpx.Response(503, text="upstream down")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        connector = RSSNewsConnector(http_client=client)
+        try:
+            items, health = await connector.fetch_all()
+        finally:
+            await connector.close()
+            await client.aclose()
+
+        self.assertEqual(len(items), 3)
+        self.assertEqual({item.source for item in items}, {"antara", "cnn"})
+        # Health dict: antara=2 items, cnn=1 item, others=error strings
+        self.assertEqual(health["antara"], 2)
+        self.assertEqual(health["cnn"], 1)
+        self.assertIsInstance(health["detik"], str)
+        self.assertIsInstance(health["tempo"], str)

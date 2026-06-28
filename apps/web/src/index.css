@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes rrm-ping {
+  75%, 100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+@keyframes rrm-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.rrm-news-ticker {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.rrm-news-ticker__track {
+  display: inline-block;
+  min-width: 100%;
+  animation: rrm-marquee 42s linear infinite;
+}
+
+/* --- Map scroll-zoom: cursor indicator only (no text overlay) --- */
+.rrm-map-inactive {
+  cursor: pointer;
+}
+.rrm-map-active {
+  cursor: grab;
+}
+.rrm-map-active:active {
+  cursor: grabbing;
+}
+
+.rrm-news-ticker:hover .rrm-news-ticker__track {
+  animation-play-state: paused;
+}

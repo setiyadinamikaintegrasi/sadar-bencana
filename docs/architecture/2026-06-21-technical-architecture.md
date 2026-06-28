@@ -1,0 +1,264 @@
+# Risk Monitor — Technical Architecture Proposal
+
+## 1. Architecture goals
+- aman untuk data sensitif
+- modular dan mudah diadopsi bertahap
+- dapat berjalan lokal di Mac Mini untuk pengembangan
+- siap dipisah menjadi service bila kebutuhan meningkat
+- AI tetap bisa dipakai tanpa mengirim data sensitif ke cloud
+
+## 2. Recommended stack
+| Layer | Pilihan | Alasan |
+|---|---|---|
+| Frontend | React + TypeScript + Vite + Tailwind | cepat, ringan, cocok dashboard interaktif |
+| Mapping | MapLibre GL + deck.gl | kuat untuk heatmap, layer, clustering |
+| Core API | Go + Gin | performa baik, cocok service enterprise |
+| Analytics/AI sidecar | FastAPI | fleksibel untuk scoring dan pipeline data |
+| AI orchestration | Mastra (Node.js/TypeScript) | agent/workflow/tooling untuk briefing, copilot risiko, dan explainability |
+| Database | PostgreSQL | relational kuat untuk domain risiko & bencana |
+| Cache / queue ringan | Redis | caching, job coordination, transient state |
+| Background jobs | worker Python / Go | ingestion, scoring, summarization |
+| Auth | internal JWT + SSO-ready boundary | mudah bootstrap, bisa ditingkatkan |
+| Observability | Grafana + Loki/Promtail + metrics | operasional dan audit |
+
+## 3. Proposed logical architecture
+### A. apps/web
+Tanggung jawab:
+- dashboard executive
+- event map
+- exposure analytics
+- claims early warning board
+- governance dashboard
+
+### B. apps/api (Go)
+Tanggung jawab:
+- auth & RBAC
+- API domain utama
+- query read-model dashboard
+- treaty / claim / exposure service boundary
+- audit log write
+
+### C. apps/worker (Python/FastAPI + jobs)
+Tanggung jawab:
+- konektor BMKG, USGS, GDACS, news feeds
+- normalization pipeline
+- risk scoring engine
+- penyusunan context briefing
+- alert generation
+
+### D. apps/mastra (Node.js/TypeScript)
+Tanggung jawab:
+- agent dan workflow AI
+- tool wrapper ke Go API / worker API
+- executive briefing generation dengan citation
+- underwriter copilot / analyst Q&A
+- orchestrasi approval-ready narrative tanpa mengambil alih source of record
+
+### E. database
+Schema utama:
+- master entities
+- normalized event store
+- exposure snapshots
+- claims watch records
+- alert history
+- audit logs
+
+## 4. Frontend proposal
+### Main features
+- multi-dashboard layout
+- layer control & time filter
+- drill-down region -> cedant -> treaty -> claim watch
+- source citation drawer
+- AI summary panel with references
+
+### Suggested frontend structure
+- `apps/web/src/pages/`
+- `apps/web/src/features/events/`
+- `apps/web/src/features/exposures/`
+- `apps/web/src/features/claims/`
+- `apps/web/src/features/briefing/`
+- `apps/web/src/features/admin/`
+- `apps/web/src/lib/api/`
+- `apps/web/src/lib/map/`
+
+## 5. Backend proposal
+### Core domains
+- identity & access
+- event intelligence
+- exposure management
+- claims watch
+- risk scoring
+- briefing
+- governance / audit
+
+### API style
+- REST untuk operasional utama
+- optional SSE/WebSocket untuk live alerts
+- OpenAPI sebagai kontrak awal
+
+### Endpoint groups (draft)
+- `/api/v1/auth/*`
+- `/api/v1/events/*`
+- `/api/v1/exposures/*`
+- `/api/v1/claims-watch/*`
+- `/api/v1/risk-scores/*`
+- `/api/v1/briefings/*`
+- `/api/v1/admin/*`
+- `/api/v1/health/*`
+
+## 6. Database proposal
+### Core tables
+- `users`
+- `roles`
+- `user_roles`
+- `events`
+- `event_sources`
+- `event_impacts`
+- `cedants`
+- `brokers`
+- `treaties`
+- `exposure_snapshots`
+- `exposure_items`
+- `claim_cases`
+- `claim_event_links`
+- `risk_scores`
+- `alerts`
+- `briefings`
+- `audit_logs`
+- `connector_runs`
+
+### Data design notes
+- event dan source dipisah agar traceability kuat
+- exposure snapshot immutable per batch/tanggal
+- score disimpan bersama `score_version`
+- alert tidak overwrite, append-only history
+
+## 7. Integration proposal
+### External
+- BMKG
+- USGS earthquake feed
+- GDACS disaster feed
+- curated news/RSS
+- opsional market data feed
+
+### Internal (tahap lanjut)
+- BLIPS export/API read-only
+- claims register read-only
+- exposure bordereaux upload
+- daftar risiko
+
+### Integration pattern
+- connector -> raw landing -> normalizer -> canonical event -> scoring -> alert
+
+## 8. AI proposal
+### AI use cases
+- executive daily briefing
+- event summary per region
+- alert explanation
+- probable impact narrative
+- analyst copilot untuk tanya-jawab situasional berbasis source internal dashboard
+
+### AI operating model
+- **default:** local LLM (`localhost:8080`) untuk data sensitif
+- cloud model hanya untuk data publik/non-rahasia bila diizinkan
+- semua output AI wajib menyimpan citation/source ids
+- **Mastra sebagai orchestration layer**, bukan pengganti Go API atau worker Python
+- agent hanya membaca lewat tool terkontrol (`events`, `alerts`, `exposures`, `news`, `briefings`)
+- semua write operation tetap lewat service domain yang eksplisit dan teraudit
+
+### Guardrails
+- no direct claim PII to external LLM
+- every summary shows source count and timestamps
+- AI output marked as assistive, not final authority
+
+## 9. Local deployment on Mac Mini
+### Dev profile
+- web: port 3001
+- go api: port 8001
+- python worker api: port 8002
+- postgres: 5432
+- redis: 6379
+- local LLM: 8080
+
+### Bring-up order
+1. postgres + redis
+2. api core
+3. worker/connector service
+4. web app
+5. scheduler / cron jobs
+
+### Tooling
+- Docker Compose untuk postgres/redis/grafana
+- host-native untuk Go/React/Python saat dev
+- Tailscale untuk remote internal access terbatas
+
+## 10. Security & compliance notes
+- least privilege RBAC
+- immutable audit log untuk insight penting
+- masking field sensitif di UI dan log
+- connector credentials di `.env.local`, bukan repo
+- read-only integration dahulu untuk sistem internal
+- AI summary bukan source of record
+
+## 11. Recommended implementation sequencing
+1. M0 shell apps + schema + health
+2. M1 event ingestion eksternal
+3. M2 event map + exposure overlay mock
+4. M3 alert engine + claim watch board
+5. M4 AI executive briefing
+6. M5 internal integration & hardening
+
+## 12. Recommendation
+Untuk fase awal, **hindari microservices berlebihan**. Pakai pendekatan modular monorepo dengan 3 executable utama:
+- web
+- api
+- worker
+
+Ini cukup rapi, mudah dideploy lokal, dan masih bisa dipecah nanti bila traffic/organisasi membutuhkannya.
+
+---
+
+## 13. Early Warning System (EWS)
+
+EWS adalah **dispatch layer** multi-channel yang duduk di atas tabel `alerts`.
+Tujuannya: mengantarkan notifikasi bencana ke subscriber terdaftar berdasarkan
+*geofenced watch zones* dan preferensi per-channel. Panduan operasional ada di
+[`docs/ews-setup.md`](../ews-setup.md).
+
+### 13.1 Komponen
+
+| Layer | Lokasi | Tanggung jawab |
+|-------|--------|----------------|
+| Schema | `db/schema/011–013` | `ews_subscribers`, `ews_watch_zones`, `ews_notification_prefs`, `ews_notification_log` |
+| Dispatcher | `apps/worker/alerts/dispatcher.py` | Orkestrasi: geo-match → filter preferensi → fan-out channel → log |
+| Geo | `apps/worker/alerts/geo.py` | Haversine distance + zone matching |
+| Channel adapters | `apps/worker/alerts/channels/` | `telegram`, `whatsapp` (Fonnte), `email` (SMTP) di balik `BaseChannel` |
+| DB helpers | `apps/worker/db/subscribers.py` | Fetch subscriber/prefs/zones, log, dedup |
+| API | `apps/api/internal/http/ews.go` | CRUD subscriber/watch-zone/preferences + delivery log |
+| Web | `apps/web/src/features/ews/` | Admin UI (4 tab) + interactive map picker |
+
+### 13.2 Alur dispatch
+
+```
+evaluator.py  ──create_alert()──►  alerts table
+      │
+      └── dispatch_alert(pool, alert, event_data)
+              │
+              ├── load active subscribers + watch zones
+              ├── geo-match (haversine ≤ radius, peril + magnitude filter)
+              │     • subscriber tanpa zone = global watcher (selalu lolos)
+              ├── per channel pref: severity / alert-type / quiet-hours / dedup
+              └── channel adapter .send() ──► ews_notification_log (sent|failed|skipped)
+```
+
+### 13.3 Desain
+
+- **Adapter pattern** — setiap channel mengimplementasikan `BaseChannel.send()`
+  yang mengembalikan `{"success", "provider_id", "error"}` dan **tidak pernah
+  raise**; kegagalan jadi baris log `failed`, bukan crash pipeline.
+- **Dedup** via `ews_notification_log` mencegah notifikasi ganda untuk
+  (subscriber, alert, channel) yang sama.
+- **Backward compat** — `notifier.send_telegram()` lama dibiarkan; evaluator kini
+  memanggil `dispatch_alert()`.
+- Worker tetap satu executable; EWS hanya menambah modul, bukan service baru —
+  konsisten dengan rekomendasi modular monorepo di atas.

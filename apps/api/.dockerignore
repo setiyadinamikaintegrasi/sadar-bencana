@@ -1,0 +1,10 @@
+.git
+server
+*.test
+*.out
+*.log
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore

@@ -1,0 +1,30 @@
+# Root .dockerignore — applies to the web (workspace) build, whose context is ".".
+# Keep only what the web build needs: root package.json, root lockfile, apps/web.
+
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Other apps are irrelevant to the web build and only bloat the context.
+apps/api
+apps/worker
+
+# Node / build artifacts (regenerated inside the image).
+node_modules
+**/node_modules
+apps/web/dist
+apps/web/.vite
+
+# Python artifacts.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+apps/worker/.venv
+
+# Misc.
+.DS_Store
+docs
+infra
+*.md
