@@ -72,7 +72,7 @@ Menjalankan seluruh stack dalam container: postgres, redis, api, worker, web.
 
 ```bash
 # 1. Clone repo dan masuk direktori
-git clone https://github.com/yourusername/sadar-bencana.git
+git clone https://github.com/setiyadinamikaintegrasi/sadar-bencana.git
 cd sadar-bencana
 
 # 2. Copy .env.example ke .env
@@ -100,7 +100,7 @@ Jalankan database dalam container (postgres + redis), namun API, Web, Mastra dij
 
 ```bash
 # 1. Clone repo dan masuk direktori
-git clone https://github.com/yourusername/sadar-bencana.git
+git clone https://github.com/setiyadinamikaintegrasi/sadar-bencana.git
 cd sadar-bencana
 
 # 2. Install dependency Node.js dari root
@@ -330,8 +330,6 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — panduan deployment Daftar Risiko dan `RISK_FREE_LIMIT`
 - **[EWS Setup](docs/ews-setup.md)** — konfigurasi Early Warning System
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
-- **[Product Blueprint](docs/blueprint/2026-06-21-product-blueprint.md)** — blueprint produk dan fitur
-- **[Architecture Decision Records (ADR)](docs/adr/ADR-001-greenfield-approach.md)** — keputusan desain & prinsip
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
 
 ---
@@ -381,9 +379,7 @@ cd apps/worker && pip install -r requirements.txt
 
 ## Lisensi
 
-Proyek ini dirilis di bawah lisensi **[Apache License 2.0](LICENSE)** — lisensi permisif dengan klausul hibah paten eksplisit, konsisten dengan prinsip greenfield (tidak membawa codebase AGPL). Anda bebas menggunakan, memodifikasi, dan menjalankan instance self-hosted Anda sendiri.
-
-Untuk konteks keputusan desain & prinsip, lihat [ADR-001](docs/adr/ADR-001-greenfield-approach.md).
+Proyek ini dirilis di bawah lisensi **[Apache License 2.0](LICENSE)** — lisensi permisif dengan klausul hibah paten eksplisit. Anda bebas menggunakan, memodifikasi, dan menjalankan instance self-hosted Anda sendiri.
 
 ---
 
