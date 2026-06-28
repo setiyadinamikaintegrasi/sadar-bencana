@@ -400,8 +400,8 @@ export default function ExecutiveOverview() {
               {intelligenceMoments.length} moments
             </span>
           </div>
-          <div className="rrm-news-ticker border-b border-slate-800 bg-slate-950/70 px-4 py-2 text-xs text-slate-300">
-            <div className="rrm-news-ticker__track">
+          <div className="risk-news-ticker border-b border-slate-800 bg-slate-950/70 px-4 py-2 text-xs text-slate-300">
+            <div className="risk-news-ticker__track">
               {[...news.slice(0, 6), ...news.slice(0, 6)].map((item, index) => (
                 <span key={`${item.id}-${index}`} className="mr-8 inline-flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />

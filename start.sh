@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RRM Startup Script — jalankan semua service sekaligus
+# Sadar Bencana Startup Script — jalankan semua service sekaligus
 # Usage: ./start.sh
 set -euo pipefail
 
@@ -17,7 +17,7 @@ if [ -f "$PROJECT_DIR/.env.local" ]; then
   echo "🔑 Loaded .env.local"
 fi
 
-echo "🚀 Starting Reinsurance Risk Monitor services..."
+echo "🚀 Starting Sadar Bencana services..."
 echo "   Project: $PROJECT_DIR"
 echo ""
 

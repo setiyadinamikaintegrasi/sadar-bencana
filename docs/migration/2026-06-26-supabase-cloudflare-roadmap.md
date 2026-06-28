@@ -1,4 +1,4 @@
-# Roadmap Migrasi — RRM ke Supabase + Cloudflare Workers
+# Roadmap Migrasi — Sadar Bencana ke Supabase + Cloudflare Workers
 
 ## Context
 
@@ -37,7 +37,7 @@ di **backend** (Worker memeriksa JWT + entitlement), bukan sekadar sembunyikan m
 | Komponen | Fakta | Kesiapan Cloudflare |
 |----------|-------|---------------------|
 | `apps/web` | React 18 + Vite, navigasi berbasis `useState` (tanpa router), **tanpa auth** | **Mudah** → Cloudflare Pages apa adanya |
-| `apps/api` | Go/Gin, pgx stdlib, raw SQL; default DSN `localhost:5433` (`rrm`/`rrm_dev_2026`) di `internal/config/config.go`; :8001 | **Rewrite** → Hono di Workers (logika SQL portabel) |
+| `apps/api` | Go/Gin, pgx stdlib, raw SQL; default DSN `localhost:5433` (`sadar`/`changeme`) di `internal/config/config.go`; :8001 | **Rewrite** → Hono di Workers (logika SQL portabel) |
 | `apps/worker` | Python FastAPI + asyncpg, :8002; scheduler (ingest 5m, news, briefing, assets); connectors BMKG/USGS/NASA FIRMS/GVP/PetaBencana/GDACS; dispatcher EWS | **Tersulit (long pole)** — proses long-lived + scheduler |
 | `apps/mastra` | TS; `@mastra/core`; model `@ai-sdk/openai` (lokal llama `:8080` + DeepSeek HTTP) di `src/mastra/shared/model.ts`; storage `@mastra/libsql` file lokal di `src/mastra/index.ts`; tools panggil API/worker via HTTP | **Mudah** → Mastra Cloudflare deployer; ganti model + storage |
 | DB | Docker Postgres `:5433`, schema `db/schema/001–013` (termasuk EWS) | Pindah ke **Supabase Postgres** |
@@ -106,7 +106,7 @@ berbasis `wrangler`, hapus kode mati Go/Python.
 - **Secrets**: `wrangler secret` + env Supabase (jangan hardcode).
 - **Biaya/limit**: free tier Supabase (≈500MB, batas koneksi) & limit Workers — cek lebih awal.
 - **Migrasi data**: `pg_dump`/restore; verifikasi FK & extension; saat ini migrasi diterapkan
-  via `docker exec rrm-postgres psql …` (tak ada `psql` di host).
+  via `docker exec sadar-postgres psql …` (tak ada `psql` di host).
 
 ---
 

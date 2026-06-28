@@ -6,7 +6,7 @@ Purpose:
 - Reusable for demos / regression checks after connector or evaluator changes.
 
 Usage:
-    set -a && . /tmp/rrm-runtime.env && set +a
+    set -a && . /tmp/risk-runtime.env && set +a
     source .venv/bin/activate
     python scripts/seed_indonesia_regional_events.py
 """

@@ -1,5 +1,5 @@
 {
-  "name": "risk-monitor",
+  "name": "sadar-bencana",
   "private": true,
   "version": "0.1.0",
   "workspaces": ["apps/*"],

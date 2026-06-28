@@ -60,9 +60,9 @@ number, and copy the device token. Subscriber numbers use the `62…` format
 ```bash
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=ews@tugure.co.id
+SMTP_USER=ews@example.com
 SMTP_PASSWORD=app-specific-password
-SMTP_FROM=ews@tugure.co.id
+SMTP_FROM=ews@example.com
 ```
 
 The adapter uses STARTTLS on the configured port. For Gmail, use an
@@ -82,7 +82,7 @@ or the API directly:
 # Create subscriber
 curl -X POST http://localhost:8001/api/v1/ews/subscribers \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Joko Setiyadi","email":"joko@tugure.co.id","telegram_chat_id":673177836,"role":"admin"}'
+  -d '{"name":"Demo Admin","email":"admin@example.com","telegram_chat_id":123456789,"role":"admin"}'
 
 # Add a watch zone (Jakarta, 100km, earthquake+flood, M>=5.0)
 curl -X POST http://localhost:8001/api/v1/ews/subscribers/<SUB_ID>/watch-zones \
@@ -114,7 +114,7 @@ Response:
 
 ```json
 {
-  "subscriber": "Joko Setiyadi",
+  "subscriber": "Demo Admin",
   "results": [
     {"channel": "telegram", "status": "sent", "error": null}
   ]

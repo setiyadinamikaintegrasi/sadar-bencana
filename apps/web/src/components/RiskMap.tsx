@@ -18,28 +18,28 @@ const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; acce
 ]
 
 const MAP_ANIMATION_CSS = `
-  .rrm-exec-marker {
+  .risk-exec-marker {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 9999px;
   }
-  .rrm-exec-marker::before,
-  .rrm-exec-marker::after {
+  .risk-exec-marker::before,
+  .risk-exec-marker::after {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: 9999px;
     border: 2px solid var(--color);
-    animation: rrm-exec-ring 2.2s ease-out infinite;
+    animation: risk-exec-ring 2.2s ease-out infinite;
     pointer-events: none;
   }
-  .rrm-exec-marker::after {
+  .risk-exec-marker::after {
     animation-delay: 0.7s;
     display: var(--second-ring, none);
   }
-  .rrm-exec-marker__core {
+  .risk-exec-marker__core {
     position: relative;
     z-index: 1;
     display: flex;
@@ -54,26 +54,26 @@ const MAP_ANIMATION_CSS = `
     line-height: 1;
     box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   }
-  .rrm-news-pin {
+  .risk-news-pin {
     border-radius: 8px;
     background: #0f172a;
     border: 1px solid rgba(16,185,129,0.65);
     color: #6ee7b7;
     box-shadow: 0 8px 22px rgba(0,0,0,0.45), 0 0 18px rgba(16,185,129,0.22);
   }
-  @keyframes rrm-exec-ring {
+  @keyframes risk-exec-ring {
     0% { transform: scale(1); opacity: 0.68; }
     100% { transform: scale(2.7); opacity: 0; }
   }
-  .rrm-exec-map .leaflet-popup-content-wrapper {
+  .risk-exec-map .leaflet-popup-content-wrapper {
     background: #0f172a !important;
     color: #cbd5e1 !important;
     border: 1px solid #334155 !important;
     border-radius: 12px !important;
     box-shadow: 0 20px 45px rgba(0,0,0,0.55) !important;
   }
-  .rrm-exec-map .leaflet-popup-tip { background: #0f172a !important; }
-  .rrm-exec-map .leaflet-popup-content { margin: 12px 14px !important; }
+  .risk-exec-map .leaflet-popup-tip { background: #0f172a !important; }
+  .risk-exec-map .leaflet-popup-content { margin: 12px 14px !important; }
 `
 
 function eventColor(event: Event): string {
@@ -125,8 +125,8 @@ function createEventIcon(event: Event, selected: boolean): L.DivIcon {
     className: '',
     iconSize: [spread, spread],
     iconAnchor: [spread / 2, spread / 2],
-    html: `<div class="rrm-exec-marker" style="--color:${color};--second-ring:${critical || selected ? 'block' : 'none'};width:${size}px;height:${size}px;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
-      <div class="rrm-exec-marker__core" style="width:${size}px;height:${size}px;${selected ? 'outline:2px solid #c4b5fd;outline-offset:3px;' : ''}">${eventGlyph(event)}</div>
+    html: `<div class="risk-exec-marker" style="--color:${color};--second-ring:${critical || selected ? 'block' : 'none'};width:${size}px;height:${size}px;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
+      <div class="risk-exec-marker__core" style="width:${size}px;height:${size}px;${selected ? 'outline:2px solid #c4b5fd;outline-offset:3px;' : ''}">${eventGlyph(event)}</div>
     </div>`,
   })
 }
@@ -141,7 +141,7 @@ function createNewsIcon(item: NewsItem): L.DivIcon {
     className: '',
     iconSize: [24, 24],
     iconAnchor: [12, 12],
-    html: `<div class="rrm-news-pin" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:12px">${glyph}</div>`,
+    html: `<div class="risk-news-pin" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:12px">${glyph}</div>`,
   })
 }
 
@@ -155,13 +155,13 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
 
     const enableZoom = () => {
       map.scrollWheelZoom.enable()
-      container.classList.add('rrm-map-active')
-      container.classList.remove('rrm-map-inactive')
+      container.classList.add('risk-map-active')
+      container.classList.remove('risk-map-inactive')
     }
     const disableZoom = () => {
       map.scrollWheelZoom.disable()
-      container.classList.remove('rrm-map-active')
-      container.classList.add('rrm-map-inactive')
+      container.classList.remove('risk-map-active')
+      container.classList.add('risk-map-inactive')
     }
 
     // Init state: inactive
@@ -225,9 +225,9 @@ export default function RiskMap({
   height = 430,
 }: RiskMapProps) {
   useEffect(() => {
-    if (document.getElementById('rrm-exec-map-css')) return
+    if (document.getElementById('risk-exec-map-css')) return
     const style = document.createElement('style')
-    style.id = 'rrm-exec-map-css'
+    style.id = 'risk-exec-map-css'
     style.textContent = MAP_ANIMATION_CSS
     document.head.appendChild(style)
   }, [])
@@ -286,7 +286,7 @@ export default function RiskMap({
         ))}
       </div>
 
-      <div className="rrm-exec-map relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+      <div className="risk-exec-map relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
         <div className="pointer-events-none absolute left-3 top-3 z-[500] max-w-[70%] rounded-xl border border-slate-700/80 bg-slate-950/85 px-3 py-2 shadow-2xl shadow-slate-950/50 backdrop-blur">
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Map Focus</p>
           <p className="mt-1 line-clamp-1 text-xs font-semibold text-slate-100">
