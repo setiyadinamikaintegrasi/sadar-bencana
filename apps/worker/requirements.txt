@@ -4,3 +4,5 @@ httpx
 pydantic>=2
 python-dotenv
 asyncpg
+pytest
+pytest-asyncio
