@@ -7,8 +7,8 @@ LOG_DIR="$PROJECT_DIR/.logs"
 
 echo "🛑 Stopping Sadar Bencana services..."
 
-for port in 8001 4111 3001; do
-  pids=$(lsof -nP -iTCP:$port -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u)
+for port in 8001 8002 4111 3001; do
+  pids=$( (lsof -nP -iTCP:$port -sTCP:LISTEN 2>/dev/null || true) | awk 'NR>1{print $2}' | sort -u)
   if [ -n "$pids" ]; then
     echo "▶  Killing port :$port (PID: $(echo $pids | tr '\n' ' '))"
     echo "$pids" | xargs kill -9 2>/dev/null || true

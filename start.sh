@@ -53,7 +53,23 @@ else
   fi
 fi
 
-# --- 3. Vite Frontend (:3001) ---
+# --- 3. Worker FastAPI (:8002) ---
+if lsof -nP -iTCP:8002 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "✅ Worker (:8002) — already running"
+else
+  echo "▶  Starting Worker FastAPI (:8002)..."
+  cd "$PROJECT_DIR/apps/worker"
+  nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8002 > "$LOG_DIR/worker.log" 2>&1 &
+  echo $! > "$LOG_DIR/worker.pid"
+  sleep 3
+  if curl -sSo /dev/null --max-time 3 http://127.0.0.1:8002/health 2>/dev/null; then
+    echo "✅ Worker (:8002) — started (PID $(cat "$LOG_DIR/worker.pid"))"
+  else
+    echo "❌ Worker (:8002) — failed to start. Check $LOG_DIR/worker.log"
+  fi
+fi
+
+# --- 4. Vite Frontend (:3001) ---
 if lsof -nP -iTCP:3001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "✅ Vite (:3001) — already running"
 else
