@@ -16,6 +16,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if strings.TrimSpace(cfg.DatabaseURL) == "" {
+		log.Fatal("DATABASE_URL is required; configure the Supabase pooled connection string before starting the API")
+	}
 
 	// Initialize the PostgreSQL connection pool. A failure here is logged as a
 	// warning but does NOT crash the server: the API will keep serving routes

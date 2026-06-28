@@ -7,23 +7,6 @@ import (
 	"time"
 )
 
-// defaultDatabaseURL is the local development PostgreSQL connection string.
-// It is constructed from individual parts so the default credentials are
-// explicit in source without hard-to-read escaping.
-const (
-	defaultPgUser = "sadar"
-	defaultPgPass = "changeme"
-	defaultPgHost = "localhost"
-	defaultPgPort = "5433"
-	defaultPgDB   = "sadar_bencana"
-)
-
-// DefaultDatabaseURL constructs the default DATABASE_URL used when the
-// DATABASE_URL environment variable is not set.
-func DefaultDatabaseURL() string {
-	return "postgres://" + defaultPgUser + ":" + defaultPgPass + "@" + defaultPgHost + ":" + defaultPgPort + "/" + defaultPgDB
-}
-
 type Config struct {
 	Host              string
 	Port              string
@@ -41,7 +24,7 @@ func Load() Config {
 		Host:              getEnv("API_HOST", "0.0.0.0"),
 		Port:              getEnv("API_PORT", "8001"),
 		Env:               getEnv("API_ENV", "local"),
-		DatabaseURL:       getEnv("DATABASE_URL", DefaultDatabaseURL()),
+		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		MastraBaseURL:     getEnv("MASTRA_BASE_URL", "http://127.0.0.1:4111"),
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
 		SupabaseJWKSURL:   supabaseJWKSURL(),

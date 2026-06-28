@@ -68,7 +68,7 @@ Jika kebutuhan Anda melebihi `RISK_FREE_LIMIT` di hosting publik, Anda dapat men
 
 ### Opsi A: Docker Compose (Paling Sederhana)
 
-Menjalankan seluruh stack dalam container: postgres, redis, api, worker, web.
+Menjalankan stack aplikasi dalam container: redis, api, worker, web. Database utama tetap Supabase melalui `DATABASE_URL`.
 
 ```bash
 # 1. Clone repo dan masuk direktori
@@ -90,13 +90,13 @@ docker compose up -d
 
 **Troubleshooting Docker Compose:**
 
-- Jika postgres tidak siap, tunggu ~10 detik, kemudian jalankan: `docker compose logs postgres`
+- Jika API/worker gagal start, cek apakah `DATABASE_URL`, `SUPABASE_URL`, dan `SUPABASE_JWT_SECRET` sudah terisi.
 - Lihat status semua container: `docker compose ps`
 - Hentikan semua service: `docker compose down`
 
 ### Opsi B: Pengembangan Lokal (tanpa container app)
 
-Jalankan database dalam container (postgres + redis), namun API, Web, Mastra dijalankan di host.
+Jalankan Redis dalam container, namun API, Web, Mastra dijalankan di host. Database tetap Supabase melalui `.env.local`.
 
 ```bash
 # 1. Clone repo dan masuk direktori
@@ -106,15 +106,14 @@ cd sadar-bencana
 # 2. Install dependency Node.js dari root
 npm install
 
-# 3. Jalankan database saja dalam container
-docker compose up -d postgres redis
-# Tunggu postgres siap (lihat healthcheck): docker compose logs postgres
+# 3. Jalankan Redis saja dalam container
+docker compose up -d redis
 
 # 4. Copy .env.example dan buat .env.local
 cp .env.example .env
 cat > .env.local << 'EOF'
 # .env.local: hanya untuk pengembangan lokal
-DATABASE_URL=postgres://sadar:changeme_pg_password@localhost:5433/sadar_bencana
+DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_JWT_SECRET=your-jwt-secret-here
 RISK_FREE_LIMIT=0
@@ -157,10 +156,10 @@ uvicorn main:app --reload --port 8002  # :8002
 
 ### Root `.env` (untuk Docker Compose)
 
-Disalin dari `.env.example`. Digunakan saat `docker compose up`. Variabel:
+Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama memakai Supabase; jangan arahkan `DATABASE_URL` ke Postgres Docker lokal kecuali sedang menjalankan eksperimen isolated dev di `infra/local`. Variabel:
 
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — bootstrap PostgreSQL container
-- `DATABASE_URL` — koneksi DB di dalam Docker network (gunakan nama service: `postgres`, bukan localhost)
+- `DATABASE_URL` — **wajib** Supabase pooled connection string
+- `SUPABASE_URL`, `SUPABASE_JWT_SECRET` — konfigurasi Supabase Auth/JWT
 - `REDIS_URL` — koneksi Redis
 - `API_HOST`, `API_PORT`, `API_ENV` — konfigurasi API
 - `LLM_BASE_URL`, `LLM_TIMEOUT`, `LLM_MODEL` — integrasi llama.cpp (opsional)
@@ -175,8 +174,8 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Variabel:
 Dibaca oleh `start.sh`. Variabel kunci:
 
 ```env
-# Database — untuk pengembangan lokal atau Supabase
-DATABASE_URL=postgres://user:password@host:port/dbname
+# Database — gunakan Supabase pooled connection string
+DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 
 # Supabase Auth (opsional, jika menggunakan Supabase)
 SUPABASE_URL=https://your-project.supabase.co
@@ -216,7 +215,7 @@ API_PORT=8001
 API_ENV=local
 MASTRA_BASE_URL=http://127.0.0.1:4111
 RISK_FREE_LIMIT=0
-DATABASE_URL=postgres://sadar:changeme@localhost:5433/sadar_bencana
+DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 ```
 
 ---
@@ -253,16 +252,16 @@ File migrasi SQL tersimpan di `db/schema/` (`001_init.sql`, `002_*.sql`, …, `0
 
 ### Untuk Docker Compose
 
-PostgreSQL container otomatis menjalankan semua script dalam `db/schema/` saat pertama kali startup — folder ini di-mount ke `/docker-entrypoint-initdb.d` (lihat `volumes` di `docker-compose.yml`). Jadi pada deployment Docker Compose yang fresh, migrasi diterapkan otomatis.
+Root Docker Compose tidak lagi menjalankan PostgreSQL lokal. Migrasi schema harus diterapkan ke Supabase/Postgres target menggunakan `DATABASE_URL`.
 
 ### Untuk pengembangan lokal (manual)
 
-Karena host umumnya tidak memiliki `psql` CLI, terapkan migrasi melalui container postgres:
+Terapkan migrasi langsung ke database Supabase/Postgres target:
 
 ```bash
-# Untuk setiap file migrasi (001_init.sql, 002_*, etc.):
-docker exec -i sadar-postgres psql -U sadar -d sadar_bencana < db/schema/001_init.sql
-docker exec -i sadar-postgres psql -U sadar -d sadar_bencana < db/schema/002_*.sql
+# Untuk setiap file migrasi (001_init.sql, 002_*, etc.) jalankan ke Supabase:
+psql "$DATABASE_URL" -f db/schema/001_init.sql
+psql "$DATABASE_URL" -f db/schema/002_*.sql
 # ... lanjutkan untuk semua file
 ```
 
@@ -274,8 +273,8 @@ Atau, jika menggunakan Supabase:
 ### Verifikasi migrasi
 
 ```bash
-# Cek tabel di dalam container postgres
-docker exec sadar-postgres psql -U sadar -d sadar_bencana -c '\dt'
+# Cek tabel di Supabase/Postgres target
+psql "$DATABASE_URL" -c '\dt'
 ```
 
 ---
@@ -310,7 +309,7 @@ bash scripts/verify-structure.sh
   ```bash
   docker compose logs -f api      # tail API logs
   docker compose logs -f worker   # tail Worker logs
-  docker compose logs -f postgres # tail PostgreSQL logs
+  # Database logs ada di Supabase Dashboard, bukan container lokal root compose.
   ```
 
 - **Pengembangan lokal:**

@@ -1,9 +1,11 @@
 """Async PostgreSQL connection pool management for the worker.
 
-The pool reads its DSN from the ``DATABASE_URL`` environment variable and
-falls back to the local docker-compose default when unset. The pool is
-lazily initialized via :func:`init_pool` (typically called from the
-FastAPI startup hook) and torn down via :func:`close_pool` (shutdown).
+The pool reads its DSN from the ``DATABASE_URL`` environment variable.
+For the main runtime this must be the Supabase pooled connection string;
+there is intentionally no local PostgreSQL fallback so the worker never
+silently writes to the wrong database. The pool is lazily initialized via
+:func:`init_pool` (typically called from the FastAPI startup hook) and torn
+down via :func:`close_pool` (shutdown).
 
 Callers acquire a connection from the pool via:
 
@@ -22,19 +24,20 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
-# Default DSN matches docker-compose service `postgres` for this project.
-DEFAULT_DATABASE_URL = (
-    "postgres://sadar:changeme@localhost:5433/sadar_bencana"
-)
-
 # Module-level singleton. Mutated only via init_pool()/close_pool().
 _pool: Optional[asyncpg.Pool] = None
 
 
 def _resolve_dsn() -> str:
-    """Return the configured database DSN, falling back to the dev default."""
+    """Return the configured database DSN, failing fast when unset."""
 
-    return os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+    dsn = os.environ.get("DATABASE_URL", "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "DATABASE_URL is required; configure the Supabase pooled "
+            "connection string before starting the worker."
+        )
+    return dsn
 
 
 async def init_pool(

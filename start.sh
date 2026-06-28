@@ -7,9 +7,10 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$PROJECT_DIR/.logs"
 mkdir -p "$LOG_DIR"
 
-# --- Load local environment (DB credentials, etc.) ---
-# .env.local is gitignored; it sets DATABASE_URL (Supabase) so the Go API below
-# inherits it. Without it, services fall back to the local docker-compose DB.
+# --- Load local environment (Supabase DB credentials, etc.) ---
+# .env.local is gitignored; it must set DATABASE_URL to the Supabase pooled
+# connection string. Services now fail fast when DATABASE_URL is missing instead
+# of falling back to a local PostgreSQL database.
 if [ -f "$PROJECT_DIR/.env.local" ]; then
   set -a
   . "$PROJECT_DIR/.env.local"

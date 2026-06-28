@@ -20,9 +20,9 @@ Instruksi lengkap ada di [README — Instalasi](README.md#instalasi). Ringkasnya
 
 ```bash
 npm install                          # dependency JS (monorepo)
-docker compose up -d postgres redis  # database + cache
-cp .env.example .env                 # dan buat .env.local (lihat README)
-./start.sh                           # API :8001, Mastra :4111, Web :3001
+docker compose up -d redis           # cache; database utama memakai Supabase
+cp .env.example .env                 # dan buat .env.local berisi Supabase DATABASE_URL (lihat README)
+./start.sh                           # API :8001, Mastra :4111, Worker :8002, Web :3001
 ```
 
 Prasyarat: Node.js 20+, Go 1.25, Python 3.11+, Docker.

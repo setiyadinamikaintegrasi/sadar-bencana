@@ -36,8 +36,8 @@ di **backend** (Worker memeriksa JWT + entitlement), bukan sekadar sembunyikan m
 
 | Komponen | Fakta | Kesiapan Cloudflare |
 |----------|-------|---------------------|
-| `apps/web` | React 18 + Vite, navigasi berbasis `useState` (tanpa router), **tanpa auth** | **Mudah** → Cloudflare Pages apa adanya |
-| `apps/api` | Go/Gin, pgx stdlib, raw SQL; default DSN `localhost:5433` (`sadar`/`changeme`) di `internal/config/config.go`; :8001 | **Rewrite** → Hono di Workers (logika SQL portabel) |
+| `apps/web` | React 18 + Vite, navigasi berbasis `useState` (tanpa router), Supabase Auth via `@supabase/supabase-js` | **Mudah** → Cloudflare Pages apa adanya |
+| `apps/api` | Go/Gin, pgx stdlib, raw SQL; `DATABASE_URL` wajib diarahkan ke Supabase pooled connection string; :8001 | **Rewrite bertahap** → Hono di Workers (logika SQL portabel) |
 | `apps/worker` | Python FastAPI + asyncpg, :8002; scheduler (ingest 5m, news, briefing, assets); connectors BMKG/USGS/NASA FIRMS/GVP/PetaBencana/GDACS; dispatcher EWS | **Tersulit (long pole)** — proses long-lived + scheduler |
 | `apps/mastra` | TS; `@mastra/core`; model `@ai-sdk/openai` (lokal llama `:8080` + DeepSeek HTTP) di `src/mastra/shared/model.ts`; storage `@mastra/libsql` file lokal di `src/mastra/index.ts`; tools panggil API/worker via HTTP | **Mudah** → Mastra Cloudflare deployer; ganti model + storage |
 | DB | Docker Postgres `:5433`, schema `db/schema/001–013` (termasuk EWS) | Pindah ke **Supabase Postgres** |
@@ -63,10 +63,10 @@ hapus yang lama saat selesai. Alternatif big-bang lebih cepat selesai tapi jauh 
 
 ## Fase (tiap fase = sub-proyek dengan spec sendiri)
 
-**Fase 0 — Fondasi Supabase.** Provision project Supabase; jalankan `db/schema/001–013`
-(perhatikan extension `uuid-ossp`); migrasi data existing (`pg_dump` dari Docker → restore
-ke Supabase); repoint **DATABASE_URL** Go API (`config.go`), worker (`db/pool.py`), dan
-Mastra ke Supabase. Tanpa perubahan fitur. *Tujuan: semua yang ada tetap jalan di DB cloud.*
+**Fase 0 — Fondasi Supabase.** Project Supabase menjadi source of truth; jalankan `db/schema/001–013`
+(perhatikan extension `uuid-ossp`) langsung ke Supabase bila schema belum lengkap; pastikan
+**DATABASE_URL** Go API (`config.go`), worker (`db/pool.py`), dan Mastra mengarah ke Supabase.
+Tanpa perubahan fitur. *Tujuan: semua yang ada tetap jalan di DB cloud dan tidak fallback ke DB lokal.*
 
 **Fase 1 — Auth + Gate EWS (PILOT).** Supabase Auth signup/login di web (`supabase-js`);
 kaitkan auth user ↔ baris `ews_subscriber`; bangun endpoint EWS sebagai **Worker Hono
@@ -105,8 +105,8 @@ berbasis `wrangler`, hapus kode mati Go/Python.
   cocok dengan koneksi TCP Postgres tradisional.
 - **Secrets**: `wrangler secret` + env Supabase (jangan hardcode).
 - **Biaya/limit**: free tier Supabase (≈500MB, batas koneksi) & limit Workers — cek lebih awal.
-- **Migrasi data**: `pg_dump`/restore; verifikasi FK & extension; saat ini migrasi diterapkan
-  via `docker exec sadar-postgres psql …` (tak ada `psql` di host).
+- **Migrasi data**: `pg_dump`/restore bila masih ada data historis lokal; verifikasi FK & extension;
+  runtime utama sudah diarahkan ke Supabase melalui `DATABASE_URL`.
 
 ---
 
