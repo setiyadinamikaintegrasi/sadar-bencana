@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import SourceBadge from '../../components/SourceBadge'
 import {
   acknowledgeAlert,
+  getAlertActionCard,
   getAlerts,
   type Alert,
+  type AlertActionCard,
   type AlertSeverity,
   type AlertVerification,
 } from '../../lib/api/client'
@@ -41,6 +43,28 @@ export default function AlertsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sourceFilter, setSourceFilter] = useState<string>(ALL_SOURCES)
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null)
+  const [actionCards, setActionCards] = useState<Record<string, AlertActionCard>>({})
+  const [loadingCardId, setLoadingCardId] = useState<string | null>(null)
+
+  const toggleActionCard = useCallback(async (alertId: string) => {
+    if (actionCards[alertId]) {
+      setActionCards((current) => {
+        const next = { ...current }
+        delete next[alertId]
+        return next
+      })
+      return
+    }
+    setLoadingCardId(alertId)
+    try {
+      const card = await getAlertActionCard(alertId)
+      setActionCards((current) => ({ ...current, [alertId]: card }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load action card.')
+    } finally {
+      setLoadingCardId(null)
+    }
+  }, [actionCards])
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
     if (mode === 'initial') {
@@ -323,6 +347,17 @@ export default function AlertsPage() {
                 </div>
 
                 <div className="shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleActionCard(alert.id)}
+                    className="mb-2 block rounded-xl border border-sky-500/40 px-4 py-2 text-sm font-semibold text-sky-200 hover:bg-sky-500/10"
+                  >
+                    {loadingCardId === alert.id
+                      ? 'Memuat…'
+                      : actionCards[alert.id]
+                        ? 'Tutup panduan'
+                        : 'Lihat tindakan'}
+                  </button>
                   {alert.acknowledged ? (
                     <span className="inline-flex items-center text-xs font-medium text-emerald-400">
                       ✓ Acknowledged
@@ -339,6 +374,28 @@ export default function AlertsPage() {
                   )}
                 </div>
               </div>
+              {actionCards[alert.id] ? (
+                <div className="mt-5 rounded-xl border border-sky-500/25 bg-sky-950/20 p-5 text-sm text-slate-200">
+                  <p className="font-semibold text-white">Apa yang terjadi</p>
+                  <p className="mt-1">{actionCards[alert.id].what_happened}</p>
+                  <p className="mt-4 font-semibold text-white">Mengapa saya menerima ini</p>
+                  <p className="mt-1">{actionCards[alert.id].why_received}</p>
+                  {(['before', 'during', 'after'] as const).map((stage) => (
+                    <div key={stage} className="mt-4">
+                      <p className="font-semibold capitalize text-white">{stage}</p>
+                      <ul className="mt-1 list-disc space-y-1 pl-5">
+                        {actionCards[alert.id].guidance[stage].map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                  <p className="mt-4 text-xs text-slate-400">
+                    Panduan {actionCards[alert.id].guidance_version} · Confidence{' '}
+                    {actionCards[alert.id].confidence_class}
+                  </p>
+                </div>
+              ) : null}
             </article>
           ))}
         </section>

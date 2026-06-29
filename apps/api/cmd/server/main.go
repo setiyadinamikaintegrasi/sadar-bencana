@@ -61,6 +61,7 @@ func main() {
 	router.POST("/api/v1/ai/copilot/chat", apihttp.AICopilotChat(cfg.MastraBaseURL, cfg.AIBriefingTimeout))
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
 	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
+	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
 	router.GET("/api/v1/official-alerts", apihttp.OfficialAlerts(dbPool))
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())

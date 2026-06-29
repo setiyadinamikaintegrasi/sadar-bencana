@@ -177,6 +177,28 @@ export async function acknowledgeAlert(id: string): Promise<void> {
   })
 }
 
+export type AlertActionCard = {
+  alert_id: string
+  what_happened: string
+  why_received: string
+  peril_type: string
+  source: string | null
+  confidence_class: string
+  last_update: string
+  effective_at: string | null
+  expires_at: string | null
+  guidance_version: string
+  guidance: { before: string[]; during: string[]; after: string[] }
+  guidance_source: string | null
+}
+
+export async function getAlertActionCard(id: string): Promise<AlertActionCard> {
+  const response = await request<{ data: AlertActionCard }>(
+    `/alerts/${encodeURIComponent(id)}/action-card`,
+  )
+  return response.data
+}
+
 export type ConnectorHealth = {
   name: string
   status: 'ok' | 'stale' | 'error'

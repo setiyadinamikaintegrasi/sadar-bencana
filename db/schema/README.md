@@ -26,3 +26,5 @@ The alert-classification safety migration is:
   stores versioned policy decisions plus audited manual-override metadata.
 - `025_ews_alert_lifecycle_delivery.sql` — delivers official alert revisions
   with deduplication, retry, dead-letter, acknowledgement, and latency metrics.
+- `026_ews_action_cards.sql` — stores curated, versioned Indonesian safety
+  guidance for offline-capable alert action cards.
