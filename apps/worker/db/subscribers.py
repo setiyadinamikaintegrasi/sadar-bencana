@@ -45,7 +45,7 @@ async def fetch_subscriber_prefs(
 
 _LOAD_ACTIVE_ZONES_SQL = """
 SELECT id, subscriber_id, label, latitude, longitude,
-       radius_km, peril_types, min_magnitude
+       radius_km, peril_types, min_magnitude, thresholds
 FROM ews_watch_zones
 WHERE is_active = TRUE
 """

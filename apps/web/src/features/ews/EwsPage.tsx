@@ -15,6 +15,7 @@ import {
   type EWSNotificationLogEntry,
   type EWSNotificationPref,
   type EWSSeverity,
+  type EWSPerilThresholds,
   type EWSWatchZone,
 } from '../../lib/api/ews'
 
@@ -33,6 +34,19 @@ const statusClasses: Record<string, string> = {
   failed: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
   skipped: 'bg-slate-500/15 text-slate-400 ring-1 ring-inset ring-slate-500/30',
   pending: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
+}
+
+function thresholdLabels(thresholds: EWSPerilThresholds): string[] {
+  const labels: string[] = []
+  const magnitude = thresholds.earthquake?.min_magnitude
+  const floodDepth = thresholds.flood?.min_depth_cm
+  const volcanoLevel = thresholds.volcano?.min_activity_level
+  const wildfireFrp = thresholds.wildfire?.min_frp
+  if (magnitude != null) labels.push(`Gempa ≥ M${magnitude.toFixed(1)}`)
+  if (floodDepth != null) labels.push(`Banjir ≥ ${floodDepth} cm`)
+  if (volcanoLevel != null) labels.push(`Gunung api ≥ Level ${volcanoLevel}`)
+  if (wildfireFrp != null) labels.push(`Karhutla FRP ≥ ${wildfireFrp}`)
+  return labels
 }
 
 function Spinner() {
@@ -66,7 +80,7 @@ function ZonesTab() {
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {z.peril_types.length === 0 ? <span className="text-[11px] text-slate-500">semua peril</span> : z.peril_types.map((p) => <span key={p} className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">{p}</span>)}
-              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-amber-300">≥ M{z.min_magnitude}</span>
+              {thresholdLabels(z.thresholds ?? {}).map((label) => <span key={label} className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-amber-300">{label}</span>)}
             </div>
           </div>
         ))}
@@ -83,14 +97,24 @@ function ZoneForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
   const [lon, setLon] = useState<number | null>(null)
   const [radius, setRadius] = useState(100)
   const [perils, setPerils] = useState<string[]>([])
-  const [minMag, setMinMag] = useState(5.0)
+  const [minMagnitude, setMinMagnitude] = useState(5.0)
+  const [minFloodDepth, setMinFloodDepth] = useState(70)
+  const [minVolcanoLevel, setMinVolcanoLevel] = useState(2)
+  const [minWildfireFrp, setMinWildfireFrp] = useState(100)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const save = async () => {
     if (!label.trim() || lat === null || lon === null) { setErr('Label & titik peta wajib diisi.'); return }
     setSaving(true); setErr(null)
     try {
-      await createMyWatchZone({ label: label.trim(), latitude: lat, longitude: lon, radius_km: radius, peril_types: perils, min_magnitude: minMag })
+      const includes = (peril: string) => perils.length === 0 || perils.includes(peril)
+      const thresholds: EWSPerilThresholds = {
+        ...(includes('earthquake') ? { earthquake: { min_magnitude: minMagnitude } } : {}),
+        ...(includes('flood') ? { flood: { min_depth_cm: minFloodDepth } } : {}),
+        ...(includes('volcano') ? { volcano: { min_activity_level: minVolcanoLevel } } : {}),
+        ...(includes('wildfire') ? { wildfire: { min_frp: minWildfireFrp } } : {}),
+      }
+      await createMyWatchZone({ label: label.trim(), latitude: lat, longitude: lon, radius_km: radius, peril_types: perils, thresholds })
       onSaved()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Gagal menyimpan.') } finally { setSaving(false) }
   }
@@ -104,9 +128,18 @@ function ZoneForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
           <div className="flex flex-wrap gap-2">
             {PERILS.map((p) => { const on = perils.includes(p); return <button key={p} type="button" onClick={() => setPerils((cur) => on ? cur.filter((x) => x !== p) : [...cur, p])} className={`rounded-full px-3 py-1 text-xs font-medium ${on ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40' : 'bg-slate-800 text-slate-200'}`}>{p}</button> })}
           </div>
-          <label className="block text-xs text-slate-400">Min magnitude: M{minMag.toFixed(1)}
-            <input type="range" min={0} max={9} step={0.5} value={minMag} onChange={(e) => setMinMag(Number(e.target.value))} className="mt-1 w-full accent-indigo-500" />
-          </label>
+          {(perils.length === 0 || perils.includes('earthquake')) && <label className="block text-xs text-slate-400">Gempa minimum: M{minMagnitude.toFixed(1)}
+            <input type="range" min={0} max={9} step={0.5} value={minMagnitude} onChange={(e) => setMinMagnitude(Number(e.target.value))} className="mt-1 w-full accent-indigo-500" />
+          </label>}
+          {(perils.length === 0 || perils.includes('flood')) && <label className="block text-xs text-slate-400">Kedalaman banjir minimum: {minFloodDepth} cm
+            <input type="range" min={0} max={500} step={10} value={minFloodDepth} onChange={(e) => setMinFloodDepth(Number(e.target.value))} className="mt-1 w-full accent-indigo-500" />
+          </label>}
+          {(perils.length === 0 || perils.includes('volcano')) && <label className="block text-xs text-slate-400">Aktivitas gunung api minimum: Level {minVolcanoLevel}
+            <input type="range" min={1} max={4} step={1} value={minVolcanoLevel} onChange={(e) => setMinVolcanoLevel(Number(e.target.value))} className="mt-1 w-full accent-indigo-500" />
+          </label>}
+          {(perils.length === 0 || perils.includes('wildfire')) && <label className="block text-xs text-slate-400">Fire Radiative Power minimum: {minWildfireFrp} MW
+            <input type="range" min={0} max={1000} step={25} value={minWildfireFrp} onChange={(e) => setMinWildfireFrp(Number(e.target.value))} className="mt-1 w-full accent-indigo-500" />
+          </label>}
           {err && <p className="text-sm text-rose-300">{err}</p>}
           <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200">Batal</button><button type="button" onClick={save} disabled={saving} className="rounded-lg bg-indigo-500/20 px-4 py-1.5 text-sm font-semibold text-indigo-100 ring-1 ring-inset ring-indigo-400/40 disabled:opacity-50">{saving ? 'Menyimpan…' : 'Simpan'}</button></div>
         </div>

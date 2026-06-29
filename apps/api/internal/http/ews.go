@@ -2,6 +2,8 @@ package http
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,15 +28,39 @@ type EWSSubscriber struct {
 
 // EWSWatchZone mirrors a row in ews_watch_zones.
 type EWSWatchZone struct {
-	ID           string   `json:"id"`
-	SubscriberID string   `json:"subscriber_id"`
-	Label        string   `json:"label"`
-	Latitude     float64  `json:"latitude"`
-	Longitude    float64  `json:"longitude"`
-	RadiusKm     float64  `json:"radius_km"`
-	PerilTypes   []string `json:"peril_types"`
-	MinMagnitude float64  `json:"min_magnitude"`
-	IsActive     bool     `json:"is_active"`
+	ID           string             `json:"id"`
+	SubscriberID string             `json:"subscriber_id"`
+	Label        string             `json:"label"`
+	Latitude     float64            `json:"latitude"`
+	Longitude    float64            `json:"longitude"`
+	RadiusKm     float64            `json:"radius_km"`
+	PerilTypes   []string           `json:"peril_types"`
+	Thresholds   EWSPerilThresholds `json:"thresholds"`
+	MinMagnitude *float64           `json:"min_magnitude,omitempty"`
+	IsActive     bool               `json:"is_active"`
+}
+
+type EWSEarthquakeThreshold struct {
+	MinMagnitude *float64 `json:"min_magnitude,omitempty"`
+}
+
+type EWSFloodThreshold struct {
+	MinDepthCm *float64 `json:"min_depth_cm,omitempty"`
+}
+
+type EWSVolcanoThreshold struct {
+	MinActivityLevel *int `json:"min_activity_level,omitempty"`
+}
+
+type EWSWildfireThreshold struct {
+	MinFRP *float64 `json:"min_frp,omitempty"`
+}
+
+type EWSPerilThresholds struct {
+	Earthquake *EWSEarthquakeThreshold `json:"earthquake,omitempty"`
+	Flood      *EWSFloodThreshold      `json:"flood,omitempty"`
+	Volcano    *EWSVolcanoThreshold    `json:"volcano,omitempty"`
+	Wildfire   *EWSWildfireThreshold   `json:"wildfire,omitempty"`
 }
 
 // ── Local helpers ────────────────────────────────────────────
@@ -71,6 +97,72 @@ func toPGTextArray(items []string) string {
 		parts[i] = `"` + esc + `"`
 	}
 	return "{" + strings.Join(parts, ",") + "}"
+}
+
+type ewsRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanEWSWatchZone(scanner ewsRowScanner, zone *EWSWatchZone) error {
+	var perils string
+	var legacyMagnitude sql.NullFloat64
+	var thresholdsJSON []byte
+	if err := scanner.Scan(
+		&zone.ID, &zone.SubscriberID, &zone.Label, &zone.Latitude, &zone.Longitude,
+		&zone.RadiusKm, &perils, &legacyMagnitude, &thresholdsJSON, &zone.IsActive,
+	); err != nil {
+		return err
+	}
+	zone.PerilTypes = parsePGTextArray(perils)
+	if legacyMagnitude.Valid {
+		value := legacyMagnitude.Float64
+		zone.MinMagnitude = &value
+	}
+	zone.Thresholds = EWSPerilThresholds{}
+	if len(thresholdsJSON) > 0 {
+		if err := json.Unmarshal(thresholdsJSON, &zone.Thresholds); err != nil {
+			return fmt.Errorf("decode watch-zone thresholds: %w", err)
+		}
+	}
+	return nil
+}
+
+func validatePerilThresholds(thresholds *EWSPerilThresholds) error {
+	if thresholds == nil {
+		return nil
+	}
+	if t := thresholds.Earthquake; t != nil && t.MinMagnitude != nil {
+		if *t.MinMagnitude < 0 || *t.MinMagnitude > 10 {
+			return fmt.Errorf("earthquake.min_magnitude must be between 0 and 10")
+		}
+	}
+	if t := thresholds.Flood; t != nil && t.MinDepthCm != nil {
+		if *t.MinDepthCm < 0 || *t.MinDepthCm > 1000 {
+			return fmt.Errorf("flood.min_depth_cm must be between 0 and 1000")
+		}
+	}
+	if t := thresholds.Volcano; t != nil && t.MinActivityLevel != nil {
+		if *t.MinActivityLevel < 1 || *t.MinActivityLevel > 4 {
+			return fmt.Errorf("volcano.min_activity_level must be between 1 and 4")
+		}
+	}
+	if t := thresholds.Wildfire; t != nil && t.MinFRP != nil {
+		if *t.MinFRP < 0 || *t.MinFRP > 10000 {
+			return fmt.Errorf("wildfire.min_frp must be between 0 and 10000")
+		}
+	}
+	return nil
+}
+
+func thresholdsJSONArg(thresholds *EWSPerilThresholds) (any, error) {
+	if thresholds == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(thresholds)
+	if err != nil {
+		return nil, err
+	}
+	return string(encoded), nil
 }
 
 func dbUnavailable(c *gin.Context) {
@@ -343,7 +435,7 @@ func EWSSubscriberDelete(db *sql.DB) gin.HandlerFunc {
 
 const ewsWatchZonesListQuery = `
 SELECT id, subscriber_id, label, latitude, longitude, radius_km,
-       array_to_string(peril_types, ','), min_magnitude, is_active
+       array_to_string(peril_types, ','), min_magnitude, thresholds, is_active
 FROM ews_watch_zones
 WHERE subscriber_id = $1
 ORDER BY created_at DESC
@@ -378,18 +470,13 @@ func EWSWatchZonesList(db *sql.DB) gin.HandlerFunc {
 		zones := make([]EWSWatchZone, 0)
 		for rows.Next() {
 			var z EWSWatchZone
-			var perils string
-			if err := rows.Scan(
-				&z.ID, &z.SubscriberID, &z.Label, &z.Latitude, &z.Longitude,
-				&z.RadiusKm, &perils, &z.MinMagnitude, &z.IsActive,
-			); err != nil {
+			if err := scanEWSWatchZone(rows, &z); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":   "row_scan_failed",
 					"message": err.Error(),
 				})
 				return
 			}
-			z.PerilTypes = parsePGTextArray(perils)
 			zones = append(zones, z)
 		}
 
@@ -401,20 +488,23 @@ func EWSWatchZonesList(db *sql.DB) gin.HandlerFunc {
 }
 
 type ewsWatchZoneCreateBody struct {
-	Label        string   `json:"label"`
-	Latitude     *float64 `json:"latitude"`
-	Longitude    *float64 `json:"longitude"`
-	RadiusKm     *float64 `json:"radius_km"`
-	PerilTypes   []string `json:"peril_types"`
-	MinMagnitude *float64 `json:"min_magnitude"`
+	Label        string              `json:"label"`
+	Latitude     *float64            `json:"latitude"`
+	Longitude    *float64            `json:"longitude"`
+	RadiusKm     *float64            `json:"radius_km"`
+	PerilTypes   []string            `json:"peril_types"`
+	MinMagnitude *float64            `json:"min_magnitude"`
+	Thresholds   *EWSPerilThresholds `json:"thresholds"`
 }
 
 const ewsWatchZoneCreateQuery = `
 INSERT INTO ews_watch_zones
-    (subscriber_id, label, latitude, longitude, radius_km, peril_types, min_magnitude)
-VALUES ($1, $2, $3, $4, COALESCE($5, 50), $6::text[], COALESCE($7, 5.0))
+    (subscriber_id, label, latitude, longitude, radius_km, peril_types,
+     min_magnitude, thresholds)
+VALUES ($1, $2, $3, $4, COALESCE($5, 50), $6::text[],
+        COALESCE($7, 5.0), COALESCE($8::jsonb, '{}'))
 RETURNING id, subscriber_id, label, latitude, longitude, radius_km,
-          array_to_string(peril_types, ','), min_magnitude, is_active
+          array_to_string(peril_types, ','), min_magnitude, thresholds, is_active
 `
 
 // EWSWatchZoneCreate creates a watch zone for a subscriber.
@@ -448,17 +538,23 @@ func EWSWatchZoneCreate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
+		if err := validatePerilThresholds(body.Thresholds); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_thresholds", "message": err.Error()})
+			return
+		}
+		thresholdsArg, err := thresholdsJSONArg(body.Thresholds)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_thresholds", "message": err.Error()})
+			return
+		}
 
 		var z EWSWatchZone
-		var perils string
-		err := db.QueryRowContext(
+		err = scanEWSWatchZone(db.QueryRowContext(
 			c.Request.Context(), ewsWatchZoneCreateQuery,
 			subID, body.Label, body.Latitude, body.Longitude,
 			body.RadiusKm, toPGTextArray(body.PerilTypes), body.MinMagnitude,
-		).Scan(
-			&z.ID, &z.SubscriberID, &z.Label, &z.Latitude, &z.Longitude,
-			&z.RadiusKm, &perils, &z.MinMagnitude, &z.IsActive,
-		)
+			thresholdsArg,
+		), &z)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":   "database_query_failed",
@@ -466,20 +562,19 @@ func EWSWatchZoneCreate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
-		z.PerilTypes = parsePGTextArray(perils)
-
 		c.JSON(http.StatusCreated, gin.H{"data": z})
 	}
 }
 
 type ewsWatchZoneUpdateBody struct {
-	Label        *string  `json:"label"`
-	Latitude     *float64 `json:"latitude"`
-	Longitude    *float64 `json:"longitude"`
-	RadiusKm     *float64 `json:"radius_km"`
-	PerilTypes   []string `json:"peril_types"`
-	MinMagnitude *float64 `json:"min_magnitude"`
-	IsActive     *bool    `json:"is_active"`
+	Label        *string             `json:"label"`
+	Latitude     *float64            `json:"latitude"`
+	Longitude    *float64            `json:"longitude"`
+	RadiusKm     *float64            `json:"radius_km"`
+	PerilTypes   []string            `json:"peril_types"`
+	MinMagnitude *float64            `json:"min_magnitude"`
+	Thresholds   *EWSPerilThresholds `json:"thresholds"`
+	IsActive     *bool               `json:"is_active"`
 }
 
 const ewsWatchZoneUpdateQuery = `
@@ -490,11 +585,12 @@ UPDATE ews_watch_zones SET
     radius_km     = COALESCE($5, radius_km),
     peril_types   = COALESCE($6::text[], peril_types),
     min_magnitude = COALESCE($7, min_magnitude),
-    is_active     = COALESCE($8, is_active),
+    thresholds    = COALESCE($8::jsonb, thresholds),
+    is_active     = COALESCE($9, is_active),
     updated_at    = now()
 WHERE id = $1
 RETURNING id, subscriber_id, label, latitude, longitude, radius_km,
-          array_to_string(peril_types, ','), min_magnitude, is_active
+          array_to_string(peril_types, ','), min_magnitude, thresholds, is_active
 `
 
 // EWSWatchZoneUpdate updates mutable watch zone fields.
@@ -527,17 +623,22 @@ func EWSWatchZoneUpdate(db *sql.DB) gin.HandlerFunc {
 		if body.PerilTypes != nil {
 			perilArg = toPGTextArray(body.PerilTypes)
 		}
+		if err := validatePerilThresholds(body.Thresholds); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_thresholds", "message": err.Error()})
+			return
+		}
+		thresholdsArg, err := thresholdsJSONArg(body.Thresholds)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_thresholds", "message": err.Error()})
+			return
+		}
 
 		var z EWSWatchZone
-		var perils string
-		err := db.QueryRowContext(
+		err = scanEWSWatchZone(db.QueryRowContext(
 			c.Request.Context(), ewsWatchZoneUpdateQuery,
 			id, body.Label, body.Latitude, body.Longitude,
-			body.RadiusKm, perilArg, body.MinMagnitude, body.IsActive,
-		).Scan(
-			&z.ID, &z.SubscriberID, &z.Label, &z.Latitude, &z.Longitude,
-			&z.RadiusKm, &perils, &z.MinMagnitude, &z.IsActive,
-		)
+			body.RadiusKm, perilArg, body.MinMagnitude, thresholdsArg, body.IsActive,
+		), &z)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				c.JSON(http.StatusNotFound, gin.H{
@@ -552,8 +653,6 @@ func EWSWatchZoneUpdate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
-		z.PerilTypes = parsePGTextArray(perils)
-
 		c.JSON(http.StatusOK, gin.H{"data": z})
 	}
 }

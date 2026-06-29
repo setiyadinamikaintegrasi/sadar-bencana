@@ -18,6 +18,7 @@ Apply the EWS schema migrations (see [the dev DB workflow](#applying-migrations)
 psql "$DATABASE_URL" -f db/schema/011_ews_subscribers.sql
 psql "$DATABASE_URL" -f db/schema/012_ews_watch_zones.sql
 psql "$DATABASE_URL" -f db/schema/013_seed_ews_demo.sql   # optional demo data
+psql "$DATABASE_URL" -f db/schema/020_peril_specific_watch_zone_thresholds.sql
 ```
 
 This creates four tables:
@@ -25,7 +26,7 @@ This creates four tables:
 | Table | Purpose |
 |-------|---------|
 | `ews_subscribers` | Notification recipients (name, contacts, role) |
-| `ews_watch_zones` | Geofenced areas (lat/lon/radius, peril filter, min magnitude) |
+| `ews_watch_zones` | Geofenced areas (lat/lon/radius, peril filter, per-peril thresholds) |
 | `ews_notification_prefs` | Per-subscriber, per-channel preferences |
 | `ews_notification_log` | Delivery audit trail |
 
@@ -84,10 +85,10 @@ curl -X POST http://localhost:8001/api/v1/ews/subscribers \
   -H 'Content-Type: application/json' \
   -d '{"name":"Demo Admin","email":"admin@example.com","telegram_chat_id":123456789,"role":"admin"}'
 
-# Add a watch zone (Jakarta, 100km, earthquake+flood, M>=5.0)
+# Add a watch zone (Jakarta, 100km, earthquake M5+ and flood depth 70cm+)
 curl -X POST http://localhost:8001/api/v1/ews/subscribers/<SUB_ID>/watch-zones \
   -H 'Content-Type: application/json' \
-  -d '{"label":"Jakarta HQ","latitude":-6.21,"longitude":106.85,"radius_km":100,"peril_types":["earthquake","flood"],"min_magnitude":5.0}'
+  -d '{"label":"Jakarta HQ","latitude":-6.21,"longitude":106.85,"radius_km":100,"peril_types":["earthquake","flood"],"thresholds":{"earthquake":{"min_magnitude":5.0},"flood":{"min_depth_cm":70}}}'
 
 # Enable a channel preference
 curl -X PUT http://localhost:8001/api/v1/ews/subscribers/<SUB_ID>/preferences \
@@ -136,8 +137,10 @@ For each new alert, `dispatch_alert` (in `apps/worker/alerts/dispatcher.py`):
 1. Loads all active subscribers and active watch zones.
 2. **Geo-match** (if the event has coordinates): a subscriber *with* zones is
    included only if one of their zones contains the event
-   (haversine distance ≤ radius) and passes the zone's peril + magnitude
-   filters. A subscriber *without* zones is always included (global watcher).
+   (haversine distance ≤ radius) and passes the zone's peril-specific threshold:
+   magnitude for earthquakes, water depth for floods, activity level for
+   volcanoes, or FRP for wildfires. A subscriber *without* zones is always
+   included (global watcher).
 3. For each of the subscriber's enabled channel preferences:
    - **Severity filter** — skip if alert severity < `min_severity`.
    - **Alert-type filter** — skip if `alert_types` is set and excludes this type.

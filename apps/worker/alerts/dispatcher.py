@@ -82,6 +82,7 @@ async def dispatch_alert(
             float(event_data["longitude"]),
             event_data.get("event_type"),
             float(event_data.get("magnitude", 0)),
+            event_data,
         )
         # Subscribers WITH zones must match; subscribers WITHOUT any zones
         # remain global watchers and are always included.

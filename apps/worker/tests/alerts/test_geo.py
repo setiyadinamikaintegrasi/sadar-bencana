@@ -58,6 +58,69 @@ class ZoneMatchTests(unittest.TestCase):
             zone_matches(self._base_zone(), -6.3, 106.9, "volcano", 5.5)
         )
 
+    def test_earthquake_uses_magnitude_threshold(self) -> None:
+        zone = self._base_zone()
+        zone["thresholds"] = {"earthquake": {"min_magnitude": 5.5}}
+        self.assertFalse(zone_matches(zone, -6.3, 106.9, "earthquake", 5.4))
+        self.assertTrue(zone_matches(zone, -6.3, 106.9, "earthquake", 5.5))
+
+    def test_flood_uses_depth_not_earthquake_magnitude(self) -> None:
+        zone = self._base_zone()
+        zone["thresholds"] = {"flood": {"min_depth_cm": 150}}
+        self.assertFalse(
+            zone_matches(
+                zone, -6.3, 106.9, "flood", 2.0,
+                {"flood_depth_cm": 100},
+            )
+        )
+        self.assertTrue(
+            zone_matches(
+                zone, -6.3, 106.9, "flood", 2.0,
+                {"flood_depth_cm": 160},
+            )
+        )
+
+    def test_volcano_uses_activity_level(self) -> None:
+        zone = self._base_zone()
+        zone["thresholds"] = {"volcano": {"min_activity_level": 3}}
+        self.assertFalse(
+            zone_matches(zone, -6.3, 106.9, "volcano", 2, {"activity_level": 2})
+        )
+        self.assertTrue(
+            zone_matches(zone, -6.3, 106.9, "volcano", 3, {"activity_level": 3})
+        )
+
+    def test_wildfire_uses_frp(self) -> None:
+        zone = self._base_zone()
+        zone["thresholds"] = {"wildfire": {"min_frp": 100}}
+        self.assertFalse(
+            zone_matches(zone, -6.3, 106.9, "wildfire", 1, {"frp": 80})
+        )
+        self.assertTrue(
+            zone_matches(zone, -6.3, 106.9, "wildfire", 2, {"frp": 120})
+        )
+
+    def test_json_thresholds_from_database_are_supported(self) -> None:
+        zone = self._base_zone()
+        zone["thresholds"] = '{"earthquake":{"min_magnitude":6}}'
+        self.assertFalse(zone_matches(zone, -6.3, 106.9, "earthquake", 5.9))
+
+    def test_flood_proxy_is_only_used_for_petabencana(self) -> None:
+        zone = self._base_zone()
+        zone["thresholds"] = {"flood": {"min_depth_cm": 150}}
+        self.assertTrue(
+            zone_matches(
+                zone, -6.3, 106.9, "flood", 3,
+                {"source": "petabencana"},
+            )
+        )
+        self.assertFalse(
+            zone_matches(
+                zone, -6.3, 106.9, "flood", 3,
+                {"source": "gdacs_fl"},
+            )
+        )
+
 
 class FindMatchingSubscribersTests(unittest.TestCase):
     def test_multiple_zones(self) -> None:

@@ -188,6 +188,7 @@ async def evaluate_alerts(
                 "longitude": event.longitude,
                 "magnitude": magnitude,
                 "event_type": event_type,
+                "source": event.source,
             })
 
     # Risk-score alerts (score >= 80).

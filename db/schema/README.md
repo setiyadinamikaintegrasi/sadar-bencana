@@ -13,3 +13,5 @@ The alert-classification safety migration is:
   (`unverified`, `corroborated`, `official`) and independent source tracking.
 - `019_official_alert_lifecycle.sql` — stores immutable official alert revisions,
   update/cancel references, checksums, and current lifecycle state.
+- `020_peril_specific_watch_zone_thresholds.sql` — replaces the universal
+  magnitude filter with earthquake, flood, volcano, and wildfire thresholds.

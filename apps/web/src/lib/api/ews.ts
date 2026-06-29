@@ -21,8 +21,17 @@ export interface EWSWatchZone {
   longitude: number
   radius_km: number
   peril_types: string[]
-  min_magnitude: number
+  thresholds: EWSPerilThresholds
+  /** Deprecated compatibility field for clients created before schema 020. */
+  min_magnitude?: number | null
   is_active: boolean
+}
+
+export interface EWSPerilThresholds {
+  earthquake?: { min_magnitude?: number }
+  flood?: { min_depth_cm?: number }
+  volcano?: { min_activity_level?: number }
+  wildfire?: { min_frp?: number }
 }
 
 export type EWSChannel = 'telegram' | 'whatsapp' | 'email'
