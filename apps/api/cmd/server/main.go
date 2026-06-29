@@ -105,6 +105,7 @@ func main() {
 		ewsMe.GET("/preferences", apihttp.EWSMePrefsGet(dbPool))
 		ewsMe.PUT("/preferences", apihttp.EWSMePrefsUpdate(dbPool))
 		ewsMe.GET("/notifications", apihttp.EWSMeNotifications(dbPool))
+		ewsMe.POST("/notifications/:id/acknowledge", apihttp.EWSMeNotificationAcknowledge(dbPool))
 	}
 
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)

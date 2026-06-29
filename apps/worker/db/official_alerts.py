@@ -64,7 +64,10 @@ WHERE is_current = TRUE
   AND status = 'active'
   AND expires_at IS NOT NULL
   AND expires_at <= $1
-RETURNING id
+RETURNING source, source_alert_id, revision, message_type, status, sent_at,
+          effective_at, expires_at, headline, description, area_geojson,
+          raw_payload, payload_checksum, previous_alert_id, is_current,
+          ingested_at, id
 """
 
 
@@ -184,8 +187,21 @@ async def expire_official_alerts(
     return len(rows)
 
 
+async def expire_official_alert_revisions(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Expire due current revisions and return their lifecycle payloads."""
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_EXPIRE_SQL, current_time)
+    return [dict(row) for row in rows]
+
+
 __all__ = [
     "expire_official_alerts",
+    "expire_official_alert_revisions",
     "payload_checksum",
     "upsert_official_alert",
 ]

@@ -497,3 +497,45 @@ func EWSMeNotifications(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"data": entries, "meta": gin.H{"count": len(entries)}})
 	}
 }
+
+// EWSMeNotificationAcknowledge records acknowledgement for one delivery.
+func EWSMeNotificationAcknowledge(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		subID, ok := resolveSubscriber(c, db)
+		if !ok {
+			return
+		}
+		notificationID := strings.TrimSpace(c.Param("id"))
+		if !uuidPattern.MatchString(notificationID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_notification_id"})
+			return
+		}
+		var acknowledgedAt time.Time
+		err := db.QueryRowContext(
+			c.Request.Context(),
+			`UPDATE ews_notification_log
+			 SET status = 'acknowledged', acknowledged_at = now()
+			 WHERE id = $1 AND subscriber_id = $2
+			   AND status IN ('sent', 'acknowledged')
+			 RETURNING acknowledged_at`,
+			notificationID,
+			subID,
+		).Scan(&acknowledgedAt)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "notification_not_found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed", "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{
+			"id": notificationID, "status": "acknowledged",
+			"acknowledged_at": acknowledgedAt,
+		}})
+	}
+}

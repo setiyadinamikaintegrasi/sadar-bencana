@@ -11,6 +11,10 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
+from alerts.lifecycle_delivery import (
+    enqueue_official_alert_revision,
+    process_due_deliveries,
+)
 from connectors.aisstream import AISStreamConnector
 from connectors.bmkg import BMKGConnector
 from connectors.bmkg_cap import BMKG_ATTRIBUTION, BMKGCAPConnector
@@ -33,7 +37,7 @@ from db.events import fetch_top_events, upsert_events
 from db.evidence import create_source_record
 from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
-from db.official_alerts import expire_official_alerts
+from db.official_alerts import expire_official_alert_revisions
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
 from geo.locator import extract_location
@@ -59,6 +63,7 @@ _briefing_scheduler: BriefingScheduler | None = None
 _asset_scheduler: AssetScheduler | None = None
 _news_scheduler: NewsScheduler | None = None
 _official_alert_expiry_scheduler: OfficialAlertExpiryScheduler | None = None
+_lifecycle_delivery_scheduler: IngestScheduler | None = None
 _ais_connector: AISStreamConnector | None = None
 _vf_connector: VesselFinderConnector | None = None
 
@@ -90,8 +95,10 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
                     raw_payload=alert.raw_payload,
                 ),
             )
-            _, was_created = await upsert_official_alert(pool, alert)
+            official_row, was_created = await upsert_official_alert(pool, alert)
             created += int(was_created)
+            if was_created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+                await enqueue_official_alert_revision(pool, official_row)
 
         error_message = "; ".join(detail_errors[:3]) if detail_errors else None
         await upsert_connector_health(
@@ -391,7 +398,16 @@ async def _news_poll_cycle() -> int:
 
 
 async def _expire_official_alerts_once() -> int:
-    return await expire_official_alerts(get_pool())
+    pool = get_pool()
+    expired = await expire_official_alert_revisions(pool)
+    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+        for revision in expired:
+            await enqueue_official_alert_revision(pool, revision)
+    return len(expired)
+
+
+async def _process_lifecycle_deliveries_once() -> dict[str, int]:
+    return await process_due_deliveries(get_pool())
 
 
 @app.on_event("startup")
@@ -405,7 +421,8 @@ async def startup_event() -> None:
     """
 
     global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
-    global _official_alert_expiry_scheduler, _ais_connector, _vf_connector
+    global _official_alert_expiry_scheduler, _lifecycle_delivery_scheduler
+    global _ais_connector, _vf_connector
 
     try:
         await init_pool()
@@ -441,6 +458,14 @@ async def startup_event() -> None:
     )
     _official_alert_expiry_scheduler.start()
 
+    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+        _lifecycle_delivery_scheduler = IngestScheduler(
+            ingest_fn=_process_lifecycle_deliveries_once,
+            interval_seconds=30,
+            name="ews-lifecycle-delivery",
+        )
+        _lifecycle_delivery_scheduler.start()
+
     logger.info(
         "Worker startup complete; background ingestion, auto-briefing, "
         "asset tracking, and RSS news polling are enabled."
@@ -452,7 +477,8 @@ async def shutdown_event() -> None:
     """Stop the schedulers and release the PostgreSQL connection pool."""
 
     global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
-    global _official_alert_expiry_scheduler, _ais_connector, _vf_connector
+    global _official_alert_expiry_scheduler, _lifecycle_delivery_scheduler
+    global _ais_connector, _vf_connector
     if _scheduler is not None:
         await _scheduler.stop()
         _scheduler = None
@@ -472,6 +498,10 @@ async def shutdown_event() -> None:
     if _official_alert_expiry_scheduler is not None:
         await _official_alert_expiry_scheduler.stop()
         _official_alert_expiry_scheduler = None
+
+    if _lifecycle_delivery_scheduler is not None:
+        await _lifecycle_delivery_scheduler.stop()
+        _lifecycle_delivery_scheduler = None
 
     if _ais_connector is not None:
         await _ais_connector.stop()

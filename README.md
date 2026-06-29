@@ -340,6 +340,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Evidence Correlation](docs/evidence-correlation.md)** — korelasi lintas sumber, review queue, serta audit merge/split
 - **[Risk Scoring v2](docs/risk-scoring-v2.md)** — formula peril-aware, exposure, vulnerability, confidence, dan fallback
 - **[Alert Confidence Policy](docs/alert-confidence-policy.md)** — confidence class, lifecycle action, stale behavior, dan override audit
+- **[EWS Lifecycle Delivery](docs/ews-lifecycle-delivery.md)** — revision dedup, cancellation delivery, retry, dead-letter, dan latency
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
