@@ -14,19 +14,24 @@ class SourceRecordInput(BaseModel):
     source_name: str = Field(min_length=1, max_length=64)
     source_record_id: str = Field(min_length=1, max_length=255)
     source_type: Literal["official", "sensor", "institutional", "media", "citizen"]
+    origin_source_name: str | None = Field(default=None, max_length=64)
     source_url: str | None = None
     attribution: str | None = None
     observed_at: datetime | None = None
     published_at: datetime | None = None
     raw_payload: dict[str, Any]
 
-    @field_validator("source_name", "source_record_id")
+    @field_validator("source_name", "source_record_id", "origin_source_name")
     @classmethod
-    def normalize_identifiers(cls, value: str, info) -> str:
+    def normalize_identifiers(cls, value: str | None, info) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         if not normalized:
             raise ValueError("source identifiers must not be blank")
-        return normalized.lower() if info.field_name == "source_name" else normalized
+        if info.field_name in {"source_name", "origin_source_name"}:
+            return normalized.lower()
+        return normalized
 
     @field_validator("observed_at", "published_at")
     @classmethod

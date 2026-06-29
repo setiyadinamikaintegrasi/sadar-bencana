@@ -46,6 +46,11 @@ GET /api/v1/events/{event_uuid}/evidence
 The endpoint returns source metadata, relationship, confidence, and freshness.
 Raw payloads are intentionally not returned from the public API.
 
+Migration 022 adds `origin_source_name` for explicit upstream lineage. Media
+records that quote BMKG, BNPB, or another source must set this field so copied
+reports are not counted as independent corroboration. See
+[Evidence Correlation](evidence-correlation.md).
+
 ## Connector contract
 
 New connector branches should:

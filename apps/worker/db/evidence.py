@@ -24,10 +24,10 @@ def _json_value(value: dict[str, Any] | None) -> str | None:
 
 _INSERT_SOURCE_SQL = """
 INSERT INTO source_records (
-    source_name, source_record_id, source_type, source_url, attribution,
+    source_name, source_record_id, source_type, origin_source_name, source_url, attribution,
     observed_at, published_at, raw_payload, payload_checksum
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
 ON CONFLICT (source_name, source_record_id, payload_checksum) DO NOTHING
 RETURNING *
 """
@@ -107,6 +107,7 @@ async def create_source_record(
             record.source_name,
             record.source_record_id,
             record.source_type,
+            record.origin_source_name,
             record.source_url,
             record.attribution,
             record.observed_at,

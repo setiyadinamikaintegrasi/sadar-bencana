@@ -26,6 +26,7 @@ type EventEvidence struct {
 	SourceName         string     `json:"source_name"`
 	SourceNativeID     string     `json:"source_native_id"`
 	SourceType         string     `json:"source_type"`
+	OriginSourceName   *string    `json:"origin_source_name"`
 	SourceURL          *string    `json:"source_url"`
 	Attribution        *string    `json:"attribution"`
 	ObservedAt         *time.Time `json:"observed_at"`
@@ -37,6 +38,7 @@ const eventEvidenceQuery = `
 SELECT ee.id, ee.event_id, ee.peril_type, ee.relation_type, ee.confidence,
        ee.freshness_expires_at, ee.created_at,
        sr.id, sr.source_name, sr.source_record_id, sr.source_type,
+       sr.origin_source_name,
        sr.source_url, sr.attribution, sr.observed_at, sr.published_at,
        sr.ingested_at
 FROM event_evidence ee
@@ -75,7 +77,7 @@ func EventEvidenceList(db *sql.DB) gin.HandlerFunc {
 		evidence := make([]EventEvidence, 0)
 		for rows.Next() {
 			var item EventEvidence
-			var linkedEventID, perilType, sourceURL, attribution sql.NullString
+			var linkedEventID, perilType, originSourceName, sourceURL, attribution sql.NullString
 			var freshness, observedAt, publishedAt sql.NullTime
 			if err := rows.Scan(
 				&item.ID,
@@ -89,6 +91,7 @@ func EventEvidenceList(db *sql.DB) gin.HandlerFunc {
 				&item.SourceName,
 				&item.SourceNativeID,
 				&item.SourceType,
+				&originSourceName,
 				&sourceURL,
 				&attribution,
 				&observedAt,
@@ -103,6 +106,7 @@ func EventEvidenceList(db *sql.DB) gin.HandlerFunc {
 			}
 			item.EventID = nullStringPtr(linkedEventID)
 			item.PerilType = nullStringPtr(perilType)
+			item.OriginSourceName = nullStringPtr(originSourceName)
 			item.SourceURL = nullStringPtr(sourceURL)
 			item.Attribution = nullStringPtr(attribution)
 			if freshness.Valid {

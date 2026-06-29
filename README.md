@@ -170,6 +170,7 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `VITE_API_BASE_URL` — base URL API untuk Vite (default: `/api/v1`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — delivery alert Telegram (opsional)
 - `CONNECTOR_BMKG_CAP_ENABLED` — ingest peringatan dini cuaca CAP BMKG; aktifkan setelah migration 019 dan 021
+- `EVIDENCE_CORRELATION_ENABLED` — shadow-mode correlation; aktifkan setelah migration 022
 - `AISSTREAM_API_KEY`, `VESSELFINDER_API_KEY`, `OPENSKY_*` — tracking maritim & penerbangan (opsional)
 - `FONNTE_API_TOKEN` — WhatsApp via Fonnte (opsional)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — email SMTP (opsional)
@@ -336,6 +337,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Official Alert Lifecycle](docs/official-alert-lifecycle.md)** — revision, expiry, update, dan cancellation alert resmi
 - **[BMKG CAP Nowcast](docs/bmkg-cap-nowcast.md)** — konfigurasi, attribution, normalisasi, dan lifecycle peringatan BMKG
 - **[Source Evidence Model](docs/source-evidence-model.md)** — provenance, confidence, laporan dampak, dan konteks risiko
+- **[Evidence Correlation](docs/evidence-correlation.md)** — korelasi lintas sumber, review queue, serta audit merge/split
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers

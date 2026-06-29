@@ -72,7 +72,7 @@ async def test_create_source_record_is_idempotent():
     assert conn.fetchrow.await_count == 2
     insert_args = conn.fetchrow.await_args_list[0].args
     assert insert_args[1] == "bnpb"
-    assert len(insert_args[9]) == 64
+    assert len(insert_args[10]) == 64
 
 
 @pytest.mark.asyncio

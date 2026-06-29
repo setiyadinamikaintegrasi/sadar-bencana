@@ -52,6 +52,8 @@ func main() {
 	router.GET("/api/v1/meta", apihttp.Meta(cfg.Env, cfg.RiskFreeLimit))
 	router.GET("/api/v1/events", apihttp.Events(dbPool))
 	router.GET("/api/v1/events/:id/evidence", apihttp.EventEvidenceList(dbPool))
+	router.GET("/api/v1/events/:id/correlation-audit", apihttp.EventCorrelationAudit(dbPool))
+	router.GET("/api/v1/correlations/review-queue", apihttp.CorrelationReviewQueue(dbPool))
 	router.GET("/api/v1/news", apihttp.News(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))

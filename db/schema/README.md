@@ -17,3 +17,6 @@ The alert-classification safety migration is:
   magnitude filter with earthquake, flood, volcano, and wildfire thresholds.
 - `021_source_evidence_model.sql` — stores immutable raw source records,
   event evidence, impact revisions, and versioned risk context.
+- `022_evidence_correlation.sql` — stores source-independence rules,
+  deterministic correlation decisions, review queue, and reversible merge/split
+  audit operations.

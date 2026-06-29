@@ -25,6 +25,7 @@ from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
 from connectors.vesselfinder import VesselFinderConnector
+from correlation_pipeline import correlate_ingested_events
 from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
@@ -219,6 +220,13 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     all_events = earthquake_events + flood_events + volcano_events + wildfire_events
 
     upserted = await upsert_events(pool, all_events)
+    correlations = 0
+    if _env_enabled("EVIDENCE_CORRELATION_ENABLED"):
+        try:
+            correlation_result = await correlate_ingested_events(pool, all_events)
+            correlations = correlation_result["recorded"]
+        except Exception as exc:
+            logger.warning("Evidence correlation shadow mode failed: %s", exc)
     scored = await score_events(pool, all_events)
     alerts = await evaluate_and_create_alerts(pool, all_events)
 
@@ -228,6 +236,7 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
         "scored": scored,
         "alerts_created": len(alerts),
         "official_alerts": official_alerts,
+        "correlations": correlations,
     }
 
 
@@ -533,6 +542,7 @@ async def worker_ingest() -> JSONResponse:
                 "scored": 0,
                 "alerts_created": 0,
                 "official_alerts": 0,
+                "correlations": 0,
                 "error": str(exc),
             },
         )
@@ -548,6 +558,7 @@ async def worker_ingest() -> JSONResponse:
                 "scored": 0,
                 "alerts_created": 0,
                 "official_alerts": 0,
+                "correlations": 0,
                 "error": str(exc),
             },
         )
