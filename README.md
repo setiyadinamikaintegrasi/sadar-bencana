@@ -1,8 +1,12 @@
-# Risk Monitor (RM)
+# SadarBencana — Risk Monitor
 
 Platform monitoring risiko bencana dengan sistem early warning terintegrasi. Menggabungkan data eksternal (BMKG, USGS, GDACS, NASA FIRMS, GVP, PetaBencana, berita) dan data internal untuk menghasilkan monitoring event, risk scoring, early warning system (EWS), dan executive dashboard yang dapat diaudit.
 
 **Greenfield project** — dibangun dari nol tanpa memakai codebase AGPL, dengan fokus pada enterprise-readiness (RBAC, audit trail, explainability, source traceability).
+
+## Tampilan Aplikasi
+
+![Dashboard SadarBencana](docs/images/sadar-bencana-dashboard.png)
 
 ## Model Open-Core / Freemium
 
