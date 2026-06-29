@@ -1,0 +1,7 @@
+[
+  {"case_id":"eq-official-critical","peril_type":"earthquake","expected_alert":true,"predicted_alert":true,"notification_latency_ms":18000},
+  {"case_id":"eq-media-single","peril_type":"earthquake","expected_alert":false,"predicted_alert":false},
+  {"case_id":"flood-corroborated","peril_type":"flood","expected_alert":true,"predicted_alert":true,"notification_latency_ms":32000},
+  {"case_id":"volcano-below-threshold","peril_type":"volcano","expected_alert":false,"predicted_alert":false},
+  {"case_id":"wildfire-missed-fixture","peril_type":"wildfire","expected_alert":true,"predicted_alert":false}
+]

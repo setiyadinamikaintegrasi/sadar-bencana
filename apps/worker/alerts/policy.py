@@ -52,6 +52,7 @@ class AlertPolicyDecision(BaseModel):
     independent_source_count: int
     reasons: list[str]
     manual_override: bool = False
+    requires_review: bool = False
 
 
 _SEVERITY_ORDER = {
@@ -109,6 +110,7 @@ def evaluate_alert_policy(policy_input: AlertPolicyInput) -> AlertPolicyDecision
         }[requested]
         reasons.append("audited_manual_override")
 
+    requires_review = False
     if policy_input.freshness <= 0:
         if confidence_class == "official_warning":
             action = "review"
@@ -122,6 +124,9 @@ def evaluate_alert_policy(policy_input: AlertPolicyInput) -> AlertPolicyDecision
         action = "escalate" if current > previous else "deescalate" if current < previous else "maintain"
     else:
         action = "create"
+    if confidence_class == "unverified_signal" and policy_input.severity == "Critical":
+        requires_review = True
+        reasons.append("critical_unverified_requires_review")
 
     return AlertPolicyDecision(
         confidence_class=confidence_class,
@@ -132,6 +137,7 @@ def evaluate_alert_policy(policy_input: AlertPolicyInput) -> AlertPolicyDecision
         independent_source_count=source_count,
         reasons=reasons,
         manual_override=manual_override,
+        requires_review=requires_review,
     )
 
 

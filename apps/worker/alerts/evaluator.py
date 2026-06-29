@@ -166,6 +166,14 @@ async def evaluate_alerts(
                 in (_OFFICIAL_SOURCES | _CORROBORATED_SOURCES),
             )
         )
+        if policy.lifecycle_action in {"suppress", "review"} or policy.requires_review:
+            logger.warning(
+                "Alert held by policy: event=%s action=%s reasons=%s",
+                event.event_id,
+                policy.lifecycle_action,
+                policy.reasons,
+            )
+            continue
         estimated_impact = rule["total_exposure"] * rule["risk_multiplier"]
         peril_label = event_type.replace("_", " ")
         message = (
