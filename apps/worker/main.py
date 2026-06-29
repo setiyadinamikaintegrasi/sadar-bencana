@@ -29,6 +29,7 @@ from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
 from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
+from db.official_alerts import expire_official_alerts
 from db.pool import close_pool, get_pool, init_pool
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
@@ -37,6 +38,7 @@ from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
 from schedulers.news import NewsScheduler
+from schedulers.official_alerts import OfficialAlertExpiryScheduler
 from scoring.risk import score_events
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,7 @@ _scheduler: IngestScheduler | None = None
 _briefing_scheduler: BriefingScheduler | None = None
 _asset_scheduler: AssetScheduler | None = None
 _news_scheduler: NewsScheduler | None = None
+_official_alert_expiry_scheduler: OfficialAlertExpiryScheduler | None = None
 _ais_connector: AISStreamConnector | None = None
 _vf_connector: VesselFinderConnector | None = None
 
@@ -324,6 +327,10 @@ async def _news_poll_cycle() -> int:
         await connector.close()
 
 
+async def _expire_official_alerts_once() -> int:
+    return await expire_official_alerts(get_pool())
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     """Bring up long-lived resources: PostgreSQL pool + schedulers.
@@ -334,7 +341,8 @@ async def startup_event() -> None:
     simply log failures each tick and recover once the pool is available.
     """
 
-    global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler, _ais_connector, _vf_connector
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
+    global _official_alert_expiry_scheduler, _ais_connector, _vf_connector
 
     try:
         await init_pool()
@@ -365,6 +373,11 @@ async def startup_event() -> None:
     _news_scheduler = NewsScheduler(poll_fn=_news_poll_cycle)
     _news_scheduler.start()
 
+    _official_alert_expiry_scheduler = OfficialAlertExpiryScheduler(
+        expire_fn=_expire_official_alerts_once,
+    )
+    _official_alert_expiry_scheduler.start()
+
     logger.info(
         "Worker startup complete; background ingestion, auto-briefing, "
         "asset tracking, and RSS news polling are enabled."
@@ -375,7 +388,8 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Stop the schedulers and release the PostgreSQL connection pool."""
 
-    global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler, _ais_connector, _vf_connector
+    global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
+    global _official_alert_expiry_scheduler, _ais_connector, _vf_connector
     if _scheduler is not None:
         await _scheduler.stop()
         _scheduler = None
@@ -391,6 +405,10 @@ async def shutdown_event() -> None:
     if _news_scheduler is not None:
         await _news_scheduler.stop()
         _news_scheduler = None
+
+    if _official_alert_expiry_scheduler is not None:
+        await _official_alert_expiry_scheduler.stop()
+        _official_alert_expiry_scheduler = None
 
     if _ais_connector is not None:
         await _ais_connector.stop()

@@ -252,7 +252,7 @@ Jika menggunakan Supabase untuk autentikasi (recommended untuk production):
 
 ## Migrasi Database
 
-File migrasi SQL tersimpan di `db/schema/` (`001_init.sql`, `002_*.sql`, …, `018_alert_classification_safety.sql`). Terapkan **berurutan** menurut nomor.
+File migrasi SQL tersimpan di `db/schema/` (`001_init.sql`, `002_*.sql`, …, `019_official_alert_lifecycle.sql`). Terapkan **berurutan** menurut nomor.
 
 ### Untuk Docker Compose
 
@@ -332,7 +332,9 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 
 - **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — panduan deployment Daftar Risiko dan `RISK_FREE_LIMIT`
 - **[EWS Setup](docs/ews-setup.md)** — konfigurasi Early Warning System
+- **[Official Alert Lifecycle](docs/official-alert-lifecycle.md)** — revision, expiry, update, dan cancellation alert resmi
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
+- **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
 
 ---

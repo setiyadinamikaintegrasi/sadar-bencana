@@ -11,3 +11,5 @@ The alert-classification safety migration is:
 
 - `018_alert_classification_safety.sql` — adds conservative verification status
   (`unverified`, `corroborated`, `official`) and independent source tracking.
+- `019_official_alert_lifecycle.sql` — stores immutable official alert revisions,
+  update/cancel references, checksums, and current lifecycle state.
