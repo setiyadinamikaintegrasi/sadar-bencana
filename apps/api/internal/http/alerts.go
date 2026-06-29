@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -11,20 +12,23 @@ import (
 
 // Alert mirrors an alert row joined with its related event.
 type Alert struct {
-	ID           string     `json:"id"`
-	EventUUID    *string    `json:"event_uuid"`
-	EventID      *string    `json:"event_id"`
-	Source       *string    `json:"source"`
-	Place        *string    `json:"place"`
-	Magnitude    *float64   `json:"magnitude"`
-	EventTime    *time.Time `json:"event_time"`
-	AlertType    string     `json:"alert_type"`
-	Severity     string     `json:"severity"`
-	Verification string     `json:"verification_status"`
-	SourceCount  int        `json:"source_count"`
-	Message      *string    `json:"message"`
-	Acknowledged bool       `json:"acknowledged"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID             string          `json:"id"`
+	EventUUID      *string         `json:"event_uuid"`
+	EventID        *string         `json:"event_id"`
+	Source         *string         `json:"source"`
+	Place          *string         `json:"place"`
+	Magnitude      *float64        `json:"magnitude"`
+	EventTime      *time.Time      `json:"event_time"`
+	AlertType      string          `json:"alert_type"`
+	Severity       string          `json:"severity"`
+	Verification   string          `json:"verification_status"`
+	Confidence     string          `json:"confidence_class"`
+	PolicyVersion  string          `json:"policy_version"`
+	PolicyDecision json.RawMessage `json:"policy_decision"`
+	SourceCount    int             `json:"source_count"`
+	Message        *string         `json:"message"`
+	Acknowledged   bool            `json:"acknowledged"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 const alertsQuery = `
@@ -38,6 +42,9 @@ SELECT a.id,
        a.alert_type,
        a.severity,
        a.verification_status,
+       a.confidence_class,
+       a.policy_version,
+       a.policy_decision,
        a.source_count,
        a.message,
        a.acknowledged,
@@ -104,6 +111,7 @@ func Alerts(db *sql.DB) gin.HandlerFunc {
 			var eventUUID, eventID, source, place, message sql.NullString
 			var magnitude sql.NullFloat64
 			var eventTime sql.NullTime
+			var policyDecision []byte
 			if err := rows.Scan(
 				&alert.ID,
 				&eventUUID,
@@ -115,6 +123,9 @@ func Alerts(db *sql.DB) gin.HandlerFunc {
 				&alert.AlertType,
 				&alert.Severity,
 				&alert.Verification,
+				&alert.Confidence,
+				&alert.PolicyVersion,
+				&policyDecision,
 				&alert.SourceCount,
 				&message,
 				&alert.Acknowledged,
@@ -132,6 +143,7 @@ func Alerts(db *sql.DB) gin.HandlerFunc {
 			alert.Source = nullStringPtr(source)
 			alert.Place = nullStringPtr(place)
 			alert.Magnitude = nullFloat64Ptr(magnitude)
+			alert.PolicyDecision = policyDecision
 			alert.Message = nullStringPtr(message)
 			if eventTime.Valid {
 				alert.EventTime = &eventTime.Time

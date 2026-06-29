@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import asyncpg
 
 _HAS_ALERT_SQL = """
@@ -13,11 +15,14 @@ LIMIT 1
 
 _CREATE_ALERT_SQL = """
 INSERT INTO alerts (
-    event_id, alert_type, severity, message, verification_status, source_names
+    event_id, alert_type, severity, message, verification_status, source_names,
+    confidence_class, policy_version, policy_decision, manual_override_by,
+    manual_override_reason
 )
-VALUES ($1, $2, $3, $4, $5, $6::text[])
+VALUES ($1, $2, $3, $4, $5, $6::text[], $7, $8, $9::jsonb, $10, $11)
 RETURNING id, event_id, alert_type, severity, message, verification_status,
-          source_names, acknowledged, created_at
+          source_names, confidence_class, policy_version, policy_decision,
+          manual_override_by, manual_override_reason, acknowledged, created_at
 """
 
 _GET_RECENT_ALERTS_SQL = """
@@ -45,6 +50,11 @@ async def create_alert(
     message: str,
     verification_status: str = "unverified",
     source_names: list[str] | None = None,
+    confidence_class: str = "unverified_signal",
+    policy_version: str = "legacy-v0",
+    policy_decision: dict[str, object] | None = None,
+    manual_override_by: str | None = None,
+    manual_override_reason: str | None = None,
 ) -> dict[str, object]:
     """Insert an alert row and return the created record."""
 
@@ -57,6 +67,11 @@ async def create_alert(
             message,
             verification_status,
             source_names or [],
+            confidence_class,
+            policy_version,
+            json.dumps(policy_decision or {}, separators=(",", ":"), sort_keys=True),
+            manual_override_by,
+            manual_override_reason,
         )
     return dict(row) if row is not None else {}
 

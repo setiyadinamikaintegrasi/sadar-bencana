@@ -57,3 +57,26 @@ async def test_create_alert_defaults_to_unverified_without_sources():
     args = conn.fetchrow.await_args.args
     assert args[5] == "unverified"
     assert args[6] == []
+
+
+@pytest.mark.asyncio
+async def test_create_alert_persists_manual_override_audit():
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"id": "alert-id"}
+    pool = _pool_with_conn(conn)
+
+    await create_alert(
+        pool,
+        "event-id",
+        "earthquake",
+        "High",
+        "Manual verification",
+        confidence_class="confirmed_event",
+        policy_version="alert-policy-v1",
+        manual_override_by="analyst@example.test",
+        manual_override_reason="confirmed by operations centre",
+    )
+
+    args = conn.fetchrow.await_args.args
+    assert args[10] == "analyst@example.test"
+    assert args[11] == "confirmed by operations centre"

@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 
 from alerts.dispatcher import dispatch_alert
+from alerts.policy import AlertPolicyInput, evaluate_alert_policy
 from db.alerts import create_alert, has_alert
 from models.event import EarthquakeEvent
 from scoring.risk import classify_severity_by_type
@@ -157,6 +158,14 @@ async def evaluate_alerts(
             continue
 
         severity = _severity_for_event(event_type, magnitude)
+        policy = evaluate_alert_policy(
+            AlertPolicyInput(
+                severity=severity,
+                source_names=[event.source],
+                confirmed_event=event.source.lower()
+                in (_OFFICIAL_SOURCES | _CORROBORATED_SOURCES),
+            )
+        )
         estimated_impact = rule["total_exposure"] * rule["risk_multiplier"]
         peril_label = event_type.replace("_", " ")
         message = (
@@ -171,8 +180,11 @@ async def evaluate_alerts(
             alert_type,
             severity,
             message,
-            verification_status=_verification_status_for_source(event.source),
+            verification_status=policy.verification_status,
             source_names=[event.source],
+            confidence_class=policy.confidence_class,
+            policy_version=policy.policy_version,
+            policy_decision=policy.model_dump(mode="json"),
         )
         if record:
             created.append(record)
@@ -222,6 +234,18 @@ async def evaluate_alerts(
             message,
             verification_status="unverified",
             source_names=["risk_engine"],
+            confidence_class="unverified_signal",
+            policy_version="alert-policy-v1",
+            policy_decision={
+                "confidence_class": "unverified_signal",
+                "verification_status": "unverified",
+                "lifecycle_action": "create",
+                "preserve_source_wording": False,
+                "policy_version": "alert-policy-v1",
+                "independent_source_count": 1,
+                "reasons": ["derived_risk_score"],
+                "manual_override": False,
+            },
         )
         if record:
             created.append(record)

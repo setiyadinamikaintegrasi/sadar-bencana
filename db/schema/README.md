@@ -22,3 +22,5 @@ The alert-classification safety migration is:
   audit operations.
 - `023_exposure_aware_risk_scoring.sql` — versions persisted risk-score
   formulas for explainable and reproducible peril-aware scoring.
+- `024_alert_confidence_policy.sql` — separates confidence from severity and
+  stores versioned policy decisions plus audited manual-override metadata.
