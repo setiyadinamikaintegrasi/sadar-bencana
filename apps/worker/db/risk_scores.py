@@ -28,8 +28,10 @@ DELETE FROM risk_scores WHERE entity_type = $1 AND entity_id = $2
 """
 
 _INSERT_RISK_SCORE_SQL = """
-INSERT INTO risk_scores (entity_type, entity_id, score, factors, calculated_at)
-VALUES ($1, $2, $3, $4::jsonb, now())
+INSERT INTO risk_scores (
+    entity_type, entity_id, score, factors, formula_version, calculated_at
+)
+VALUES ($1, $2, $3, $4::jsonb, $5, now())
 """
 
 _UPDATE_EVENT_SEVERITY_SQL = """
@@ -68,6 +70,7 @@ async def upsert_risk_score(
                 event_id,
                 float(score),
                 factors_json,
+                str(factors.get("formula_version") or "legacy-v0"),
             )
 
 

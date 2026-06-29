@@ -1,41 +1,31 @@
-"""Baseline risk scoring for earthquake events.
-
-This module implements the v0 severity classification and a deterministic
-0-100 risk score derived from event magnitude (and depth, when available).
-It is intentionally side-effect free so it can be unit-tested in isolation
-and reused by both the on-demand ingest endpoint and the background
-scheduler.
-
-Severity bands (USGS-aligned, simplified for risk triage):
-
-    magnitude >= 6.0  -> "Critical"
-    magnitude >= 5.0  -> "High"
-    magnitude >= 4.0  -> "Moderate"
-    magnitude >= 3.0  -> "Low"
-    magnitude <  3.0  -> "Minor"
-
-Score formula (baseline):
-
-    base = magnitude * 10
-    score = clamp(base + depth_adjustment, 0, 100)
-
-Depth adjustment is only applied when the event carries a ``depth``
-attribute (the current :class:`~models.event.EarthquakeEvent` does not,
-but the scorer is forward-compatible): shallow events (<70 km) gain a
-small bump because they are typically more destructive at the surface,
-while deep events (>300 km) are damped.
-"""
+"""Deterministic, explainable, exposure-aware risk scoring by peril."""
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import asyncpg
+from pydantic import BaseModel, Field
 
 from models.event import EarthquakeEvent
 
 logger = logging.getLogger(__name__)
+RISK_FORMULA_VERSION = "risk-v2"
+
+
+class RiskScoringContext(BaseModel):
+    """Optional enrichment inputs; missing values use explicit safe fallbacks."""
+
+    depth_km: float | None = Field(default=None, ge=0)
+    mmi: float | None = Field(default=None, ge=0, le=12)
+    pga_g: float | None = Field(default=None, ge=0)
+    population_exposed: int | None = Field(default=None, ge=0)
+    vulnerability_index: float | None = Field(default=None, ge=0, le=1)
+    evidence_confidence: float | None = Field(default=None, ge=0, le=1)
+    freshness: float | None = Field(default=None, ge=0, le=1)
+    data_vintage: str | None = None
 
 
 # --- Severity classification ----------------------------------------------
@@ -103,34 +93,6 @@ def classify_severity_by_type(magnitude: float, event_type: str = "earthquake") 
 
 # --- Risk score ------------------------------------------------------------
 
-# Multiplier that scales magnitude (0-10ish for notable quakes) onto the
-# 0-100 score range. A magnitude 7.0 event lands at a base of 70.
-_MAGNITUDE_WEIGHT = 10.0
-
-# Depth adjustment buckets (in kilometers). Shallow quakes transfer more
-# energy to the surface; deep quakes dissipate it before reaching it.
-_SHALLOW_DEPTH_KM = 70.0
-_DEEP_DEPTH_KM = 300.0
-_SHALLOW_BONUS = 5.0
-_DEEP_PENALTY = -5.0
-
-
-def _depth_adjustment(depth: float | None) -> float:
-    """Return the score delta for a hypocentral depth, if known."""
-
-    if depth is None:
-        return 0.0
-    if depth <= 0:
-        # Negative/zero depth is unusual; treat as unknown rather than
-        # granting a max bonus.
-        return 0.0
-    if depth < _SHALLOW_DEPTH_KM:
-        return _SHALLOW_BONUS
-    if depth > _DEEP_DEPTH_KM:
-        return _DEEP_PENALTY
-    return 0.0
-
-
 def _estimate_impact(severity: str) -> str:
     """Qualitative impact label used for downstream triage display."""
 
@@ -143,42 +105,85 @@ def _estimate_impact(severity: str) -> str:
     }.get(severity, "negligible")
 
 
-def calculate_risk_score(event: EarthquakeEvent) -> tuple[float, dict[str, Any]]:
-    """Compute a baseline risk score and its explanatory factors.
+def _hazard_intensity(event: EarthquakeEvent, context: RiskScoringContext) -> float:
+    magnitude = max(0.0, float(event.magnitude))
+    if event.event_type == "earthquake":
+        magnitude_component = min(1.0, max(0.0, (magnitude - 3.0) / 5.0))
+        depth = context.depth_km
+        depth_factor = 1.0 if depth is None else max(0.35, 1.0 - depth / 700.0)
+        seismic = magnitude_component * depth_factor
+        if context.mmi is not None:
+            seismic = max(seismic, context.mmi / 12.0)
+        if context.pga_g is not None:
+            seismic = max(seismic, min(1.0, context.pga_g / 1.5))
+        return seismic
+    normalizers = {"flood": 4.0, "volcano": 4.0, "wildfire": 10.0}
+    return min(1.0, magnitude / normalizers.get(event.event_type, 10.0))
+
+
+def calculate_risk_score(
+    event: EarthquakeEvent,
+    context: RiskScoringContext | None = None,
+) -> tuple[float, dict[str, Any]]:
+    """Compute the v2 normalized risk score and explanatory factors.
 
     Args:
-        event: The canonical earthquake event to score.
+        event: The canonical disaster event to score.
 
     Returns:
         A ``(score, factors)`` tuple where ``score`` is a float in
         ``[0.0, 100.0]`` and ``factors`` is a JSON-serializable dict
-        documenting the inputs that produced the score (magnitude,
-        severity, estimated_impact, and depth/depth_adjustment when
-        depth is available).
+        documenting every normalized component, weight, input, and fallback.
     """
 
+    context = context or RiskScoringContext()
     magnitude = float(event.magnitude)
     severity = classify_severity_by_type(magnitude, event.event_type)
-
-    base = magnitude * _MAGNITUDE_WEIGHT
-
-    # ``EarthquakeEvent`` does not currently model depth, but the scorer
-    # stays correct if/when it is added. We read defensively via getattr.
-    depth: float | None = getattr(event, "depth", None)
-    depth_adj = _depth_adjustment(depth)
-
-    raw = base + depth_adj
-    score = max(0.0, min(100.0, raw))
+    hazard = _hazard_intensity(event, context)
+    exposure = (
+        min(1.0, math.log1p(context.population_exposed) / math.log1p(1_000_000))
+        if context.population_exposed is not None
+        else 0.0
+    )
+    vulnerability = context.vulnerability_index or 0.0
+    confidence = context.evidence_confidence if context.evidence_confidence is not None else 0.5
+    freshness = context.freshness if context.freshness is not None else 0.5
+    components = {
+        "hazard_intensity": round(hazard, 4),
+        "exposure": round(exposure, 4),
+        "vulnerability": round(vulnerability, 4),
+        "confidence": round(confidence, 4),
+        "freshness": round(freshness, 4),
+    }
+    weights = {
+        "hazard_intensity": 0.55,
+        "exposure": 0.20,
+        "vulnerability": 0.15,
+        "confidence": 0.05,
+        "freshness": 0.05,
+    }
+    score = round(
+        100.0 * sum(components[name] * weight for name, weight in weights.items()),
+        2,
+    )
 
     factors: dict[str, Any] = {
+        "formula_version": RISK_FORMULA_VERSION,
+        "peril_type": event.event_type,
         "magnitude": magnitude,
         "severity": severity,
         "estimated_impact": _estimate_impact(severity),
-        "base_score": base,
+        "base_score": round(hazard * 100.0, 2),
+        "components": components,
+        "weights": weights,
+        "input_snapshot": context.model_dump(mode="json"),
+        "fallbacks": {
+            "exposure_unavailable": context.population_exposed is None,
+            "vulnerability_unavailable": context.vulnerability_index is None,
+            "confidence_defaulted": context.evidence_confidence is None,
+            "freshness_defaulted": context.freshness is None,
+        },
     }
-    if depth is not None:
-        factors["depth_km"] = depth
-        factors["depth_adjustment"] = depth_adj
 
     return score, factors
 
@@ -186,7 +191,9 @@ def calculate_risk_score(event: EarthquakeEvent) -> tuple[float, dict[str, Any]]
 # --- Batch scoring + persistence ------------------------------------------
 
 async def score_events(
-    pool: asyncpg.Pool, events: list[EarthquakeEvent]
+    pool: asyncpg.Pool,
+    events: list[EarthquakeEvent],
+    contexts: dict[str, RiskScoringContext] | None = None,
 ) -> int:
     """Compute and persist risk scores for a batch of events.
 
@@ -206,8 +213,9 @@ async def score_events(
     from db.risk_scores import upsert_risk_score
 
     scored = 0
+    contexts = contexts or {}
     for event in events:
-        score, factors = calculate_risk_score(event)
+        score, factors = calculate_risk_score(event, contexts.get(event.event_id))
         await upsert_risk_score(pool, event.event_id, score, factors)
         scored += 1
 

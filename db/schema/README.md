@@ -20,3 +20,5 @@ The alert-classification safety migration is:
 - `022_evidence_correlation.sql` — stores source-independence rules,
   deterministic correlation decisions, review queue, and reversible merge/split
   audit operations.
+- `023_exposure_aware_risk_scoring.sql` — versions persisted risk-score
+  formulas for explainable and reproducible peril-aware scoring.
