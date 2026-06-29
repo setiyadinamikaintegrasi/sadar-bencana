@@ -15,3 +15,5 @@ The alert-classification safety migration is:
   update/cancel references, checksums, and current lifecycle state.
 - `020_peril_specific_watch_zone_thresholds.sql` — replaces the universal
   magnitude filter with earthquake, flood, volcano, and wildfire thresholds.
+- `021_source_evidence_model.sql` — stores immutable raw source records,
+  event evidence, impact revisions, and versioned risk context.
