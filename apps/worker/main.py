@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import asyncpg
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse
 from alerts import evaluate_and_create_alerts
 from connectors.aisstream import AISStreamConnector
 from connectors.bmkg import BMKGConnector
+from connectors.bmkg_cap import BMKG_ATTRIBUTION, BMKGCAPConnector
 from connectors.gdacs_flood import GDACSFloodConnector
 from connectors.gdacs_volcano import GDACSVolcanoConnector
 from connectors.gvp_volcano import GVPVolcanoConnector
@@ -27,12 +29,15 @@ from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
+from db.evidence import create_source_record
 from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
 from db.official_alerts import expire_official_alerts
+from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
+from models.evidence import SourceRecordInput
 from news_alerts import process_news_alerts
 from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
@@ -57,6 +62,52 @@ _ais_connector: AISStreamConnector | None = None
 _vf_connector: VesselFinderConnector | None = None
 
 
+def _env_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
+    if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
+        return 0
+
+    connector = BMKGCAPConnector()
+    try:
+        alerts, detail_errors = await connector.fetch_active()
+        created = 0
+        for alert in alerts:
+            source_url = str(alert.raw_payload.get("source_url") or "")
+            await create_source_record(
+                pool,
+                SourceRecordInput(
+                    source_name="bmkg_cap",
+                    source_record_id=alert.source_alert_id,
+                    source_type="official",
+                    source_url=source_url or None,
+                    attribution=BMKG_ATTRIBUTION,
+                    observed_at=alert.effective_at,
+                    published_at=alert.sent_at,
+                    raw_payload=alert.raw_payload,
+                ),
+            )
+            _, was_created = await upsert_official_alert(pool, alert)
+            created += int(was_created)
+
+        error_message = "; ".join(detail_errors[:3]) if detail_errors else None
+        await upsert_connector_health(
+            pool,
+            "bmkg_cap",
+            len(alerts),
+            error_message,
+        )
+        return created
+    except Exception as exc:
+        await upsert_connector_health(pool, "bmkg_cap", 0, str(exc))
+        logger.warning("BMKG CAP fetch failed: %s", exc)
+        return 0
+    finally:
+        await connector.close()
+
+
 async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     """Run one fetch -> upsert -> score cycle against an active pool.
 
@@ -64,6 +115,8 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     scheduler so they execute identical logic. Tracks health per
     sub-connector in the connector_health table. Raises on any failure.
     """
+    official_alerts = await _bmkg_cap_cycle(pool)
+
     # ---- Earthquake sources (BMKG + USGS with geo-aware merge) ----
     bmkg_conn = BMKGConnector()
     bmkg_events: list[EarthquakeEvent] = []
@@ -174,6 +227,7 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
         "upserted": upserted,
         "scored": scored,
         "alerts_created": len(alerts),
+        "official_alerts": official_alerts,
     }
 
 
@@ -460,7 +514,8 @@ async def worker_events() -> dict[str, int | list[dict[str, object]] | str]:
 async def worker_ingest() -> JSONResponse:
     """Fetch earthquake + hazard events, upsert them, and compute risk scores.
 
-    Returns ``{"fetched": N, "upserted": M, "scored": K, "alerts_created": A}`` on success.
+    Returns counters for fetched events, persistence, scoring, generated
+    alerts, and ingested official alerts.
     Distinct failure modes map to distinct HTTP status codes:
       * 503 — DB pool not ready
       * 502 — upstream connector fetch failed
@@ -472,7 +527,14 @@ async def worker_ingest() -> JSONResponse:
     except RuntimeError as exc:
         return JSONResponse(
             status_code=503,
-            content={"fetched": 0, "upserted": 0, "scored": 0, "alerts_created": 0, "error": str(exc)},
+            content={
+                "fetched": 0,
+                "upserted": 0,
+                "scored": 0,
+                "alerts_created": 0,
+                "official_alerts": 0,
+                "error": str(exc),
+            },
         )
 
     try:
@@ -485,6 +547,7 @@ async def worker_ingest() -> JSONResponse:
                 "upserted": 0,
                 "scored": 0,
                 "alerts_created": 0,
+                "official_alerts": 0,
                 "error": str(exc),
             },
         )

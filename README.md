@@ -169,6 +169,7 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `LLM_BASE_URL`, `LLM_TIMEOUT`, `LLM_MODEL` — integrasi llama.cpp (opsional)
 - `VITE_API_BASE_URL` — base URL API untuk Vite (default: `/api/v1`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — delivery alert Telegram (opsional)
+- `CONNECTOR_BMKG_CAP_ENABLED` — ingest peringatan dini cuaca CAP BMKG; aktifkan setelah migration 019 dan 021
 - `AISSTREAM_API_KEY`, `VESSELFINDER_API_KEY`, `OPENSKY_*` — tracking maritim & penerbangan (opsional)
 - `FONNTE_API_TOKEN` — WhatsApp via Fonnte (opsional)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — email SMTP (opsional)
@@ -333,6 +334,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — panduan deployment Daftar Risiko dan `RISK_FREE_LIMIT`
 - **[EWS Setup](docs/ews-setup.md)** — konfigurasi Early Warning System
 - **[Official Alert Lifecycle](docs/official-alert-lifecycle.md)** — revision, expiry, update, dan cancellation alert resmi
+- **[BMKG CAP Nowcast](docs/bmkg-cap-nowcast.md)** — konfigurasi, attribution, normalisasi, dan lifecycle peringatan BMKG
 - **[Source Evidence Model](docs/source-evidence-model.md)** — provenance, confidence, laporan dampak, dan konteks risiko
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst

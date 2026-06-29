@@ -13,6 +13,7 @@ import (
 var connectorThresholds = map[string]int{
 	// Hazard — IngestScheduler every 5 min (300s) × 2
 	"bmkg":       600,
+	"bmkg_cap":   600,
 	"usgs":       600,
 	"gdacs_fl":   600,
 	"gdacs_vo":   600,
@@ -45,7 +46,7 @@ type ConnectorHealth struct {
 // ConnectorHealthHandler returns a gin.HandlerFunc for GET /api/v1/health/connectors.
 // Status is computed at request time: "error" if error_message is set,
 // "stale" if last_polled_at is null or older than threshold_seconds, else "ok".
-// All 15 known connectors always appear in the response even if the DB row
+// All known connectors always appear in the response even if the DB row
 // does not exist yet (they will show as status "stale").
 func ConnectorHealthHandler(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
