@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 
 from alerts.channels import CHANNELS
+from observability import disaster_correlation_id, record_observation
 
 MAX_DELIVERY_ATTEMPTS = 5
 BASE_RETRY_SECONDS = 30
@@ -15,9 +16,9 @@ BASE_RETRY_SECONDS = 30
 _ENQUEUE_ACTIVE_SQL = """
 INSERT INTO ews_notification_log (
     subscriber_id, official_alert_id, channel, status, source, source_alert_id,
-    alert_revision, lifecycle_action, next_attempt_at
+    alert_revision, lifecycle_action, next_attempt_at, correlation_id
 )
-SELECT s.id, $1, p.channel, 'pending', $2, $3, $4, $5, now()
+SELECT s.id, $1, p.channel, 'pending', $2, $3, $4, $5, now(), $6
 FROM ews_subscribers s
 JOIN ews_notification_prefs p ON p.subscriber_id = s.id
 WHERE s.is_active = TRUE AND p.is_enabled = TRUE
@@ -28,9 +29,9 @@ RETURNING id
 _ENQUEUE_PRIOR_RECIPIENTS_SQL = """
 INSERT INTO ews_notification_log (
     subscriber_id, official_alert_id, channel, status, source, source_alert_id,
-    alert_revision, lifecycle_action, next_attempt_at
+    alert_revision, lifecycle_action, next_attempt_at, correlation_id
 )
-SELECT DISTINCT subscriber_id, $1, channel, 'pending', $2, $3, $4, $5, now()
+SELECT DISTINCT subscriber_id, $1, channel, 'pending', $2, $3, $4, $5, now(), $6
 FROM ews_notification_log
 WHERE source = $2 AND source_alert_id = $3
   AND status IN ('sent', 'acknowledged')
@@ -108,6 +109,10 @@ async def enqueue_official_alert_revision(
     alert: dict[str, Any],
 ) -> int:
     action = lifecycle_action(str(alert["message_type"]), str(alert["status"]))
+    correlation_id = disaster_correlation_id(
+        str(alert["source"]),
+        str(alert["source_alert_id"]),
+    )
     sql = (
         _ENQUEUE_PRIOR_RECIPIENTS_SQL
         if action in {"cancellation", "expiry"}
@@ -121,6 +126,7 @@ async def enqueue_official_alert_revision(
             alert["source_alert_id"],
             alert["revision"],
             action,
+            correlation_id,
         )
     return len(rows)
 
@@ -179,6 +185,21 @@ async def process_due_deliveries(
                     row["sent_at"],
                 )
                 result["sent"] += 1
+                await record_observation(
+                    pool,
+                    correlation_id=row["correlation_id"],
+                    stage="notification_sent",
+                    source_name=row.get("source"),
+                    success=True,
+                    duration_ms=max(
+                        0,
+                        int((current - row["sent_at"]).total_seconds() * 1000),
+                    ),
+                    metadata={
+                        "channel": row["channel"],
+                        "lifecycle_action": row["lifecycle_action"],
+                    },
+                )
             else:
                 attempts = int(row["attempt_count"])
                 dead = attempts >= MAX_DELIVERY_ATTEMPTS
@@ -192,6 +213,15 @@ async def process_due_deliveries(
                     next_attempt,
                 )
                 result[status] += 1
+                await record_observation(
+                    pool,
+                    correlation_id=row["correlation_id"],
+                    stage="notification_delivery",
+                    source_name=row.get("source"),
+                    success=False,
+                    error_code=error or "delivery_failed",
+                    metadata={"channel": row["channel"], "status": status},
+                )
     return result
 
 

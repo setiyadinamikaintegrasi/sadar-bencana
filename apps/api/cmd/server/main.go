@@ -81,6 +81,7 @@ func main() {
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
 	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
 	router.GET("/api/v1/map/overlays", apihttp.MapRiskOverlays(dbPool))
+	router.GET("/api/v1/metrics/disaster", apihttp.DisasterMetrics(dbPool))
 
 	// EWS — Early Warning System
 	router.GET("/api/v1/ews/subscribers", apihttp.EWSSubscribersList(dbPool))

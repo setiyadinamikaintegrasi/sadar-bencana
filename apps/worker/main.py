@@ -44,6 +44,7 @@ from geo.locator import extract_location
 from models.event import EarthquakeEvent
 from models.evidence import SourceRecordInput
 from news_alerts import process_news_alerts
+from observability import disaster_correlation_id, record_observation
 from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
@@ -82,6 +83,10 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         created = 0
         for alert in alerts:
             source_url = str(alert.raw_payload.get("source_url") or "")
+            correlation_id = disaster_correlation_id(
+                alert.source,
+                alert.source_alert_id,
+            )
             await create_source_record(
                 pool,
                 SourceRecordInput(
@@ -95,8 +100,26 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
                     raw_payload=alert.raw_payload,
                 ),
             )
+            await record_observation(
+                pool,
+                correlation_id=correlation_id,
+                stage="raw_source_ingested",
+                source_name=alert.source,
+                peril_type="weather",
+            )
             official_row, was_created = await upsert_official_alert(pool, alert)
             created += int(was_created)
+            await record_observation(
+                pool,
+                correlation_id=correlation_id,
+                stage="official_alert_revision",
+                source_name=alert.source,
+                peril_type="weather",
+                metadata={
+                    "revision": official_row.get("revision"),
+                    "created": was_created,
+                },
+            )
             if was_created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
                 await enqueue_official_alert_revision(pool, official_row)
 

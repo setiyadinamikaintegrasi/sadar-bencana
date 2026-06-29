@@ -28,3 +28,5 @@ The alert-classification safety migration is:
   with deduplication, retry, dead-letter, acknowledgement, and latency metrics.
 - `026_ews_action_cards.sql` — stores curated, versioned Indonesian safety
   guidance for offline-capable alert action cards.
+- `027_disaster_observability.sql` — stores structured pipeline telemetry,
+  deterministic correlation IDs, delivery latency, and SLO evidence.
