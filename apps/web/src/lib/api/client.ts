@@ -72,6 +72,27 @@ export async function getEvents(): Promise<Event[]> {
   return res.data
 }
 
+export type MapOverlay = {
+  id: string
+  layer_class: 'official' | 'static_risk' | 'watch_zone'
+  peril_type: string | null
+  label: string
+  geometry: { type: 'Polygon' | 'MultiPolygon'; coordinates: number[][][] | number[][][][] } | null
+  latitude: number | null
+  longitude: number | null
+  radius_km: number | null
+  effective_at: string | null
+  expires_at: string | null
+  data_vintage: string | null
+  attribution: string | null
+  source_url: string | null
+}
+
+export async function getMapOverlays(): Promise<MapOverlay[]> {
+  const response = await request<{ data: MapOverlay[] }>('/map/overlays')
+  return response.data
+}
+
 export type NewsItem = {
   id: string
   item_id: string

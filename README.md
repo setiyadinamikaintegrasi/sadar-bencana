@@ -342,6 +342,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Alert Confidence Policy](docs/alert-confidence-policy.md)** — confidence class, lifecycle action, stale behavior, dan override audit
 - **[EWS Lifecycle Delivery](docs/ews-lifecycle-delivery.md)** — revision dedup, cancellation delivery, retry, dead-letter, dan latency
 - **[EWS Action Cards](docs/ews-action-cards.md)** — panduan keselamatan lokal, terkurasi, versioned, dan aksesibel
+- **[EWS Map Overlays](docs/ews-map-risk-overlays.md)** — official polygon, static risk, watch zone, legend, dan time slider
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers

@@ -1,8 +1,8 @@
 // apps/web/src/components/RiskMap.tsx
-import { useEffect, useMemo, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Circle, MapContainer, Marker, Polygon, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import type { Event, NewsItem } from '../lib/api/client'
+import type { Event, MapOverlay, NewsItem } from '../lib/api/client'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
@@ -116,6 +116,18 @@ function eventMatchesFilter(event: Event, filter: PerilFilter): boolean {
   return false
 }
 
+function pointInRing(latitude: number, longitude: number, ring: [number, number][]): boolean {
+  let inside = false
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+    const [latA, lonA] = ring[index]
+    const [latB, lonB] = ring[previous]
+    const crosses = (lonA > longitude) !== (lonB > longitude)
+      && latitude < ((latB - latA) * (longitude - lonA)) / (lonB - lonA || Number.EPSILON) + latA
+    if (crosses) inside = !inside
+  }
+  return inside
+}
+
 function createEventIcon(event: Event, selected: boolean): L.DivIcon {
   const color = eventColor(event)
   const critical = event.magnitude >= 6 || ['wildfire', 'volcano', 'flood'].includes((event.event_type ?? '').toLowerCase())
@@ -208,6 +220,7 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
 interface RiskMapProps {
   events: Event[]
   news?: NewsItem[]
+  overlays?: MapOverlay[]
   activePerilFilter: string
   onFilterChange: (filter: string) => void
   onEventClick: (event: Event) => void
@@ -218,12 +231,17 @@ interface RiskMapProps {
 export default function RiskMap({
   events,
   news = [],
+  overlays = [],
   activePerilFilter,
   onFilterChange,
   onEventClick,
   selectedEvent,
   height = 430,
 }: RiskMapProps) {
+  const [timelineHoursAgo, setTimelineHoursAgo] = useState(0)
+  const [visibleOverlayClasses, setVisibleOverlayClasses] = useState(
+    new Set(['official', 'static_risk', 'watch_zone']),
+  )
   useEffect(() => {
     if (document.getElementById('risk-exec-map-css')) return
     const style = document.createElement('style')
@@ -262,6 +280,42 @@ export default function RiskMap({
   )
 
   const focusEvent = selectedEvent ?? visibleEvents[0] ?? events[0]
+  const timelineAt = Date.now() - timelineHoursAgo * 60 * 60 * 1000
+  const visibleOverlays = overlays.filter((overlay) => {
+    if (!visibleOverlayClasses.has(overlay.layer_class)) return false
+    if (overlay.layer_class !== 'official') return true
+    const effective = overlay.effective_at ? new Date(overlay.effective_at).getTime() : 0
+    const expires = overlay.expires_at ? new Date(overlay.expires_at).getTime() : Number.POSITIVE_INFINITY
+    return effective <= timelineAt && expires >= timelineAt
+  })
+
+  const toggleOverlayClass = (layerClass: string) => {
+    setVisibleOverlayClasses((current) => {
+      const next = new Set(current)
+      if (next.has(layerClass)) next.delete(layerClass)
+      else next.add(layerClass)
+      return next
+    })
+  }
+
+  const overlayPolygons = (overlay: MapOverlay): [number, number][][] => {
+    if (!overlay.geometry) return []
+    if (overlay.geometry.type === 'Polygon') {
+      const rings = overlay.geometry.coordinates as number[][][]
+      return [rings[0].map(([lon, lat]) => [lat, lon])]
+    }
+    const polygons = overlay.geometry.coordinates as number[][][][]
+    return polygons.map((polygon) => polygon[0].map(([lon, lat]) => [lat, lon]))
+  }
+  const officialPolygons = visibleOverlays
+    .filter((overlay) => overlay.layer_class === 'official')
+    .flatMap(overlayPolygons)
+  const intersectingWatchZones = new Set(
+    visibleOverlays
+      .filter((overlay) => overlay.layer_class === 'watch_zone' && overlay.latitude != null && overlay.longitude != null)
+      .filter((overlay) => officialPolygons.some((ring) => pointInRing(overlay.latitude!, overlay.longitude!, ring)))
+      .map((overlay) => overlay.id),
+  )
 
   return (
     <div className="space-y-3">
@@ -285,6 +339,38 @@ export default function RiskMap({
           </button>
         ))}
       </div>
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+        {[
+          ['official', 'Warning resmi'],
+          ['static_risk', 'Kajian risiko'],
+          ['watch_zone', 'Watch zone'],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={visibleOverlayClasses.has(key)}
+            onClick={() => toggleOverlayClass(key)}
+            className={`rounded-lg border px-2 py-1 ${
+              visibleOverlayClasses.has(key)
+                ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
+                : 'border-slate-700 text-slate-500'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <label className="ml-auto flex items-center gap-2">
+          Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}
+          <input
+            aria-label="Waktu lifecycle peta"
+            type="range"
+            min="0"
+            max="72"
+            value={timelineHoursAgo}
+            onChange={(event) => setTimelineHoursAgo(Number(event.target.value))}
+          />
+        </label>
+      </div>
 
       <div className="risk-exec-map relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
         <div className="pointer-events-none absolute left-3 top-3 z-[500] max-w-[70%] rounded-xl border border-slate-700/80 bg-slate-950/85 px-3 py-2 shadow-2xl shadow-slate-950/50 backdrop-blur">
@@ -303,6 +389,10 @@ export default function RiskMap({
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" /> Vulkanik</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-400" /> Karhutla</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded bg-emerald-400" /> News</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 bg-fuchsia-400" /> Official</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-400" /> Observed</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 bg-violet-400/50" /> Static / inferred</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 bg-slate-400" /> Unverified</span>
         </div>
 
         <div style={{ height: typeof height === 'number' ? `${height}px` : height }}>
@@ -318,6 +408,56 @@ export default function RiskMap({
           >
             <MiniMapController events={visibleEvents.length > 0 ? visibleEvents : events} selectedEvent={selectedEvent} />
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+
+            {visibleOverlays.flatMap((overlay) =>
+              overlayPolygons(overlay).map((positions, index) => (
+                <Polygon
+                  key={`${overlay.id}-${index}`}
+                  positions={positions}
+                  pathOptions={{
+                    color: overlay.layer_class === 'official' ? '#e879f9' : '#8b5cf6',
+                    fillOpacity: overlay.layer_class === 'official' ? 0.24 : 0.1,
+                    dashArray: overlay.layer_class === 'official' ? undefined : '6 5',
+                  }}
+                >
+                  <Popup>
+                    <strong>{overlay.label}</strong>
+                    <br />
+                    <span>{overlay.layer_class === 'official' ? 'Warning resmi' : 'Kajian risiko statis'}</span>
+                    <br />
+                    <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+                      {overlay.attribution ?? 'Sumber belum dicantumkan'}
+                      {overlay.layer_class === 'static_risk'
+                        ? ` · vintage ${overlay.data_vintage ?? 'tidak tersedia'}`
+                        : ''}
+                    </span>
+                  </Popup>
+                </Polygon>
+              )),
+            )}
+
+            {visibleOverlays
+              .filter((overlay) => overlay.layer_class === 'watch_zone' && overlay.latitude != null && overlay.longitude != null)
+              .map((overlay) => (
+                <Circle
+                  key={overlay.id}
+                  center={[overlay.latitude!, overlay.longitude!]}
+                  radius={(overlay.radius_km ?? 0) * 1000}
+                  pathOptions={{
+                    color: intersectingWatchZones.has(overlay.id) ? '#fb7185' : '#22d3ee',
+                    fillOpacity: intersectingWatchZones.has(overlay.id) ? 0.16 : 0.04,
+                    dashArray: '4 6',
+                  }}
+                >
+                  <Popup>
+                    <strong>Watch zone · {overlay.label}</strong>
+                    <br />
+                    {intersectingWatchZones.has(overlay.id)
+                      ? 'Beririsan dengan polygon warning pada waktu terpilih.'
+                      : 'Tidak ada irisan warning pada waktu terpilih.'}
+                  </Popup>
+                </Circle>
+              ))}
 
             {visibleEvents.map((ev) => (
               <Marker

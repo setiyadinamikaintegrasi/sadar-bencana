@@ -8,6 +8,7 @@ import {
   getAlerts,
   getConnectorHealth,
   getEvents,
+  getMapOverlays,
   getMeta,
   getNews,
   getRiskScores,
@@ -15,6 +16,7 @@ import {
   type ConnectorHealth,
   type Event,
   type Meta,
+  type MapOverlay,
   type NewsItem,
   type RiskScore,
 } from '../../lib/api/client'
@@ -127,6 +129,7 @@ export default function ExecutiveOverview() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [riskScores, setRiskScores] = useState<RiskScore[]>([])
   const [connectors, setConnectors] = useState<ConnectorHealth[]>([])
+  const [mapOverlays, setMapOverlays] = useState<MapOverlay[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [newsLoading, setNewsLoading] = useState(true)
@@ -140,18 +143,20 @@ export default function ExecutiveOverview() {
     else setRefreshing(true)
     setError(null)
     try {
-      const [eventsData, metaData, alertsData, riskScoresData, connectorData] = await Promise.all([
+      const [eventsData, metaData, alertsData, riskScoresData, connectorData, overlayData] = await Promise.all([
         getEvents(),
         getMeta(),
         getAlerts().catch(() => ({ data: [], meta: { count: 0, unacknowledged: 0 } })),
         getRiskScores().catch(() => ({ data: [], meta: { count: 0, limit: 0 } })),
         getConnectorHealth().catch(() => []),
+        getMapOverlays().catch(() => []),
       ])
       setEvents(eventsData)
       setMeta(metaData)
       setAlerts(alertsData.data)
       setRiskScores(riskScoresData.data)
       setConnectors(connectorData)
+      setMapOverlays(overlayData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data.')
     } finally {
@@ -365,6 +370,7 @@ export default function ExecutiveOverview() {
           <RiskMap
             events={events}
             news={news}
+            overlays={mapOverlays}
             activePerilFilter={activePerilFilter}
             onFilterChange={setActivePerilFilter}
             onEventClick={handleEventClick}
