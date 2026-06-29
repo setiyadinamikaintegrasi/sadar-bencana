@@ -252,7 +252,7 @@ Jika menggunakan Supabase untuk autentikasi (recommended untuk production):
 
 ## Migrasi Database
 
-File migrasi SQL tersimpan di `db/schema/` (`001_init.sql`, `002_*.sql`, …, `016_risk_owner.sql`). Terapkan **berurutan** menurut nomor.
+File migrasi SQL tersimpan di `db/schema/` (`001_init.sql`, `002_*.sql`, …, `018_alert_classification_safety.sql`). Terapkan **berurutan** menurut nomor.
 
 ### Untuk Docker Compose
 

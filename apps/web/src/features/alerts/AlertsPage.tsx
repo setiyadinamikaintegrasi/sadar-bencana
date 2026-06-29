@@ -5,6 +5,7 @@ import {
   getAlerts,
   type Alert,
   type AlertSeverity,
+  type AlertVerification,
 } from '../../lib/api/client'
 
 const REFRESH_INTERVAL_MS = 60_000
@@ -15,6 +16,12 @@ const severityClasses: Record<AlertSeverity, string> = {
   Moderate: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
   High: 'bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30',
   Critical: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
+}
+
+const verificationClasses: Record<AlertVerification, string> = {
+  unverified: 'bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30',
+  corroborated: 'bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30',
+  official: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30',
 }
 
 type StatusFilter = 'all' | 'unacknowledged' | 'acknowledged'
@@ -287,6 +294,12 @@ export default function AlertsPage() {
                     </span>
                     <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 ring-1 ring-inset ring-slate-700">
                       {alert.alert_type}
+                    </span>
+                    <span
+                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${verificationClasses[alert.verification_status]}`}
+                    >
+                      {alert.verification_status}
+                      {alert.source_count > 1 ? ` · ${alert.source_count} sources` : ''}
                     </span>
                     <SourceBadge source={alert.source ?? alert.alert_type} timestamp={alert.created_at} />
                     {alert.acknowledged ? (

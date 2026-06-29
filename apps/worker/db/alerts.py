@@ -12,13 +12,17 @@ LIMIT 1
 """
 
 _CREATE_ALERT_SQL = """
-INSERT INTO alerts (event_id, alert_type, severity, message)
-VALUES ($1, $2, $3, $4)
-RETURNING id, event_id, alert_type, severity, message, acknowledged, created_at
+INSERT INTO alerts (
+    event_id, alert_type, severity, message, verification_status, source_names
+)
+VALUES ($1, $2, $3, $4, $5, $6::text[])
+RETURNING id, event_id, alert_type, severity, message, verification_status,
+          source_names, acknowledged, created_at
 """
 
 _GET_RECENT_ALERTS_SQL = """
-SELECT id, event_id, alert_type, severity, message, acknowledged, created_at
+SELECT id, event_id, alert_type, severity, message, verification_status,
+       source_names, acknowledged, created_at
 FROM alerts
 ORDER BY created_at DESC
 LIMIT $1
@@ -39,6 +43,8 @@ async def create_alert(
     alert_type: str,
     severity: str,
     message: str,
+    verification_status: str = "unverified",
+    source_names: list[str] | None = None,
 ) -> dict[str, object]:
     """Insert an alert row and return the created record."""
 
@@ -49,6 +55,8 @@ async def create_alert(
             alert_type,
             severity,
             message,
+            verification_status,
+            source_names or [],
         )
     return dict(row) if row is not None else {}
 

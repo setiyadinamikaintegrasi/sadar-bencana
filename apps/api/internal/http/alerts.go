@@ -20,6 +20,8 @@ type Alert struct {
 	EventTime    *time.Time `json:"event_time"`
 	AlertType    string     `json:"alert_type"`
 	Severity     string     `json:"severity"`
+	Verification string     `json:"verification_status"`
+	SourceCount  int        `json:"source_count"`
 	Message      *string    `json:"message"`
 	Acknowledged bool       `json:"acknowledged"`
 	CreatedAt    time.Time  `json:"created_at"`
@@ -29,17 +31,20 @@ const alertsQuery = `
 SELECT a.id,
        a.event_id,
        e.event_id,
-       e.source,
-       e.place,
+       COALESCE(e.source, n.source),
+       COALESCE(e.place, n.place_name),
        e.magnitude,
-       e.event_time,
+       COALESCE(e.event_time, n.published_at),
        a.alert_type,
        a.severity,
+       a.verification_status,
+       a.source_count,
        a.message,
        a.acknowledged,
        a.created_at
 FROM alerts a
 LEFT JOIN events e ON a.event_id = e.id
+LEFT JOIN news_items n ON a.news_item_id = n.id
 WHERE ($1::boolean IS NULL OR a.acknowledged = $1)
 ORDER BY a.created_at DESC
 LIMIT 100
@@ -109,6 +114,8 @@ func Alerts(db *sql.DB) gin.HandlerFunc {
 				&eventTime,
 				&alert.AlertType,
 				&alert.Severity,
+				&alert.Verification,
+				&alert.SourceCount,
 				&message,
 				&alert.Acknowledged,
 				&alert.CreatedAt,

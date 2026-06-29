@@ -144,6 +144,7 @@ export async function getBriefing(): Promise<BriefingResponse> {
 }
 
 export type AlertSeverity = 'Critical' | 'High' | 'Moderate'
+export type AlertVerification = 'unverified' | 'corroborated' | 'official'
 
 export type Alert = {
   id: string
@@ -154,6 +155,8 @@ export type Alert = {
   event_time: string | null
   alert_type: string
   severity: AlertSeverity
+  verification_status: AlertVerification
+  source_count: number
   message: string
   acknowledged: boolean
   created_at: string
