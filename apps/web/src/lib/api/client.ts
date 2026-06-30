@@ -89,7 +89,9 @@ export type MapOverlay = {
 }
 
 export async function getMapOverlays(): Promise<MapOverlay[]> {
-  const response = await request<{ data: MapOverlay[] }>('/map/overlays/me')
+  const { data } = await supabase.auth.getSession()
+  const path = data.session?.access_token ? '/map/overlays/me' : '/map/overlays'
+  const response = await request<{ data: MapOverlay[] }>(path)
   return response.data
 }
 
