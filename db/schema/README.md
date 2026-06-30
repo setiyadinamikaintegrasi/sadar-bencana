@@ -30,3 +30,6 @@ The alert-classification safety migration is:
   guidance for offline-capable alert action cards.
 - `027_disaster_observability.sql` — stores structured pipeline telemetry,
   deterministic correlation IDs, delivery latency, and SLO evidence.
+- `028_historical_disaster_warehouse.sql` — separates versioned historical
+  events, administrative boundaries, immutable impact revisions, and resumable
+  backfill jobs from real-time operational tables.

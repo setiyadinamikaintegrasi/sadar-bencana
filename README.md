@@ -346,6 +346,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Disaster Replay Harness](docs/disaster-replay-harness.md)** — precision, recall, lifecycle, latency, dan golden regression gates
 - **[Disaster Observability](docs/disaster-observability-slo.md)** — telemetry, correlation ID, alert volume, dan operational SLO
 - **[Disaster Operations Runbook](docs/disaster-operations-runbook.md)** — outage, false alert, correction, cancellation, incident review, dan disclaimer
+- **[Historical Disaster Warehouse](docs/historical-disaster-warehouse.md)** — dataset version, administrative boundary, impact revision, dan resumable backfill
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
