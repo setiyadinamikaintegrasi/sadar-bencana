@@ -348,6 +348,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Disaster Operations Runbook](docs/disaster-operations-runbook.md)** — outage, false alert, correction, cancellation, incident review, dan disclaimer
 - **[Historical Disaster Warehouse](docs/historical-disaster-warehouse.md)** — dataset version, administrative boundary, impact revision, dan resumable backfill
 - **[Regional History API](docs/regional-history-api.md)** — timeline, seasonality, impact, source coverage, dan freshness berbasis kode wilayah
+- **[Historical Risk Analytics](docs/historical-risk-analytics.md)** — tren, seasonality, impact rate, anomaly, confidence, dan missing data
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
