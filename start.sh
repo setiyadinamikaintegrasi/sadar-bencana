@@ -22,14 +22,42 @@ echo "🚀 Starting Sadar Bencana services..."
 echo "   Project: $PROJECT_DIR"
 echo ""
 
+source_hash() {
+  local directory="$1"
+  local pattern="$2"
+  find "$directory" -type f -name "$pattern" -exec shasum {} + \
+    | sort \
+    | shasum \
+    | awk '{print $1}'
+}
+
+stop_listening_port() {
+  local port="$1"
+  local pids
+  pids=$( (lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true) | awk 'NR>1{print $2}' | sort -u)
+  if [ -n "$pids" ]; then
+    echo "$pids" | xargs kill 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 # --- 1. Go API Backend (:8001) ---
+API_SOURCE_HASH=$(source_hash "$PROJECT_DIR/apps/api" '*.go')
 if lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "✅ API (:8001) — already running"
-else
+  API_RUNNING_HASH=$(cat "$LOG_DIR/api.source-hash" 2>/dev/null || true)
+  if [ "$API_RUNNING_HASH" != "$API_SOURCE_HASH" ]; then
+    echo "↻  API source changed — restarting :8001"
+    stop_listening_port 8001
+  else
+    echo "✅ API (:8001) — already running and current"
+  fi
+fi
+if ! lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "▶  Starting Go API (:8001)..."
   cd "$PROJECT_DIR/apps/api"
   nohup go run ./cmd/server > "$LOG_DIR/api.log" 2>&1 &
   echo $! > "$LOG_DIR/api.pid"
+  echo "$API_SOURCE_HASH" > "$LOG_DIR/api.source-hash"
   sleep 3
   if curl -sSo /dev/null --max-time 3 http://127.0.0.1:8001/health 2>/dev/null; then
     echo "✅ API (:8001) — started (PID $(cat "$LOG_DIR/api.pid"))"
@@ -55,13 +83,22 @@ else
 fi
 
 # --- 3. Worker FastAPI (:8002) ---
+WORKER_SOURCE_HASH=$(source_hash "$PROJECT_DIR/apps/worker" '*.py')
 if lsof -nP -iTCP:8002 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "✅ Worker (:8002) — already running"
-else
+  WORKER_RUNNING_HASH=$(cat "$LOG_DIR/worker.source-hash" 2>/dev/null || true)
+  if [ "$WORKER_RUNNING_HASH" != "$WORKER_SOURCE_HASH" ]; then
+    echo "↻  Worker source changed — restarting :8002"
+    stop_listening_port 8002
+  else
+    echo "✅ Worker (:8002) — already running and current"
+  fi
+fi
+if ! lsof -nP -iTCP:8002 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "▶  Starting Worker FastAPI (:8002)..."
   cd "$PROJECT_DIR/apps/worker"
   nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8002 > "$LOG_DIR/worker.log" 2>&1 &
   echo $! > "$LOG_DIR/worker.pid"
+  echo "$WORKER_SOURCE_HASH" > "$LOG_DIR/worker.source-hash"
   sleep 3
   if curl -sSo /dev/null --max-time 3 http://127.0.0.1:8002/health 2>/dev/null; then
     echo "✅ Worker (:8002) — started (PID $(cat "$LOG_DIR/worker.pid"))"
