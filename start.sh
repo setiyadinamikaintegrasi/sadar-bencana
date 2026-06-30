@@ -43,6 +43,7 @@ stop_listening_port() {
 
 # --- 1. Go API Backend (:8001) ---
 API_SOURCE_HASH=$(source_hash "$PROJECT_DIR/apps/api" '*.go')
+API_BINARY="$PROJECT_DIR/apps/api/sadar-api"
 if lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
   API_RUNNING_HASH=$(cat "$LOG_DIR/api.source-hash" 2>/dev/null || true)
   if [ "$API_RUNNING_HASH" != "$API_SOURCE_HASH" ]; then
@@ -53,9 +54,11 @@ if lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
   fi
 fi
 if ! lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "▶  Starting Go API (:8001)..."
+  echo "▶  Building Go API..."
   cd "$PROJECT_DIR/apps/api"
-  nohup go run ./cmd/server > "$LOG_DIR/api.log" 2>&1 &
+  go build -o "$API_BINARY" ./cmd/server
+  echo "▶  Starting Go API binary (:8001)..."
+  nohup "$API_BINARY" > "$LOG_DIR/api.log" 2>&1 </dev/null &
   echo $! > "$LOG_DIR/api.pid"
   echo "$API_SOURCE_HASH" > "$LOG_DIR/api.source-hash"
   sleep 3

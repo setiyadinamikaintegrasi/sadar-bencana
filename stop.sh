@@ -7,7 +7,8 @@ LOG_DIR="$PROJECT_DIR/.logs"
 
 echo "🛑 Stopping Sadar Bencana services..."
 
-for port in 8001 8002 4111 3001; do
+# Stop Vite first because it owns the development backend supervisor.
+for port in 3001 8001 8002 4111; do
   pids=$( (lsof -nP -iTCP:$port -sTCP:LISTEN 2>/dev/null || true) | awk 'NR>1{print $2}' | sort -u)
   if [ -n "$pids" ]; then
     echo "▶  Killing port :$port (PID: $(echo $pids | tr '\n' ' '))"
