@@ -82,6 +82,11 @@ func main() {
 		settings.GET("/official-sources", apihttp.OfficialSourceSettingsList(dbPool))
 		settings.PUT("/official-sources/:source", apihttp.OfficialSourceSettingUpdate(dbPool, cfg.OfficialSourceSettingsKey))
 		settings.POST("/official-sources/:source/test", apihttp.OfficialSourceSettingTest(dbPool, cfg.OfficialSourceSettingsKey))
+		settings.POST("/official-sources/:source/preview", apihttp.OfficialSourcePreview(dbPool, cfg.OfficialSourceSettingsKey))
+		settings.POST("/official-sources/:source/dry-run", apihttp.OfficialSourceDryRun(dbPool, cfg.OfficialSourceSettingsKey))
+		settings.POST("/official-sources/:source/activate", apihttp.OfficialSourceActivate(dbPool))
+		settings.POST("/official-sources/:source/rollback", apihttp.OfficialSourceRollback(dbPool))
+		settings.GET("/official-sources/:source/history", apihttp.OfficialSourceHistory(dbPool))
 	}
 	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))

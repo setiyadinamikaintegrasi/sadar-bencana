@@ -115,7 +115,11 @@ export type OfficialSourceSetting = {
   source_name: string
   display_name: string
   enabled: boolean
+  run_mode: 'disabled' | 'dry_run' | 'active'
   mode: 'auto' | 'default_public' | 'custom_api'
+  adapter_version: string
+  field_mapping: Record<string, string>
+  config_version: number
   default_api_url: string | null
   custom_api_url: string | null
   has_api_token: boolean
@@ -123,6 +127,8 @@ export type OfficialSourceSetting = {
   terms_url: string | null
   poll_interval_seconds: number
   notes: string | null
+  last_dry_run_at: string | null
+  last_dry_run_valid: boolean | null
   updated_at: string
 }
 
@@ -135,14 +141,96 @@ export async function updateOfficialSourceSetting(
   source: string,
   input: {
     enabled: boolean
+    run_mode: OfficialSourceSetting['run_mode']
     mode: OfficialSourceSetting['mode']
+    adapter_version: string
+    field_mapping: Record<string, string>
     custom_api_url: string | null
     api_token?: string
     poll_interval_seconds: number
+    change_reason?: string
   },
 ): Promise<void> {
   await request(`/settings/official-sources/${encodeURIComponent(source)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  })
+}
+
+export type OfficialSourcePreview = {
+  reachable: boolean
+  contract_valid: boolean
+  status_code: number
+  content_type: string
+  adapter_version: string
+  record_count: number
+  valid_count: number
+  invalid_count: number
+  errors: string[]
+  raw_sample: unknown
+  mapped_sample: Record<string, unknown>[]
+  payload_stored: false
+  latency_ms: number
+}
+
+export async function previewOfficialSource(
+  source: string,
+  input: {
+    mode: OfficialSourceSetting['mode']
+    custom_api_url: string | null
+    api_token?: string
+    adapter_version: string
+    field_mapping: Record<string, string>
+  },
+): Promise<OfficialSourcePreview> {
+  const response = await request<{ data: OfficialSourcePreview }>(
+    `/settings/official-sources/${encodeURIComponent(source)}/preview`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+  )
+  return response.data
+}
+
+export async function dryRunOfficialSource(source: string): Promise<OfficialSourcePreview> {
+  const response = await request<{ data: OfficialSourcePreview }>(
+    `/settings/official-sources/${encodeURIComponent(source)}/dry-run`,
+    { method: 'POST' },
+  )
+  return response.data
+}
+
+export async function activateOfficialSource(source: string): Promise<void> {
+  await request(`/settings/official-sources/${encodeURIComponent(source)}/activate`, { method: 'POST' })
+}
+
+export type OfficialSourceHistory = {
+  versions: {
+    version: number
+    configuration: Record<string, unknown>
+    changed_by: string
+    change_reason: string | null
+    created_at: string
+  }[]
+  audit: {
+    action: string
+    actor_email: string
+    config_version: number | null
+    success: boolean
+    metadata: Record<string, unknown>
+    created_at: string
+  }[]
+}
+
+export async function getOfficialSourceHistory(source: string): Promise<OfficialSourceHistory> {
+  const response = await request<{ data: OfficialSourceHistory }>(
+    `/settings/official-sources/${encodeURIComponent(source)}/history`,
+  )
+  return response.data
+}
+
+export async function rollbackOfficialSource(source: string, version: number, reason: string): Promise<void> {
+  await request(`/settings/official-sources/${encodeURIComponent(source)}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version, reason }),
   })
 }
 

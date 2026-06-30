@@ -17,6 +17,13 @@ ALLOWED_HOSTS = {
     "inarisk": ("bnpb.go.id",),
 }
 
+ADAPTER_CONTRACTS = {
+    "inatews": {"v1": ("event_group_id", "sent_at")},
+    "pvmbg": {"v1": ("volcano_id", "level", "published_at")},
+    "bnpb": {"v1": ("report_id", "observed_at")},
+    "inarisk": {"v1": ("layer_id", "context_type", "data_vintage", "attribution")},
+}
+
 
 def validate_official_feed_url(source: str, url: str) -> None:
     parsed = urlparse(url)
@@ -34,7 +41,7 @@ class ApprovedJSONFeedConnector:
         self.owns_client = client is None
         self.api_token = api_token
 
-    async def fetch(self) -> list[dict[str, Any]]:
+    async def fetch_payload(self) -> Any:
         if self.client is None:
             headers = {"User-Agent": "SadarBencana/0.4 official-source-connector"}
             if self.api_token:
@@ -46,11 +53,10 @@ class ApprovedJSONFeedConnector:
             )
         response = await self.client.get(self.url)
         response.raise_for_status()
-        payload = response.json()
-        records = payload.get("data", payload.get("items", payload)) if isinstance(payload, dict) else payload
-        if not isinstance(records, list):
-            raise ValueError("official feed payload must contain a record list")
-        return [record for record in records if isinstance(record, dict)]
+        return response.json()
+
+    async def fetch(self) -> list[dict[str, Any]]:
+        return extract_official_records(await self.fetch_payload(), {})
 
     async def close(self) -> None:
         if self.owns_client and self.client is not None:
@@ -62,6 +68,62 @@ def _time(value: Any, field: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError(f"{field} requires timezone")
     return parsed
+
+
+def _mapped_value(record: dict[str, Any], path: str) -> Any:
+    value: Any = record
+    for segment in path.split("."):
+        if not isinstance(value, dict) or segment not in value:
+            return None
+        value = value[segment]
+    return value
+
+
+def apply_field_mapping(
+    record: dict[str, Any],
+    mapping: dict[str, str] | None,
+) -> dict[str, Any]:
+    result = dict(record)
+    for canonical, path in (mapping or {}).items():
+        if canonical != "__records":
+            result[canonical] = _mapped_value(record, path)
+    return result
+
+
+def extract_official_records(
+    payload: Any,
+    mapping: dict[str, str] | None,
+) -> list[dict[str, Any]]:
+    mapping = mapping or {}
+    value = payload
+    if mapping.get("__records"):
+        if not isinstance(payload, dict):
+            raise ValueError("record path requires an object payload")
+        value = _mapped_value(payload, mapping["__records"])
+    elif isinstance(payload, dict):
+        value = payload.get("data", payload.get("items", payload.get("results", payload)))
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        raise ValueError("official feed payload must contain a record list")
+    return [
+        apply_field_mapping(record, mapping)
+        for record in value
+        if isinstance(record, dict)
+    ]
+
+
+def validate_adapter_record(source: str, version: str, record: dict[str, Any]) -> None:
+    try:
+        required = ADAPTER_CONTRACTS[source][version]
+    except KeyError as exc:
+        raise ValueError(f"unsupported adapter {source}/{version}") from exc
+    missing = [
+        field for field in required
+        if record.get(field) is None or str(record.get(field)).strip() == ""
+    ]
+    if missing:
+        raise ValueError(f"{source}/{version} missing fields: {', '.join(missing)}")
 
 
 def normalize_inatews(record: dict[str, Any]) -> OfficialAlertInput:
@@ -134,10 +196,14 @@ def normalize_inarisk_context(record: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "ADAPTER_CONTRACTS",
     "ApprovedJSONFeedConnector",
+    "apply_field_mapping",
+    "extract_official_records",
     "normalize_bnpb_impact",
     "normalize_inarisk_context",
     "normalize_inatews",
     "normalize_pvmbg",
+    "validate_adapter_record",
     "validate_official_feed_url",
 ]

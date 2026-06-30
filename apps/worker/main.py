@@ -27,10 +27,12 @@ from connectors.hazard import HazardConnector
 from connectors.multi_source import MultiSourceConnector, is_in_indonesia
 from connectors.official_feeds import (
     ApprovedJSONFeedConnector,
+    extract_official_records,
     normalize_bnpb_impact,
     normalize_inarisk_context,
     normalize_inatews,
     normalize_pvmbg,
+    validate_adapter_record,
 )
 from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
@@ -171,56 +173,73 @@ async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:
             if not setting.enabled or not setting.api_url:
                 continue
             url, api_token, attribution = setting.api_url, setting.api_token, setting.attribution
+            run_mode = setting.run_mode
+            adapter_version = setting.adapter_version
+            field_mapping = setting.field_mapping
         else:
             if not _env_enabled(flag):
                 continue
             url = os.getenv(url_name, "").strip()
             api_token, attribution = None, source.upper()
+            run_mode, adapter_version, field_mapping = "active", "v1", {}
         connector = ApprovedJSONFeedConnector(source, url, api_token=api_token)
         try:
-            records = await connector.fetch()
+            payload = await connector.fetch_payload()
+            records = extract_official_records(payload, field_mapping)
+            valid_count = 0
+            errors: list[str] = []
             for record in records:
-                native_value = (
-                    record.get("event_group_id")
-                    or record.get("volcano_id")
-                    or record.get("report_id")
-                    or record.get("layer_id")
-                )
-                if not native_value:
-                    raise ValueError(f"{source} record is missing a native identifier")
-                native_id = str(native_value)
-                source_row, _ = await create_source_record(
-                    pool,
-                    SourceRecordInput(
-                        source_name=source,
-                        source_record_id=native_id,
-                        source_type="official",
-                        source_url=url,
-                        attribution=str(record.get("attribution") or attribution),
-                        raw_payload=record,
-                    ),
-                )
-                if source in {"inatews", "pvmbg"}:
-                    alert = normalize_inatews(record) if source == "inatews" else normalize_pvmbg(record)
-                    _, was_created = await upsert_official_alert(pool, alert)
-                    created += int(was_created)
-                elif source == "bnpb":
-                    await create_impact_report(
+                try:
+                    validate_adapter_record(source, adapter_version, record)
+                    normalized = (
+                        normalize_inatews(record) if source == "inatews"
+                        else normalize_pvmbg(record) if source == "pvmbg"
+                        else normalize_bnpb_impact(record) if source == "bnpb"
+                        else normalize_inarisk_context(record)
+                    )
+                    valid_count += 1
+                    if run_mode == "dry_run":
+                        continue
+                    native_value = (
+                        record.get("event_group_id")
+                        or record.get("volcano_id")
+                        or record.get("report_id")
+                        or record.get("layer_id")
+                    )
+                    native_id = str(native_value)
+                    source_row, _ = await create_source_record(
                         pool,
-                        ImpactReportInput(
-                            source_record_id=source_row["id"],
-                            **normalize_bnpb_impact(record),
+                        SourceRecordInput(
+                            source_name=source,
+                            source_record_id=native_id,
+                            source_type="official",
+                            source_url=url,
+                            attribution=str(record.get("attribution") or attribution),
+                            raw_payload=record,
                         ),
                     )
-                else:
-                    await create_risk_context(
-                        pool,
-                        RiskContextInput(
-                            source_record_id=source_row["id"],
-                            **normalize_inarisk_context(record),
-                        ),
-                    )
-            await upsert_connector_health(pool, source, len(records))
+                    if source in {"inatews", "pvmbg"}:
+                        _, was_created = await upsert_official_alert(pool, normalized)
+                        created += int(was_created)
+                    elif source == "bnpb":
+                        await create_impact_report(
+                            pool,
+                            ImpactReportInput(source_record_id=source_row["id"], **normalized),
+                        )
+                    else:
+                        await create_risk_context(
+                            pool,
+                            RiskContextInput(source_record_id=source_row["id"], **normalized),
+                        )
+                except Exception as exc:
+                    errors.append(str(exc))
+                    logger.warning("%s record rejected by %s: %s", source, adapter_version, exc)
+            health_error = "; ".join(errors[:3]) if errors else None
+            await upsert_connector_health(pool, source, valid_count, health_error)
+            logger.info(
+                "%s adapter=%s mode=%s valid=%d rejected=%d",
+                source, adapter_version, run_mode, valid_count, len(errors),
+            )
         except Exception as exc:
             await upsert_connector_health(pool, source, 0, str(exc))
             logger.warning("%s approved feed failed: %s", source, exc)

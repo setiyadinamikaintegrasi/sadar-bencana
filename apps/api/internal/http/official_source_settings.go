@@ -13,18 +13,24 @@ import (
 )
 
 type OfficialSourceSetting struct {
-	SourceName          string    `json:"source_name"`
-	DisplayName         string    `json:"display_name"`
-	Enabled             bool      `json:"enabled"`
-	Mode                string    `json:"mode"`
-	DefaultAPIURL       *string   `json:"default_api_url"`
-	CustomAPIURL        *string   `json:"custom_api_url"`
-	HasAPIToken         bool      `json:"has_api_token"`
-	Attribution         string    `json:"attribution"`
-	TermsURL            *string   `json:"terms_url"`
-	PollIntervalSeconds int       `json:"poll_interval_seconds"`
-	Notes               *string   `json:"notes"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	SourceName          string            `json:"source_name"`
+	DisplayName         string            `json:"display_name"`
+	Enabled             bool              `json:"enabled"`
+	RunMode             string            `json:"run_mode"`
+	Mode                string            `json:"mode"`
+	AdapterVersion      string            `json:"adapter_version"`
+	FieldMapping        map[string]string `json:"field_mapping"`
+	ConfigVersion       int               `json:"config_version"`
+	DefaultAPIURL       *string           `json:"default_api_url"`
+	CustomAPIURL        *string           `json:"custom_api_url"`
+	HasAPIToken         bool              `json:"has_api_token"`
+	Attribution         string            `json:"attribution"`
+	TermsURL            *string           `json:"terms_url"`
+	PollIntervalSeconds int               `json:"poll_interval_seconds"`
+	Notes               *string           `json:"notes"`
+	LastDryRunAt        *time.Time        `json:"last_dry_run_at"`
+	LastDryRunValid     *bool             `json:"last_dry_run_valid"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
 func requireSettingsAdmin(c *gin.Context, db *sql.DB) bool {
@@ -44,9 +50,11 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		rows, err := db.QueryContext(c.Request.Context(), `
-			SELECT source_name, display_name, enabled, mode, default_api_url,
+			SELECT source_name, display_name, enabled, run_mode, mode,
+			       adapter_version, field_mapping, config_version, default_api_url,
 			       custom_api_url, api_token_encrypted IS NOT NULL, attribution,
-			       terms_url, poll_interval_seconds, notes, updated_at
+			       terms_url, poll_interval_seconds, notes, last_dry_run_at,
+			       last_dry_run_valid, updated_at
 			FROM official_source_settings ORDER BY display_name`)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
@@ -57,16 +65,28 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 		for rows.Next() {
 			var item OfficialSourceSetting
 			var defaultURL, customURL, termsURL, notes sql.NullString
-			if err := rows.Scan(&item.SourceName, &item.DisplayName, &item.Enabled, &item.Mode,
-				&defaultURL, &customURL, &item.HasAPIToken, &item.Attribution, &termsURL,
-				&item.PollIntervalSeconds, &notes, &item.UpdatedAt); err != nil {
+			var mapping []byte
+			var dryRunAt sql.NullTime
+			var dryRunValid sql.NullBool
+			if err := rows.Scan(&item.SourceName, &item.DisplayName, &item.Enabled, &item.RunMode,
+				&item.Mode, &item.AdapterVersion, &mapping, &item.ConfigVersion, &defaultURL,
+				&customURL, &item.HasAPIToken, &item.Attribution, &termsURL,
+				&item.PollIntervalSeconds, &notes, &dryRunAt, &dryRunValid, &item.UpdatedAt); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed"})
 				return
 			}
+			item.FieldMapping = map[string]string{}
+			_ = json.Unmarshal(mapping, &item.FieldMapping)
 			item.DefaultAPIURL = nullStringPtr(defaultURL)
 			item.CustomAPIURL = nullStringPtr(customURL)
 			item.TermsURL = nullStringPtr(termsURL)
 			item.Notes = nullStringPtr(notes)
+			if dryRunAt.Valid {
+				item.LastDryRunAt = &dryRunAt.Time
+			}
+			if dryRunValid.Valid {
+				item.LastDryRunValid = &dryRunValid.Bool
+			}
 			items = append(items, item)
 		}
 		c.JSON(http.StatusOK, gin.H{"data": items})
@@ -74,11 +94,15 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 }
 
 type sourceSettingUpdate struct {
-	Enabled             bool    `json:"enabled"`
-	Mode                string  `json:"mode"`
-	CustomAPIURL        *string `json:"custom_api_url"`
-	APIToken            *string `json:"api_token"`
-	PollIntervalSeconds int     `json:"poll_interval_seconds"`
+	Enabled             bool              `json:"enabled"`
+	RunMode             string            `json:"run_mode"`
+	Mode                string            `json:"mode"`
+	AdapterVersion      string            `json:"adapter_version"`
+	FieldMapping        map[string]string `json:"field_mapping"`
+	CustomAPIURL        *string           `json:"custom_api_url"`
+	APIToken            *string           `json:"api_token"`
+	PollIntervalSeconds int               `json:"poll_interval_seconds"`
+	ChangeReason        string            `json:"change_reason"`
 }
 
 func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFunc {
@@ -99,6 +123,29 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_mode"})
 			return
 		}
+		runMode := body.RunMode
+		if runMode == "" {
+			if body.Enabled {
+				runMode = "active"
+			} else {
+				runMode = "disabled"
+			}
+		}
+		if runMode != "disabled" && runMode != "dry_run" && runMode != "active" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_run_mode"})
+			return
+		}
+		if body.FieldMapping == nil {
+			body.FieldMapping = map[string]string{}
+		}
+		adapterVersion := strings.TrimSpace(body.AdapterVersion)
+		if adapterVersion == "" {
+			adapterVersion = "v1"
+		}
+		if err := validateAdapterConfiguration(source, adapterVersion, body.FieldMapping); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_adapter_configuration", "message": err.Error()})
+			return
+		}
 		customURL := strings.TrimSpace(valueString(body.CustomAPIURL))
 		if customURL != "" {
 			parsed, err := url.Parse(customURL)
@@ -116,24 +163,76 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 		if interval == 0 {
 			interval = 600
 		}
-		result, err := db.ExecContext(c.Request.Context(), `
-			UPDATE official_source_settings SET enabled=$2, mode=$3,
-			  custom_api_url=NULLIF($4,''), poll_interval_seconds=$5,
-			  api_token_encrypted=CASE WHEN $6='' THEN api_token_encrypted
-			    ELSE pgp_sym_encrypt($6,$7) END,
-			  updated_by=$8, updated_at=now()
-			WHERE source_name=$1`,
-			source, body.Enabled, body.Mode, customURL, interval, token, encryptionKey, AuthEmail(c))
+		if interval < 60 || interval > 86400 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_poll_interval"})
+			return
+		}
+		currentMode := ""
+		if err := db.QueryRowContext(c.Request.Context(),
+			`SELECT run_mode FROM official_source_settings WHERE source_name=$1`, source).Scan(&currentMode); err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "source_not_found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed"})
+			}
+			return
+		}
+		if runMode == "active" && currentMode != "active" {
+			c.JSON(http.StatusConflict, gin.H{"error": "dry_run_required", "message": "save as dry_run, run validation, then activate"})
+			return
+		}
+		mappingJSON, _ := json.Marshal(body.FieldMapping)
+		tx, err := db.BeginTx(c.Request.Context(), nil)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_transaction_failed"})
+			return
+		}
+		defer tx.Rollback()
+		var version int
+		err = tx.QueryRowContext(c.Request.Context(), `
+			WITH updated AS (
+			  UPDATE official_source_settings SET
+			    enabled=$2, run_mode=$3, mode=$4, adapter_version=$5,
+			    field_mapping=$6::jsonb, custom_api_url=NULLIF($7,''),
+			    poll_interval_seconds=$8,
+			    api_token_encrypted=CASE WHEN $9='' THEN api_token_encrypted
+			      ELSE pgp_sym_encrypt($9,$10) END,
+			    config_version=config_version+1,
+			    last_dry_run_at=NULL, last_dry_run_valid=NULL,
+			    last_dry_run_config_version=NULL,
+			    updated_by=$11, updated_at=now()
+			  WHERE source_name=$1
+			  RETURNING *
+			)
+			INSERT INTO official_source_setting_versions
+			  (source_name, version, configuration, api_token_encrypted, changed_by, change_reason)
+			SELECT source_name, config_version,
+			  jsonb_build_object(
+			    'enabled', enabled, 'run_mode', run_mode, 'mode', mode,
+			    'adapter_version', adapter_version, 'field_mapping', field_mapping,
+			    'custom_api_url', custom_api_url,
+			    'poll_interval_seconds', poll_interval_seconds
+			  ),
+			  api_token_encrypted, $11, NULLIF($12,'')
+			FROM updated
+			RETURNING version`,
+			source, runMode != "disabled", runMode, body.Mode, adapterVersion,
+			string(mappingJSON), customURL, interval, token, encryptionKey,
+			AuthEmail(c), strings.TrimSpace(body.ChangeReason)).Scan(&version)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_update_failed", "message": err.Error()})
 			return
 		}
-		count, _ := result.RowsAffected()
-		if count == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "source_not_found"})
+		_, err = tx.ExecContext(c.Request.Context(), `
+			INSERT INTO official_source_setting_audit
+			  (source_name, action, actor_email, config_version, success, metadata)
+			VALUES ($1,'update',$2,$3,TRUE,jsonb_build_object('run_mode',$4,'adapter_version',$5))`,
+			source, AuthEmail(c), version, runMode, adapterVersion)
+		if err != nil || tx.Commit() != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_audit_failed"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": gin.H{"source_name": source, "updated": true}})
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"source_name": source, "updated": true, "config_version": version}})
 	}
 }
 
