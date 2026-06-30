@@ -93,6 +93,22 @@ export async function getMapOverlays(): Promise<MapOverlay[]> {
   return response.data
 }
 
+export type RegionalHistoryProfile = {
+  administrative_code: string
+  period: { from: string; to: string }
+  timeline: { year: number; peril: string; event_count: number }[]
+  seasonality: { month: number; event_count: number }[]
+  impact: { deaths: number; missing: number; injured: number; displaced: number; houses_damaged: number }
+  source_coverage: { source: string; dataset_version: string; event_count: number }[]
+  data_freshness: string | null
+  method: string
+  limitations: string[]
+}
+
+export async function getRegionalHistory(code: string): Promise<RegionalHistoryProfile> {
+  return request<RegionalHistoryProfile>(`/historical/regions/${encodeURIComponent(code)}/profile`)
+}
+
 export type NewsItem = {
   id: string
   item_id: string

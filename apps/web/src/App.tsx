@@ -8,6 +8,7 @@ import ExecutiveOverview from './features/executive/ExecutiveOverview'
 import ContractsPage from './features/contracts/ContractsPage'
 import SourceHealthPage from './features/health/SourceHealthPage'
 import EwsPage from './features/ews/EwsPage'
+import RegionalHistoryPage from './features/history/RegionalHistoryPage'
 import TopNav from './components/TopNav'
 
 const sections = [
@@ -19,6 +20,7 @@ const sections = [
   { label: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', icon: '◔' },
   { label: 'Source Health', icon: '◈' },
+  { label: 'Riwayat Wilayah', icon: '▦' },
 ] as const
 
 type Section = (typeof sections)[number]['label']
@@ -35,6 +37,7 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
   { label: 'AI Copilot', section: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', section: 'Early Warning', icon: '◔' },
   { label: 'Source Health', section: 'Source Health', icon: '◈' },
+  { label: 'Riwayat Wilayah', section: 'Riwayat Wilayah', icon: '▦' },
 ]
 
 function App() {
@@ -75,6 +78,8 @@ function App() {
             <SourceHealthPage />
           ) : activeSection === 'Early Warning' ? (
             <EwsPage />
+          ) : activeSection === 'Riwayat Wilayah' ? (
+            <RegionalHistoryPage />
           ) : (
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-slate-950/40">
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>
