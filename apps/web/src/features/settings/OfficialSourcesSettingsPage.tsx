@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   getOfficialSourceSettings,
+  testOfficialSource,
   updateOfficialSourceSetting,
   type OfficialSourceSetting,
 } from '../../lib/api/client'
@@ -10,6 +11,7 @@ export default function OfficialSourcesSettingsPage() {
   const [tokens, setTokens] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, string>>({})
 
   const load = async () => {
     try { setItems(await getOfficialSourceSettings()); setError(null) }
@@ -35,6 +37,18 @@ export default function OfficialSourcesSettingsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menyimpan.')
     } finally { setSaving(null) }
+  }
+
+  const testConnection = async (source: string) => {
+    setTestResults((current) => ({ ...current, [source]: 'Menguji…' }))
+    try {
+      const result = await testOfficialSource(source)
+      setTestResults((current) => ({ ...current, [source]:
+        result.contract_valid ? `Valid · ${result.latency_ms ?? 0} ms` : `Terjangkau tetapi kontrak tidak valid (${result.status_code ?? '-'})`
+      }))
+    } catch (err) {
+      setTestResults((current) => ({ ...current, [source]: err instanceof Error ? err.message : 'Koneksi gagal' }))
+    }
   }
 
   return (
@@ -73,7 +87,11 @@ export default function OfficialSourcesSettingsPage() {
             </div>
             <div className="mt-4 flex items-center justify-between">
               {item.terms_url ? <a href={item.terms_url} target="_blank" rel="noreferrer" className="text-xs text-sky-300">Ketentuan sumber ↗</a> : <span />}
-              <button onClick={() => save(item)} disabled={saving === item.source_name} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold disabled:opacity-50">{saving === item.source_name ? 'Menyimpan…' : 'Simpan'}</button>
+              <div className="flex items-center gap-2">
+                {testResults[item.source_name] ? <span className="text-xs text-slate-300">{testResults[item.source_name]}</span> : null}
+                <button onClick={() => testConnection(item.source_name)} className="rounded-lg border border-sky-500/40 px-3 py-2 text-sm text-sky-200">Test API</button>
+                <button onClick={() => save(item)} disabled={saving === item.source_name} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold disabled:opacity-50">{saving === item.source_name ? 'Menyimpan…' : 'Simpan'}</button>
+              </div>
             </div>
           </article>
         ))}

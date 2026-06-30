@@ -81,6 +81,7 @@ func main() {
 	{
 		settings.GET("/official-sources", apihttp.OfficialSourceSettingsList(dbPool))
 		settings.PUT("/official-sources/:source", apihttp.OfficialSourceSettingUpdate(dbPool, cfg.OfficialSourceSettingsKey))
+		settings.POST("/official-sources/:source/test", apihttp.OfficialSourceSettingTest(dbPool, cfg.OfficialSourceSettingsKey))
 	}
 	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))

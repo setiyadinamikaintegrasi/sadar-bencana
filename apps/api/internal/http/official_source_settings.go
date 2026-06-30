@@ -2,6 +2,8 @@ package http
 
 import (
 	"database/sql"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -137,6 +139,70 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"source_name": source, "updated": true}})
+	}
+}
+
+func OfficialSourceSettingTest(db *sql.DB, encryptionKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil || !requireSettingsAdmin(c, db) {
+			if db == nil {
+				dbUnavailable(c)
+			}
+			return
+		}
+		source := strings.TrimSpace(c.Param("source"))
+		var mode string
+		var defaultURL, customURL, token sql.NullString
+		err := db.QueryRowContext(c.Request.Context(), `
+			SELECT mode, default_api_url, custom_api_url,
+			       CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
+			         THEN pgp_sym_decrypt(api_token_encrypted,$2) END
+			FROM official_source_settings WHERE source_name=$1`,
+			source, encryptionKey).Scan(&mode, &defaultURL, &customURL, &token)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "source_not_found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed", "message": err.Error()})
+			return
+		}
+		endpoint := ""
+		if mode == "custom_api" || (mode == "auto" && customURL.Valid) {
+			endpoint = customURL.String
+		} else if defaultURL.Valid {
+			endpoint = defaultURL.String
+		}
+		parsed, parseErr := url.Parse(endpoint)
+		if parseErr != nil || !approvedSourceHost(source, parsed.Hostname()) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "official_api_not_configured"})
+			return
+		}
+		request, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, endpoint, nil)
+		request.Header.Set("User-Agent", "SadarBencana/0.4 source-validation")
+		if token.Valid {
+			request.Header.Set("Authorization", "Bearer "+token.String)
+		}
+		started := time.Now()
+		response, err := (&http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"data": gin.H{"reachable": false, "contract_valid": false, "error": err.Error()}})
+			return
+		}
+		defer response.Body.Close()
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		contractValid := response.StatusCode >= 200 && response.StatusCode < 300 && readErr == nil
+		if contractValid && source != "bmkg_cap" {
+			var payload any
+			contractValid = json.Unmarshal(body, &payload) == nil
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{
+			"reachable":      response.StatusCode >= 200 && response.StatusCode < 500,
+			"contract_valid": contractValid,
+			"status_code":    response.StatusCode,
+			"content_type":   response.Header.Get("Content-Type"),
+			"latency_ms":     time.Since(started).Milliseconds(),
+		}})
 	}
 }
 

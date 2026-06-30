@@ -144,6 +144,15 @@ export async function updateOfficialSourceSetting(
   })
 }
 
+export async function testOfficialSource(source: string): Promise<{
+  reachable: boolean; contract_valid: boolean; status_code?: number; latency_ms?: number
+}> {
+  const response = await request<{ data: {
+    reachable: boolean; contract_valid: boolean; status_code?: number; latency_ms?: number
+  } }>(`/settings/official-sources/${encodeURIComponent(source)}/test`, { method: 'POST' })
+  return response.data
+}
+
 export type NewsItem = {
   id: string
   item_id: string
