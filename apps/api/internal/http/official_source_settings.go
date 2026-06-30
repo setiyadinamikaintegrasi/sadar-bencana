@@ -28,12 +28,7 @@ type OfficialSourceSetting struct {
 }
 
 func requireSettingsAdmin(c *gin.Context, db *sql.DB) bool {
-	email := AuthEmail(c)
-	var role string
-	err := db.QueryRowContext(c.Request.Context(),
-		`SELECT role FROM ews_subscribers WHERE lower(email)=lower($1) AND is_active=TRUE LIMIT 1`,
-		email).Scan(&role)
-	if err != nil || role != "admin" {
+	if !isEWSAdmin(c, db) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "admin_required"})
 		return false
 	}

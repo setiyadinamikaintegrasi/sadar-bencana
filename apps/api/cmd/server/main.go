@@ -87,21 +87,32 @@ func main() {
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
 	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
 	router.GET("/api/v1/map/overlays", apihttp.MapRiskOverlays(dbPool))
+	mapMe := router.Group("/api/v1/map", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	{
+		mapMe.GET("/overlays/me", apihttp.MapRiskOverlaysMe(dbPool))
+	}
 	router.GET("/api/v1/metrics/disaster", apihttp.DisasterMetrics(dbPool))
 	router.GET("/api/v1/historical/regions/:code/profile", apihttp.RegionalHistoryProfile(dbPool))
 
-	// EWS — Early Warning System
-	router.GET("/api/v1/ews/subscribers", apihttp.EWSSubscribersList(dbPool))
-	router.POST("/api/v1/ews/subscribers", apihttp.EWSSubscriberCreate(dbPool))
-	router.PUT("/api/v1/ews/subscribers/:id", apihttp.EWSSubscriberUpdate(dbPool))
-	router.DELETE("/api/v1/ews/subscribers/:id", apihttp.EWSSubscriberDelete(dbPool))
-	router.GET("/api/v1/ews/subscribers/:id/watch-zones", apihttp.EWSWatchZonesList(dbPool))
-	router.POST("/api/v1/ews/subscribers/:id/watch-zones", apihttp.EWSWatchZoneCreate(dbPool))
-	router.PUT("/api/v1/ews/watch-zones/:id", apihttp.EWSWatchZoneUpdate(dbPool))
-	router.DELETE("/api/v1/ews/watch-zones/:id", apihttp.EWSWatchZoneDelete(dbPool))
-	router.GET("/api/v1/ews/subscribers/:id/preferences", apihttp.EWSNotificationPrefsGet(dbPool))
-	router.PUT("/api/v1/ews/subscribers/:id/preferences", apihttp.EWSNotificationPrefsUpdate(dbPool))
-	router.GET("/api/v1/ews/notifications", apihttp.EWSNotificationLog(dbPool))
+	// EWS administration contains subscriber contact details and is admin-only.
+	ewsAdmin := router.Group(
+		"/api/v1/ews",
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+		apihttp.RequireEWSAdmin(dbPool),
+	)
+	{
+		ewsAdmin.GET("/subscribers", apihttp.EWSSubscribersList(dbPool))
+		ewsAdmin.POST("/subscribers", apihttp.EWSSubscriberCreate(dbPool))
+		ewsAdmin.PUT("/subscribers/:id", apihttp.EWSSubscriberUpdate(dbPool))
+		ewsAdmin.DELETE("/subscribers/:id", apihttp.EWSSubscriberDelete(dbPool))
+		ewsAdmin.GET("/subscribers/:id/watch-zones", apihttp.EWSWatchZonesList(dbPool))
+		ewsAdmin.POST("/subscribers/:id/watch-zones", apihttp.EWSWatchZoneCreate(dbPool))
+		ewsAdmin.PUT("/watch-zones/:id", apihttp.EWSWatchZoneUpdate(dbPool))
+		ewsAdmin.DELETE("/watch-zones/:id", apihttp.EWSWatchZoneDelete(dbPool))
+		ewsAdmin.GET("/subscribers/:id/preferences", apihttp.EWSNotificationPrefsGet(dbPool))
+		ewsAdmin.PUT("/subscribers/:id/preferences", apihttp.EWSNotificationPrefsUpdate(dbPool))
+		ewsAdmin.GET("/notifications", apihttp.EWSNotificationLog(dbPool))
+	}
 
 	// EWS self-service (authenticated; scoped to the logged-in subscriber)
 	ewsMe := router.Group("/api/v1/ews/me", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
