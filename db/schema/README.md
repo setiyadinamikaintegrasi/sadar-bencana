@@ -33,3 +33,5 @@ The alert-classification safety migration is:
 - `028_historical_disaster_warehouse.sql` — separates versioned historical
   events, administrative boundaries, immutable impact revisions, and resumable
   backfill jobs from real-time operational tables.
+- `029_ai_regional_analysis_audit.sql` — audits grounded regional analysis
+  snapshots, model/prompt versions, outputs, and refusals.

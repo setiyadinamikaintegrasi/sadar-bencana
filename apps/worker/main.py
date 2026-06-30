@@ -8,6 +8,7 @@ from typing import Any
 
 import asyncpg
 from fastapi import FastAPI
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
@@ -549,6 +550,21 @@ async def worker_status() -> dict[str, str]:
     """Return worker runtime status metadata."""
 
     return {"service": "worker", "status": "running", "version": "0.1.0"}
+
+
+class RegionalAnalysisRequest(BaseModel):
+    question: str
+    snapshot: dict[str, Any]
+
+
+@app.post("/api/v1/worker/ai/regional-analysis")
+async def regional_analysis(request: RegionalAnalysisRequest) -> dict[str, Any]:
+    from ai.regional_analyst import analyze_regional_snapshot
+    from db.regional_analysis import save_regional_analysis
+
+    output = analyze_regional_snapshot(request.snapshot, request.question)
+    await save_regional_analysis(get_pool(), request.question, request.snapshot, output)
+    return {"data": output}
 
 
 @app.get("/api/v1/worker/events")
