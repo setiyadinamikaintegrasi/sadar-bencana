@@ -47,77 +47,100 @@ LIMIT 200
 const watchZoneOverlayQuery = `
 SELECT id, label, latitude, longitude, radius_km
 FROM ews_watch_zones
-WHERE is_active = TRUE
+WHERE is_active = TRUE AND subscriber_id = $1
 ORDER BY created_at DESC
 LIMIT 500
 `
 
-// MapRiskOverlays returns official, static-risk, and watch-zone layers separately.
+// MapRiskOverlays returns public official and static-risk layers. Watch zones
+// are intentionally excluded because they contain subscriber-specific data.
 func MapRiskOverlays(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if db == nil {
 			dbUnavailable(c)
 			return
 		}
-		overlays := make([]MapOverlay, 0)
+		serveMapRiskOverlays(c, db, nil)
+	}
+}
 
-		rows, err := db.QueryContext(c.Request.Context(), officialOverlayQuery)
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+// MapRiskOverlaysMe returns public layers plus only the authenticated
+// subscriber's watch zones.
+func MapRiskOverlaysMe(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
 			return
 		}
-		for rows.Next() {
-			var item MapOverlay
-			var headline, source sql.NullString
-			var geometry []byte
-			var effective, expires sql.NullTime
-			if err := rows.Scan(&item.ID, &headline, &geometry, &effective, &expires, &source); err != nil {
-				rows.Close()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
-				return
-			}
-			item.LayerClass = "official"
-			item.Label = valueOr(headline, "Peringatan resmi")
-			item.Geometry = geometry
-			item.Attribution = nullStringPtr(source)
-			if effective.Valid {
-				item.EffectiveAt = &effective.Time
-			}
-			if expires.Valid {
-				item.ExpiresAt = &expires.Time
-			}
-			overlays = append(overlays, item)
-		}
-		rows.Close()
-
-		rows, err = db.QueryContext(c.Request.Context(), riskContextOverlayQuery)
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+		subscriberID, ok := resolveSubscriber(c, db)
+		if !ok {
 			return
 		}
-		for rows.Next() {
-			var item MapOverlay
-			var peril, vintage, attribution, sourceURL sql.NullString
-			var geometry []byte
-			if err := rows.Scan(
-				&item.ID, &peril, &item.Label, &geometry, &vintage,
-				&attribution, &sourceURL,
-			); err != nil {
-				rows.Close()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
-				return
-			}
-			item.LayerClass = "static_risk"
-			item.PerilType = nullStringPtr(peril)
-			item.Geometry = geometry
-			item.DataVintage = nullStringPtr(vintage)
-			item.Attribution = nullStringPtr(attribution)
-			item.SourceURL = nullStringPtr(sourceURL)
-			overlays = append(overlays, item)
-		}
-		rows.Close()
+		serveMapRiskOverlays(c, db, &subscriberID)
+	}
+}
 
-		rows, err = db.QueryContext(c.Request.Context(), watchZoneOverlayQuery)
+func serveMapRiskOverlays(c *gin.Context, db *sql.DB, subscriberID *string) {
+	overlays := make([]MapOverlay, 0)
+
+	rows, err := db.QueryContext(c.Request.Context(), officialOverlayQuery)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+		return
+	}
+	for rows.Next() {
+		var item MapOverlay
+		var headline, source sql.NullString
+		var geometry []byte
+		var effective, expires sql.NullTime
+		if err := rows.Scan(&item.ID, &headline, &geometry, &effective, &expires, &source); err != nil {
+			rows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
+			return
+		}
+		item.LayerClass = "official"
+		item.Label = valueOr(headline, "Peringatan resmi")
+		item.Geometry = geometry
+		item.Attribution = nullStringPtr(source)
+		if effective.Valid {
+			item.EffectiveAt = &effective.Time
+		}
+		if expires.Valid {
+			item.ExpiresAt = &expires.Time
+		}
+		overlays = append(overlays, item)
+	}
+	rows.Close()
+
+	rows, err = db.QueryContext(c.Request.Context(), riskContextOverlayQuery)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+		return
+	}
+	for rows.Next() {
+		var item MapOverlay
+		var peril, vintage, attribution, sourceURL sql.NullString
+		var geometry []byte
+		if err := rows.Scan(
+			&item.ID, &peril, &item.Label, &geometry, &vintage,
+			&attribution, &sourceURL,
+		); err != nil {
+			rows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
+			return
+		}
+		item.LayerClass = "static_risk"
+		item.PerilType = nullStringPtr(peril)
+		item.Geometry = geometry
+		item.DataVintage = nullStringPtr(vintage)
+		item.Attribution = nullStringPtr(attribution)
+		item.SourceURL = nullStringPtr(sourceURL)
+		overlays = append(overlays, item)
+	}
+	rows.Close()
+
+	if subscriberID != nil {
+		rows, err = db.QueryContext(c.Request.Context(), watchZoneOverlayQuery, *subscriberID)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
 			return
@@ -135,8 +158,8 @@ func MapRiskOverlays(db *sql.DB) gin.HandlerFunc {
 			overlays = append(overlays, item)
 		}
 		rows.Close()
-		c.JSON(http.StatusOK, gin.H{"data": overlays, "meta": gin.H{"count": len(overlays)}})
 	}
+	c.JSON(http.StatusOK, gin.H{"data": overlays, "meta": gin.H{"count": len(overlays)}})
 }
 
 func valueOr(value sql.NullString, fallback string) string {

@@ -89,7 +89,7 @@ export type MapOverlay = {
 }
 
 export async function getMapOverlays(): Promise<MapOverlay[]> {
-  const response = await request<{ data: MapOverlay[] }>('/map/overlays')
+  const response = await request<{ data: MapOverlay[] }>('/map/overlays/me')
   return response.data
 }
 
