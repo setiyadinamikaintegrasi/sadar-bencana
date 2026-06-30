@@ -9,6 +9,7 @@ from typing import Any
 import asyncpg
 from fastapi import FastAPI
 from pydantic import BaseModel
+from uuid import UUID
 from fastapi.responses import JSONResponse
 
 from alerts import evaluate_and_create_alerts
@@ -661,6 +662,12 @@ async def regional_analysis(request: RegionalAnalysisRequest) -> dict[str, Any]:
     output = analyze_regional_snapshot(request.snapshot, request.question)
     await save_regional_analysis(get_pool(), request.question, request.snapshot, output)
     return {"data": output}
+
+
+@app.post("/api/v1/worker/historical/backfill/{job_id}")
+async def historical_backfill(job_id: UUID) -> dict[str, Any]:
+    from historical_backfill import run_backfill_job
+    return {"data": await run_backfill_job(get_pool(), job_id)}
 
 
 @app.get("/api/v1/worker/events")

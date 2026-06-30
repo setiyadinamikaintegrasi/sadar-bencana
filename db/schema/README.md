@@ -37,3 +37,5 @@ The alert-classification safety migration is:
   snapshots, model/prompt versions, outputs, and refusals.
 - `030_official_source_settings.sql` — stores admin-managed source modes,
   official API URLs, encrypted tokens, attribution, terms, and poll intervals.
+- `031_historical_backfill_runner.sql` — adds dataset manifests/formats and an
+  auditable rejection queue for resumable official JSON/CSV backfills.
