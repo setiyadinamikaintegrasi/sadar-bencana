@@ -50,6 +50,7 @@ from db.official_alerts import expire_official_alert_revisions
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
 from db.source_settings import resolve_source_setting
+from db.scoring_context import load_risk_scoring_contexts
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
 from models.evidence import ImpactReportInput, RiskContextInput, SourceRecordInput
@@ -355,7 +356,12 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
             correlations = correlation_result["recorded"]
         except Exception as exc:
             logger.warning("Evidence correlation shadow mode failed: %s", exc)
-    scored = await score_events(pool, all_events)
+    try:
+        scoring_contexts = await load_risk_scoring_contexts(pool, all_events)
+    except Exception as exc:
+        logger.warning("Risk context loading failed; using scoring defaults: %s", exc)
+        scoring_contexts = {}
+    scored = await score_events(pool, all_events, scoring_contexts)
     alerts = await evaluate_and_create_alerts(pool, all_events)
 
     return {
