@@ -39,3 +39,5 @@ The alert-classification safety migration is:
   official API URLs, encrypted tokens, attribution, terms, and poll intervals.
 - `031_historical_backfill_runner.sql` — adds dataset manifests/formats and an
   auditable rejection queue for resumable official JSON/CSV backfills.
+- `032_official_source_onboarding.sql` — versions source adapters and mappings,
+  adds dry-run activation gates, rollback snapshots, and administrator audit.

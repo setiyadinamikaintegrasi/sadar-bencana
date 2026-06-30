@@ -1,9 +1,15 @@
+import json
+from pathlib import Path
+
 import pytest
 from connectors.official_feeds import (
+    apply_field_mapping,
+    extract_official_records,
     normalize_bnpb_impact,
     normalize_inarisk_context,
     normalize_inatews,
     normalize_pvmbg,
+    validate_adapter_record,
     validate_official_feed_url,
 )
 
@@ -66,3 +72,45 @@ def test_inarisk_requires_vintage_and_attribution():
         "values": {"class": "high"},
     })
     assert context["data_vintage"] == "2025-12-31"
+
+
+def test_versioned_adapter_maps_nested_official_contract():
+    payload = {
+        "response": {
+            "records": [{
+                "id": "report-42",
+                "times": {"observed": "2026-06-30T01:00:00Z"},
+            }],
+        },
+    }
+    mapping = {
+        "__records": "response.records",
+        "report_id": "id",
+        "observed_at": "times.observed",
+    }
+    records = extract_official_records(payload, mapping)
+    assert records[0]["report_id"] == "report-42"
+    validate_adapter_record("bnpb", "v1", records[0])
+
+
+def test_contract_rejects_unknown_version_and_missing_fields():
+    with pytest.raises(ValueError, match="unsupported adapter"):
+        validate_adapter_record("bnpb", "v999", {})
+    with pytest.raises(ValueError, match="observed_at"):
+        validate_adapter_record("bnpb", "v1", {"report_id": "report-1"})
+
+
+def test_mapping_does_not_mutate_raw_record():
+    raw = {"source": {"identifier": "x"}}
+    mapped = apply_field_mapping(raw, {"report_id": "source.identifier"})
+    assert mapped["report_id"] == "x"
+    assert "report_id" not in raw
+
+
+def test_provisional_contract_fixture_matches_all_v1_adapters():
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "official_sources" / "provisional-v1.json").read_text()
+    )
+    assert fixture["provenance"].startswith("synthetic-provisional")
+    for source in ("inatews", "pvmbg", "bnpb", "inarisk"):
+        validate_adapter_record(source, "v1", fixture[source])

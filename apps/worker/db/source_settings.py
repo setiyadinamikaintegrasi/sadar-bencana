@@ -16,6 +16,10 @@ class ResolvedSourceSetting:
     api_token: str | None
     mode: str
     attribution: str
+    run_mode: str
+    adapter_version: str
+    field_mapping: dict[str, str]
+    config_version: int
 
 
 _ENV_URLS = {
@@ -35,7 +39,8 @@ async def resolve_source_setting(
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
-                          attribution,
+                          attribution, run_mode, adapter_version, field_mapping,
+                          config_version,
                           CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
                             THEN pgp_sym_decrypt(api_token_encrypted, $2) END AS api_token
                    FROM official_source_settings WHERE source_name=$1""",
@@ -54,13 +59,22 @@ async def resolve_source_setting(
         api_url = row["default_api_url"]
     else:
         api_url = row["custom_api_url"] or environment_url or row["default_api_url"]
+    run_mode = str(row.get("run_mode") or ("active" if row["enabled"] else "disabled"))
+    mapping: dict[str, str] = {
+        str(key): str(value)
+        for key, value in dict(row.get("field_mapping") or {}).items()
+    }
     return ResolvedSourceSetting(
         source_name=source_name,
-        enabled=bool(row["enabled"]),
+        enabled=run_mode != "disabled",
         api_url=api_url,
         api_token=row["api_token"],
         mode=mode,
         attribution=row["attribution"],
+        run_mode=run_mode,
+        adapter_version=str(row.get("adapter_version") or "v1"),
+        field_mapping=mapping,
+        config_version=int(row.get("config_version") or 1),
     )
 
 

@@ -22,3 +22,7 @@ psql "$DATABASE_URL" -f db/schema/030_official_source_settings.sql
 BMKG Open Data gempa aktif secara default. BMKG CAP, InaTEWS, PVMBG, BNPB, dan
 InaRISK tetap nonaktif sampai feed machine-readable dan ketentuan integrasinya
 dikonfirmasi. UI web publik tidak pernah di-scrape.
+
+Onboarding endpoint resmi, adapter version, mapping, preview, dry-run, aktivasi,
+rollback, serta audit administrator dijelaskan di
+[`official-source-onboarding.md`](official-source-onboarding.md).

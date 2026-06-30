@@ -28,6 +28,8 @@ async def test_auto_prefers_custom_url_over_environment(monkeypatch):
     }), "inatews")
     assert setting.api_url == "https://rtsp.bmkg.go.id/custom"
     assert setting.api_token == "secret"
+    assert setting.run_mode == "active"
+    assert setting.adapter_version == "v1"
 
 
 @pytest.mark.asyncio
@@ -39,6 +41,22 @@ async def test_auto_uses_environment_then_default(monkeypatch):
         "custom_api_url": None, "attribution": "BNPB", "api_token": None,
     }), "bnpb")
     assert setting.api_url.endswith("/environment")
+
+
+@pytest.mark.asyncio
+async def test_dry_run_setting_loads_versioned_mapping():
+    setting = await resolve_source_setting(_pool({
+        "source_name": "bnpb", "enabled": True, "mode": "custom_api",
+        "default_api_url": None, "custom_api_url": "https://data.bnpb.go.id/feed",
+        "attribution": "BNPB", "api_token": None, "run_mode": "dry_run",
+        "adapter_version": "v1",
+        "field_mapping": {"report_id": "id", "observed_at": "time.observed"},
+        "config_version": 3,
+    }), "bnpb")
+    assert setting.enabled
+    assert setting.run_mode == "dry_run"
+    assert setting.field_mapping["report_id"] == "id"
+    assert setting.config_version == 3
 
 
 @pytest.mark.asyncio

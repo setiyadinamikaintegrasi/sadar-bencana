@@ -1,0 +1,26 @@
+{
+  "provenance": "synthetic-provisional-contract; replace or supplement with approved official samples",
+  "inatews": {
+    "event_group_id": "202606160327",
+    "bulletin_number": 1,
+    "bulletin_type": "earthquake",
+    "sent_at": "2026-06-16T03:40:00Z"
+  },
+  "pvmbg": {
+    "volcano_id": "semeru",
+    "level": 3,
+    "published_at": "2026-06-30T01:00:00Z",
+    "recommendation": "Ikuti rekomendasi resmi yang diterbitkan sumber."
+  },
+  "bnpb": {
+    "report_id": "provisional-report-1",
+    "observed_at": "2026-06-30T01:00:00Z",
+    "displaced": 20
+  },
+  "inarisk": {
+    "layer_id": "provisional-flood-1",
+    "context_type": "hazard",
+    "data_vintage": "2025-12-31",
+    "attribution": "InaRISK BNPB"
+  }
+}
