@@ -50,7 +50,7 @@ async def test_dry_run_setting_loads_versioned_mapping():
         "default_api_url": None, "custom_api_url": "https://data.bnpb.go.id/feed",
         "attribution": "BNPB", "api_token": None, "run_mode": "dry_run",
         "adapter_version": "v1",
-        "field_mapping": {"report_id": "id", "observed_at": "time.observed"},
+        "field_mapping": '{"report_id":"id","observed_at":"time.observed"}',
         "config_version": 3,
     }), "bnpb")
     assert setting.enabled

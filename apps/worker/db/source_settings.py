@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 
@@ -60,9 +61,12 @@ async def resolve_source_setting(
     else:
         api_url = row["custom_api_url"] or environment_url or row["default_api_url"]
     run_mode = str(row.get("run_mode") or ("active" if row["enabled"] else "disabled"))
+    raw_mapping = row.get("field_mapping") or {}
+    if isinstance(raw_mapping, str):
+        raw_mapping = json.loads(raw_mapping)
     mapping: dict[str, str] = {
         str(key): str(value)
-        for key, value in dict(row.get("field_mapping") or {}).items()
+        for key, value in dict(raw_mapping).items()
     }
     return ResolvedSourceSetting(
         source_name=source_name,
