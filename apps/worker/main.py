@@ -24,6 +24,13 @@ from connectors.gdacs_volcano import GDACSVolcanoConnector
 from connectors.gvp_volcano import GVPVolcanoConnector
 from connectors.hazard import HazardConnector
 from connectors.multi_source import MultiSourceConnector, is_in_indonesia
+from connectors.official_feeds import (
+    ApprovedJSONFeedConnector,
+    normalize_bnpb_impact,
+    normalize_inarisk_context,
+    normalize_inatews,
+    normalize_pvmbg,
+)
 from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
 from connectors.petabencana_flood import PetaBencanaFloodConnector
@@ -35,7 +42,7 @@ from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
-from db.evidence import create_source_record
+from db.evidence import create_impact_report, create_risk_context, create_source_record
 from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
 from db.official_alerts import expire_official_alert_revisions
@@ -43,7 +50,7 @@ from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
-from models.evidence import SourceRecordInput
+from models.evidence import ImpactReportInput, RiskContextInput, SourceRecordInput
 from news_alerts import process_news_alerts
 from observability import disaster_correlation_id, record_observation
 from schedulers.assets import AssetScheduler
@@ -140,6 +147,71 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         await connector.close()
 
 
+async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:
+    created = 0
+    configurations = [
+        ("inatews", "CONNECTOR_INATEWS_ENABLED", "INATEWS_FEED_URL"),
+        ("pvmbg", "CONNECTOR_PVMBG_ENABLED", "PVMBG_FEED_URL"),
+        ("bnpb", "CONNECTOR_BNPB_ENABLED", "BNPB_FEED_URL"),
+        ("inarisk", "CONNECTOR_INARISK_ENABLED", "INARISK_FEED_URL"),
+    ]
+    for source, flag, url_name in configurations:
+        if not _env_enabled(flag):
+            continue
+        url = os.getenv(url_name, "").strip()
+        connector = ApprovedJSONFeedConnector(source, url)
+        try:
+            records = await connector.fetch()
+            for record in records:
+                native_value = (
+                    record.get("event_group_id")
+                    or record.get("volcano_id")
+                    or record.get("report_id")
+                    or record.get("layer_id")
+                )
+                if not native_value:
+                    raise ValueError(f"{source} record is missing a native identifier")
+                native_id = str(native_value)
+                source_row, _ = await create_source_record(
+                    pool,
+                    SourceRecordInput(
+                        source_name=source,
+                        source_record_id=native_id,
+                        source_type="official",
+                        source_url=url,
+                        attribution=str(record.get("attribution") or source.upper()),
+                        raw_payload=record,
+                    ),
+                )
+                if source in {"inatews", "pvmbg"}:
+                    alert = normalize_inatews(record) if source == "inatews" else normalize_pvmbg(record)
+                    _, was_created = await upsert_official_alert(pool, alert)
+                    created += int(was_created)
+                elif source == "bnpb":
+                    await create_impact_report(
+                        pool,
+                        ImpactReportInput(
+                            source_record_id=source_row["id"],
+                            **normalize_bnpb_impact(record),
+                        ),
+                    )
+                else:
+                    await create_risk_context(
+                        pool,
+                        RiskContextInput(
+                            source_record_id=source_row["id"],
+                            **normalize_inarisk_context(record),
+                        ),
+                    )
+            await upsert_connector_health(pool, source, len(records))
+        except Exception as exc:
+            await upsert_connector_health(pool, source, 0, str(exc))
+            logger.warning("%s approved feed failed: %s", source, exc)
+        finally:
+            await connector.close()
+    return created
+
+
 async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     """Run one fetch -> upsert -> score cycle against an active pool.
 
@@ -148,6 +220,7 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     sub-connector in the connector_health table. Raises on any failure.
     """
     official_alerts = await _bmkg_cap_cycle(pool)
+    official_alerts += await _remaining_official_sources_cycle(pool)
 
     # ---- Earthquake sources (BMKG + USGS with geo-aware merge) ----
     bmkg_conn = BMKGConnector()

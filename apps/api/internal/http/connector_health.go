@@ -14,6 +14,10 @@ var connectorThresholds = map[string]int{
 	// Hazard — IngestScheduler every 5 min (300s) × 2
 	"bmkg":       600,
 	"bmkg_cap":   600,
+	"inatews":    600,
+	"pvmbg":      600,
+	"bnpb":       1800,
+	"inarisk":    86400,
 	"usgs":       600,
 	"gdacs_fl":   600,
 	"gdacs_vo":   600,
