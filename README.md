@@ -151,6 +151,9 @@ uvicorn main:app --reload --port 8002  # :8002
 **Catatan start.sh:**
 
 - `start.sh` otomatis membaca `.env.local` dan menjalankan API, Mastra, Web sekaligus.
+- Saat Vite dev server hidup, supervisor lokal memantau port API `8001` dan
+  worker `8002`; service yang berhenti akan dijalankan kembali otomatis.
+  Supervisor hanya aktif pada mode `vite serve`, tidak pada production build.
 - Log disimpan di `.logs/` (api.log, mastra.log, vite.log, worker.log).
 - Hentikan semua: `./stop.sh`
 
