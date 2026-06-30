@@ -16,6 +16,8 @@ Confidence dan freshness default ke 0,5 serta ditandai sebagai default.
 
 Setiap row menyimpan `formula_version`. Faktor JSON menyimpan weights,
 components, input snapshot, fallback flags, peril, severity, dan data vintage.
+Worker memuat context yang tertaut langsung ke event atau polygon context yang
+mencakup koordinat event. Evidence confidence yang masih fresh ikut digunakan.
 Migration:
 
 ```bash
