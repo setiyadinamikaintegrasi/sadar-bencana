@@ -182,21 +182,28 @@ class BMKGCAPConnector:
         self,
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 20.0,
+        rss_url: str = BMKG_CAP_RSS_URL,
+        api_token: str | None = None,
     ) -> None:
         self._client = http_client
         self._timeout = timeout
         self._owns_client = http_client is None
+        self._rss_url = rss_url
+        self._api_token = api_token
 
     async def fetch_active(self) -> tuple[list[OfficialAlertInput], list[str]]:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
                 follow_redirects=True,
-                headers={"User-Agent": BMKG_CAP_USER_AGENT},
+                headers={
+                    "User-Agent": BMKG_CAP_USER_AGENT,
+                    **({"Authorization": f"Bearer {self._api_token}"} if self._api_token else {}),
+                },
             )
         assert self._client is not None
 
-        response = await self._client.get(BMKG_CAP_RSS_URL)
+        response = await self._client.get(self._rss_url)
         response.raise_for_status()
         urls = parse_bmkg_cap_rss(response.text)
 

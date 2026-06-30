@@ -35,3 +35,5 @@ The alert-classification safety migration is:
   backfill jobs from real-time operational tables.
 - `029_ai_regional_analysis_audit.sql` — audits grounded regional analysis
   snapshots, model/prompt versions, outputs, and refusals.
+- `030_official_source_settings.sql` — stores admin-managed source modes,
+  official API URLs, encrypted tokens, attribution, terms, and poll intervals.

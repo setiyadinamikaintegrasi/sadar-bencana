@@ -36,10 +36,12 @@ class BMKGConnector(BaseConnector):
         self,
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 30.0,
+        feed_url: str | None = None,
     ) -> None:
         self._client = http_client
         self._timeout = timeout
         self._owns_client = http_client is None
+        self._feed_url = feed_url
 
     async def fetch_recent(self) -> list[EarthquakeEvent]:
         """Fetch all three BMKG feeds, merge, and de-duplicate events.
@@ -52,11 +54,16 @@ class BMKGConnector(BaseConnector):
         seen: dict[str, EarthquakeEvent] = {}
         errors: list[str] = []
 
-        for label, url in (
-            ("autogempa", self.AUTO_GEMPA_URL),
-            ("gempaterkini", self.GEMPA_TERKINI_URL),
-            ("gempadirasakan", self.GEMPA_DIRASAKAN_URL),
-        ):
+        feeds = (
+            (("custom", self._feed_url),)
+            if self._feed_url
+            else (
+                ("autogempa", self.AUTO_GEMPA_URL),
+                ("gempaterkini", self.GEMPA_TERKINI_URL),
+                ("gempadirasakan", self.GEMPA_DIRASAKAN_URL),
+            )
+        )
+        for label, url in feeds:
             try:
                 payload = await self._fetch_json(url)
             except httpx.HTTPError as exc:

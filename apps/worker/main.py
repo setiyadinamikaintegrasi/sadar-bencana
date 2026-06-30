@@ -48,6 +48,7 @@ from db.news import fetch_news, upsert_news_items
 from db.official_alerts import expire_official_alert_revisions
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
+from db.source_settings import resolve_source_setting
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
 from models.evidence import ImpactReportInput, RiskContextInput, SourceRecordInput
@@ -82,10 +83,17 @@ def _env_enabled(name: str) -> bool:
 
 
 async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
-    if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
-        return 0
+    setting = await resolve_source_setting(pool, "bmkg_cap")
+    if setting is not None:
+        if not setting.enabled or not setting.api_url:
+            return 0
+        rss_url, api_token = setting.api_url, setting.api_token
+    else:
+        if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
+            return 0
+        rss_url, api_token = "https://www.bmkg.go.id/alerts/nowcast/id", None
 
-    connector = BMKGCAPConnector()
+    connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
     try:
         alerts, detail_errors = await connector.fetch_active()
         created = 0
@@ -156,10 +164,17 @@ async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:
         ("inarisk", "CONNECTOR_INARISK_ENABLED", "INARISK_FEED_URL"),
     ]
     for source, flag, url_name in configurations:
-        if not _env_enabled(flag):
-            continue
-        url = os.getenv(url_name, "").strip()
-        connector = ApprovedJSONFeedConnector(source, url)
+        setting = await resolve_source_setting(pool, source)
+        if setting is not None:
+            if not setting.enabled or not setting.api_url:
+                continue
+            url, api_token, attribution = setting.api_url, setting.api_token, setting.attribution
+        else:
+            if not _env_enabled(flag):
+                continue
+            url = os.getenv(url_name, "").strip()
+            api_token, attribution = None, source.upper()
+        connector = ApprovedJSONFeedConnector(source, url, api_token=api_token)
         try:
             records = await connector.fetch()
             for record in records:
@@ -179,7 +194,7 @@ async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:
                         source_record_id=native_id,
                         source_type="official",
                         source_url=url,
-                        attribution=str(record.get("attribution") or source.upper()),
+                        attribution=str(record.get("attribution") or attribution),
                         raw_payload=record,
                     ),
                 )
@@ -223,12 +238,20 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     official_alerts += await _remaining_official_sources_cycle(pool)
 
     # ---- Earthquake sources (BMKG + USGS with geo-aware merge) ----
-    bmkg_conn = BMKGConnector()
+    bmkg_setting = await resolve_source_setting(pool, "bmkg")
+    bmkg_enabled = bmkg_setting is None or bmkg_setting.enabled
+    bmkg_custom_url = (
+        bmkg_setting.api_url
+        if bmkg_setting is not None and bmkg_setting.mode == "custom_api"
+        else None
+    )
+    bmkg_conn = BMKGConnector(feed_url=bmkg_custom_url)
     bmkg_events: list[EarthquakeEvent] = []
-    bmkg_error: str | None = None
+    bmkg_error: str | None = None if bmkg_enabled else "disabled"
     try:
-        bmkg_events = await bmkg_conn.fetch_recent()
-        await upsert_connector_health(pool, "bmkg", len(bmkg_events))
+        if bmkg_enabled:
+            bmkg_events = await bmkg_conn.fetch_recent()
+            await upsert_connector_health(pool, "bmkg", len(bmkg_events))
     except Exception as exc:
         bmkg_error = str(exc)
         await upsert_connector_health(pool, "bmkg", 0, bmkg_error)

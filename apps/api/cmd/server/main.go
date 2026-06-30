@@ -77,6 +77,11 @@ func main() {
 		risk.POST("/api/v1/contracts/import", apihttp.ContractsImport(dbPool, cfg.RiskFreeLimit))
 		risk.GET("/api/v1/accumulation", apihttp.Accumulation(dbPool))
 	}
+	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	{
+		settings.GET("/official-sources", apihttp.OfficialSourceSettingsList(dbPool))
+		settings.PUT("/official-sources/:source", apihttp.OfficialSourceSettingUpdate(dbPool, cfg.OfficialSourceSettingsKey))
+	}
 	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
 	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))

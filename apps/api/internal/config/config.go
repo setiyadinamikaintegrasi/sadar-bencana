@@ -8,28 +8,30 @@ import (
 )
 
 type Config struct {
-	Host              string
-	Port              string
-	Env               string
-	DatabaseURL       string
-	MastraBaseURL     string
-	SupabaseJWTSecret string
-	SupabaseJWKSURL   string
-	RiskFreeLimit     int
-	AIBriefingTimeout time.Duration
+	Host                      string
+	Port                      string
+	Env                       string
+	DatabaseURL               string
+	MastraBaseURL             string
+	SupabaseJWTSecret         string
+	SupabaseJWKSURL           string
+	RiskFreeLimit             int
+	AIBriefingTimeout         time.Duration
+	OfficialSourceSettingsKey string
 }
 
 func Load() Config {
 	return Config{
-		Host:              getEnv("API_HOST", "0.0.0.0"),
-		Port:              getEnv("API_PORT", "8001"),
-		Env:               getEnv("API_ENV", "local"),
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		MastraBaseURL:     getEnv("MASTRA_BASE_URL", "http://127.0.0.1:4111"),
-		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
-		SupabaseJWKSURL:   supabaseJWKSURL(),
-		RiskFreeLimit:     getEnvInt("RISK_FREE_LIMIT", 0),
-		AIBriefingTimeout: getEnvDuration("AI_BRIEFING_TIMEOUT", 150*time.Second),
+		Host:                      getEnv("API_HOST", "0.0.0.0"),
+		Port:                      getEnv("API_PORT", "8001"),
+		Env:                       getEnv("API_ENV", "local"),
+		DatabaseURL:               os.Getenv("DATABASE_URL"),
+		MastraBaseURL:             getEnv("MASTRA_BASE_URL", "http://127.0.0.1:4111"),
+		SupabaseJWTSecret:         getEnv("SUPABASE_JWT_SECRET", ""),
+		SupabaseJWKSURL:           supabaseJWKSURL(),
+		RiskFreeLimit:             getEnvInt("RISK_FREE_LIMIT", 0),
+		AIBriefingTimeout:         getEnvDuration("AI_BRIEFING_TIMEOUT", 150*time.Second),
+		OfficialSourceSettingsKey: getEnv("OFFICIAL_SOURCE_SETTINGS_KEY", ""),
 	}
 }
 

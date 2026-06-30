@@ -109,6 +109,41 @@ export async function getRegionalHistory(code: string): Promise<RegionalHistoryP
   return request<RegionalHistoryProfile>(`/historical/regions/${encodeURIComponent(code)}/profile`)
 }
 
+export type OfficialSourceSetting = {
+  source_name: string
+  display_name: string
+  enabled: boolean
+  mode: 'auto' | 'default_public' | 'custom_api'
+  default_api_url: string | null
+  custom_api_url: string | null
+  has_api_token: boolean
+  attribution: string
+  terms_url: string | null
+  poll_interval_seconds: number
+  notes: string | null
+  updated_at: string
+}
+
+export async function getOfficialSourceSettings(): Promise<OfficialSourceSetting[]> {
+  const response = await request<{ data: OfficialSourceSetting[] }>('/settings/official-sources')
+  return response.data
+}
+
+export async function updateOfficialSourceSetting(
+  source: string,
+  input: {
+    enabled: boolean
+    mode: OfficialSourceSetting['mode']
+    custom_api_url: string | null
+    api_token?: string
+    poll_interval_seconds: number
+  },
+): Promise<void> {
+  await request(`/settings/official-sources/${encodeURIComponent(source)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  })
+}
+
 export type NewsItem = {
   id: string
   item_id: string

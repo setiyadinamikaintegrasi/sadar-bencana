@@ -27,18 +27,22 @@ def validate_official_feed_url(source: str, url: str) -> None:
 
 
 class ApprovedJSONFeedConnector:
-    def __init__(self, source: str, url: str, client: httpx.AsyncClient | None = None):
+    def __init__(self, source: str, url: str, client: httpx.AsyncClient | None = None, api_token: str | None = None):
         validate_official_feed_url(source, url)
         self.source, self.url = source, url
         self.client = client
         self.owns_client = client is None
+        self.api_token = api_token
 
     async def fetch(self) -> list[dict[str, Any]]:
         if self.client is None:
+            headers = {"User-Agent": "SadarBencana/0.4 official-source-connector"}
+            if self.api_token:
+                headers["Authorization"] = f"Bearer {self.api_token}"
             self.client = httpx.AsyncClient(
                 timeout=30,
                 follow_redirects=False,
-                headers={"User-Agent": "SadarBencana/0.4 official-source-connector"},
+                headers=headers,
             )
         response = await self.client.get(self.url)
         response.raise_for_status()
