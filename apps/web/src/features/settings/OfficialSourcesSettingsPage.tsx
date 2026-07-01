@@ -5,12 +5,14 @@ import {
   getOfficialSourceHistory,
   getOfficialSourceSettings,
   previewOfficialSource,
+  previewBMKGDataOnlineWorkbook,
   rollbackOfficialSource,
   testOfficialSource,
   updateOfficialSourceSetting,
   type OfficialSourceHistory,
   type OfficialSourcePreview,
   type OfficialSourceSetting,
+  type BMKGWorkbookPreview,
 } from '../../lib/api/client'
 import { useAuth } from '../../lib/auth/AuthProvider'
 import LoginGate from '../ews/LoginGate'
@@ -56,6 +58,8 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
   const [messages, setMessages] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [bmkgFile, setBmkgFile] = useState<File | null>(null)
+  const [bmkgPreview, setBmkgPreview] = useState<BMKGWorkbookPreview | null>(null)
 
   const load = async () => {
     try {
@@ -165,6 +169,22 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
     }))
   })
 
+  const previewBMKGWorkbook = async () => {
+    if (!bmkgFile) {
+      setError('Pilih file XLSX hasil unduhan BMKG Data Online.')
+      return
+    }
+    setBusy('bmkg-data-online')
+    setError(null)
+    try {
+      setBmkgPreview(await previewBMKGDataOnlineWorkbook(bmkgFile))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Preview XLSX BMKG gagal.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <section className="mx-auto max-w-6xl space-y-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -180,6 +200,46 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
         </button>
       </header>
       {error ? <p role="alert" className="rounded-lg bg-rose-500/10 p-3 text-rose-300">{error}</p> : null}
+      <article className="rounded-xl border border-sky-500/30 bg-slate-900 p-5">
+        <h2 className="font-semibold">BMKG Data Online — Historical XLSX</h2>
+        <p className="mt-1 text-xs text-slate-400">
+          Preview membaca workbook di memori dan tidak menyimpan payload. Impor dinonaktifkan sampai administrative boundary resmi tersedia.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <input
+            aria-label="File XLSX BMKG Data Online"
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={(event) => {
+              setBmkgFile(event.target.files?.[0] ?? null)
+              setBmkgPreview(null)
+            }}
+            className="max-w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-slate-200"
+          />
+          <button
+            type="button"
+            onClick={() => { void previewBMKGWorkbook() }}
+            disabled={!bmkgFile || busy === 'bmkg-data-online'}
+            className="rounded-lg border border-sky-500/40 px-3 py-2 text-sm text-sky-200 disabled:opacity-40"
+          >
+            {busy === 'bmkg-data-online' ? 'Memeriksa…' : 'Preview XLSX'}
+          </button>
+        </div>
+        {bmkgPreview ? (
+          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs">
+            <p className="text-emerald-300">
+              {bmkgPreview.record_count} record valid · {bmkgPreview.error_count} invalid · header baris {bmkgPreview.header_row} · payload_stored=false
+            </p>
+            <p className="mt-1 text-amber-300">
+              Boundary: {bmkgPreview.boundary_status}. Record belum dapat diimpor ke warehouse sebelum kode wilayah terselesaikan.
+            </p>
+            <details className="mt-3">
+              <summary className="cursor-pointer">Contoh hasil normalisasi</summary>
+              <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify(bmkgPreview.sample, null, 2)}</pre>
+            </details>
+          </div>
+        ) : null}
+      </article>
       <div className="space-y-4">
         {items.map((item) => {
           const result = previews[item.source_name]

@@ -243,6 +243,38 @@ export async function testOfficialSource(source: string): Promise<{
   return response.data
 }
 
+export type BMKGWorkbookPreview = {
+  payload_checksum: string
+  payload_stored: false
+  header_row: number
+  field_mapping: Record<string, number>
+  record_count: number
+  error_count: number
+  boundary_status: 'unavailable' | 'available' | 'not_applicable'
+  sample: {
+    source_record_id: string
+    occurred_at: string
+    latitude: number
+    longitude: number
+    depth_km: number | null
+    magnitude: number
+    administrative_code: string | null
+  }[]
+  errors: { sheet_row: number; error: string }[]
+}
+
+export async function previewBMKGDataOnlineWorkbook(file: File): Promise<BMKGWorkbookPreview> {
+  const response = await request<{ data: BMKGWorkbookPreview }>(
+    '/settings/historical/bmkg-data-online/preview',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      body: file,
+    },
+  )
+  return response.data
+}
+
 export type NewsItem = {
   id: string
   item_id: string

@@ -41,3 +41,5 @@ The alert-classification safety migration is:
   auditable rejection queue for resumable official JSON/CSV backfills.
 - `032_official_source_onboarding.sql` — versions source adapters and mappings,
   adds dry-run activation gates, rollback snapshots, and administrator audit.
+- `033_bmkg_data_online_import.sql` — adds boundary bounding boxes, import-batch
+  audit, and safe staging for BMKG Data Online XLSX records.

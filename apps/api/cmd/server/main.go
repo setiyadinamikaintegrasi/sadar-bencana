@@ -87,6 +87,7 @@ func main() {
 		settings.POST("/official-sources/:source/activate", apihttp.OfficialSourceActivate(dbPool))
 		settings.POST("/official-sources/:source/rollback", apihttp.OfficialSourceRollback(dbPool))
 		settings.GET("/official-sources/:source/history", apihttp.OfficialSourceHistory(dbPool))
+		settings.POST("/historical/bmkg-data-online/preview", apihttp.BMKGDataOnlinePreview(dbPool, cfg.WorkerBaseURL))
 	}
 	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
 	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
