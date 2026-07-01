@@ -12,10 +12,40 @@ import {
   type OfficialSourcePreview,
   type OfficialSourceSetting,
 } from '../../lib/api/client'
+import { useAuth } from '../../lib/auth/AuthProvider'
+import LoginGate from '../ews/LoginGate'
 
 const inputClass = 'mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2'
 
 export default function OfficialSourcesSettingsPage() {
+  const { session, loading, signOut } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-700 border-t-indigo-400" />
+      </div>
+    )
+  }
+  if (!session) {
+    return (
+      <LoginGate
+        title="Pengaturan Sumber Resmi"
+        subtitleIn="Masuk dengan akun admin untuk mengelola konektor sumber resmi."
+        subtitleUp="Akses halaman ini hanya diberikan kepada admin yang disetujui."
+      />
+    )
+  }
+
+  return (
+    <OfficialSourcesSettingsContent
+      email={session.user.email ?? 'admin'}
+      onSignOut={() => { void signOut() }}
+    />
+  )
+}
+
+function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; onSignOut: () => void }) {
   const [items, setItems] = useState<OfficialSourceSetting[]>([])
   const [tokens, setTokens] = useState<Record<string, string>>({})
   const [mappingDrafts, setMappingDrafts] = useState<Record<string, string>>({})
@@ -36,7 +66,10 @@ export default function OfficialSourcesSettingsPage() {
       ))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat pengaturan.')
+      const message = err instanceof Error ? err.message : 'Gagal memuat pengaturan.'
+      setError(message.includes('403')
+        ? `Akun ${email} tidak memiliki akses admin untuk pengaturan sumber resmi.`
+        : message)
     }
   }
   useEffect(() => { void load() }, [])
@@ -134,11 +167,17 @@ export default function OfficialSourcesSettingsPage() {
 
   return (
     <section className="mx-auto max-w-6xl space-y-5">
-      <header>
-        <h1 className="text-2xl font-bold">Pengaturan Sumber Resmi</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Preview tidak menyimpan payload. Konfigurasi baru wajib melewati dry-run pada versi yang sama sebelum aktivasi.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Pengaturan Sumber Resmi</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            Preview tidak menyimpan payload. Konfigurasi baru wajib melewati dry-run pada versi yang sama sebelum aktivasi.
+          </p>
+          <p className="mt-1 text-xs text-slate-500">{email}</p>
+        </div>
+        <button type="button" onClick={onSignOut} className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-600">
+          Logout
+        </button>
       </header>
       {error ? <p role="alert" className="rounded-lg bg-rose-500/10 p-3 text-rose-300">{error}</p> : null}
       <div className="space-y-4">
