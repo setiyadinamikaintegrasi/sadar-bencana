@@ -13,6 +13,7 @@ type Config struct {
 	Env                       string
 	DatabaseURL               string
 	MastraBaseURL             string
+	WorkerBaseURL             string
 	SupabaseJWTSecret         string
 	SupabaseJWKSURL           string
 	RiskFreeLimit             int
@@ -27,6 +28,7 @@ func Load() Config {
 		Env:                       getEnv("API_ENV", "local"),
 		DatabaseURL:               os.Getenv("DATABASE_URL"),
 		MastraBaseURL:             getEnv("MASTRA_BASE_URL", "http://127.0.0.1:4111"),
+		WorkerBaseURL:             getEnv("WORKER_BASE_URL", "http://127.0.0.1:8002"),
 		SupabaseJWTSecret:         getEnv("SUPABASE_JWT_SECRET", ""),
 		SupabaseJWKSURL:           supabaseJWKSURL(),
 		RiskFreeLimit:             getEnvInt("RISK_FREE_LIMIT", 0),

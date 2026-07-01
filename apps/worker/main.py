@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any
 
 import asyncpg
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from uuid import UUID
 from fastapi.responses import JSONResponse
@@ -693,6 +694,34 @@ async def regional_analysis(request: RegionalAnalysisRequest) -> dict[str, Any]:
 async def historical_backfill(job_id: UUID) -> dict[str, Any]:
     from historical_backfill import run_backfill_job
     return {"data": await run_backfill_job(get_pool(), job_id)}
+
+
+@app.post("/api/v1/worker/imports/bmkg-data-online/preview")
+async def bmkg_data_online_preview(request: Request) -> dict[str, Any]:
+    """Parse a BMKG workbook without persisting its payload or records."""
+    from importers.bmkg_data_online import MAX_XLSX_BYTES, parse_bmkg_data_online_xlsx
+
+    content_length = int(request.headers.get("content-length", "0") or 0)
+    if content_length > MAX_XLSX_BYTES:
+        raise HTTPException(status_code=413, detail="BMKG XLSX exceeds 10MB limit")
+    content = await request.body()
+    try:
+        result = parse_bmkg_data_online_xlsx(content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "data": {
+            "payload_checksum": hashlib.sha256(content).hexdigest(),
+            "payload_stored": False,
+            "header_row": result["header_row"],
+            "field_mapping": result["field_mapping"],
+            "record_count": result["record_count"],
+            "error_count": result["error_count"],
+            "boundary_status": "unavailable" if result["record_count"] else "not_applicable",
+            "sample": result["records"][:10],
+            "errors": result["errors"][:50],
+        }
+    }
 
 
 @app.get("/api/v1/worker/events")

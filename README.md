@@ -357,6 +357,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[AI Analysis Evaluation](docs/ai-analysis-evaluation.md)** — numerical consistency, citation coverage, refusal, dan human rubric
 - **[Official Source Settings](docs/official-source-settings.md)** — mode Auto/default/custom, encrypted token, admin access, dan URL allowlist
 - **[Historical Backfill Runner](docs/historical-backfill-runner.md)** — JSON/CSV resmi, checkpoint, idempotency, dan rejection queue
+- **[BMKG Data Online Import](docs/bmkg-data-online-import.md)** — preview XLSX historis, staging unresolved, boundary mapping, dan audit
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 - **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
