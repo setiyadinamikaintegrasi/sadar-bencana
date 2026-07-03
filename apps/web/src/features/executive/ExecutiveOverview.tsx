@@ -4,6 +4,7 @@ import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import RiskMap from '../../components/RiskMap'
 import NewsPanel from '../../components/NewsPanel'
+import LiveVideoDesk from './LiveVideoDesk'
 import {
   getAlerts,
   getConnectorHealth,
@@ -51,27 +52,6 @@ const perilLabels: Record<string, string> = {
   wildfire: 'Karhutla',
   volcano: 'Vulkanik',
 }
-
-const liveVideoSources = [
-  {
-    name: 'KOMPAS TV Live',
-    description: 'Breaking news Indonesia dan update nasional 24 jam.',
-    href: 'https://www.youtube.com/@kompastvnews/streams',
-    badge: 'YouTube',
-  },
-  {
-    name: 'Metro TV Live',
-    description: 'Siaran berita nasional dan breaking news.',
-    href: 'https://www.youtube.com/@METROTV/streams',
-    badge: 'YouTube',
-  },
-  {
-    name: 'CNBC Indonesia',
-    description: 'Market, ekonomi, dan sentimen industri real-time.',
-    href: 'https://www.youtube.com/@cnbcindonesia/streams',
-    badge: 'Markets',
-  },
-]
 
 function severityFor(magnitude: number): Severity {
   if (magnitude >= 6) return 'Critical'
@@ -457,41 +437,7 @@ export default function ExecutiveOverview() {
           </div>
         </article>
 
-        <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-50">Live Video Desk</h3>
-              <p className="text-xs text-slate-500">Kanal resmi/free untuk monitoring manual cepat.</p>
-            </div>
-            <span className="rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-300">
-              LIVE
-            </span>
-          </div>
-          <div className="space-y-3">
-            {liveVideoSources.map((source) => (
-              <a
-                key={source.name}
-                href={source.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group block rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-indigo-400/50 hover:bg-slate-800/80"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-slate-100 group-hover:text-indigo-200">▶ {source.name}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">{source.description}</p>
-                  </div>
-                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] text-slate-400">
-                    {source.badge}
-                  </span>
-                </div>
-              </a>
-            ))}
-          </div>
-          <p className="mt-4 rounded-xl border border-amber-400/20 bg-amber-500/10 p-3 text-xs leading-5 text-amber-100/80">
-            Catatan: stream dibuka di tab baru agar tidak terganggu kebijakan iframe, copyright, atau perubahan URL live.
-          </p>
-        </article>
+        <LiveVideoDesk />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
