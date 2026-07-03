@@ -1,12 +1,39 @@
-# SadarBencana — Risk Monitor
+# SadarBencana
 
-Platform monitoring risiko bencana dengan sistem early warning terintegrasi. Menggabungkan data eksternal (BMKG, USGS, GDACS, NASA FIRMS, GVP, PetaBencana, berita) dan data internal untuk menghasilkan monitoring event, risk scoring, early warning system (EWS), dan executive dashboard yang dapat diaudit.
+Platform open-source untuk monitoring risiko bencana dan early warning. SadarBencana
+menggabungkan sumber publik, feed resmi yang diizinkan, dan data internal untuk
+menghasilkan monitoring event, risk scoring, historical intelligence, EWS, serta
+executive dashboard yang dapat diaudit.
 
 **Greenfield project** — dibangun dari nol tanpa memakai codebase AGPL, dengan fokus pada enterprise-readiness (RBAC, audit trail, explainability, source traceability).
+
+> **Batas keselamatan:** SadarBencana adalah alat monitoring dan pendukung
+> keputusan, bukan pengganti peringatan atau arahan evakuasi dari BMKG, BNPB,
+> PVMBG, BPBD, dan instansi berwenang lainnya. Aplikasi tidak memprediksi waktu
+> atau lokasi gempa.
 
 ## Tampilan Aplikasi
 
 ![Dashboard SadarBencana](docs/images/sadar-bencana-dashboard.png)
+
+## Fitur Utama
+
+- dashboard situational awareness untuk gempa, banjir, gunung api, dan karhutla;
+- ingest sumber publik BMKG, USGS, GDACS, NASA FIRMS, Smithsonian GVP,
+  PetaBencana, serta RSS berita;
+- lifecycle peringatan resmi: active, update, expiry, dan cancellation;
+- evidence correlation, source authority, freshness, confidence policy, dan
+  risk scoring yang dapat dijelaskan;
+- EWS berbasis watch zone dengan action card, acknowledgement, retry,
+  dead-letter, dan notifikasi multi-channel;
+- historical disaster warehouse, profil wilayah, seasonal analytics, dan AI
+  regional analyst yang hanya menggunakan snapshot terstruktur;
+- pengaturan sumber resmi dengan adapter terversi, configurable field mapping,
+  preview tanpa penyimpanan, dry-run/shadow, activation gate, rollback, dan
+  audit administrator;
+- preview XLSX historis BMKG Data Online dengan checksum dan staging aman untuk
+  record yang belum memiliki administrative boundary;
+- daftar risiko privat per-user dan accumulation analysis.
 
 ## Model Open-Core / Freemium
 
@@ -21,8 +48,9 @@ Proyek ini menggunakan model hybrid: satu codebase dengan perilaku yang dapat di
 |---|---|---|
 | **Daftar Risiko** | ✅ | Risiko privat per-user, tidak terlihat user lain. Data di-scope ke `auth_user_id` |
 | **EWS** (Early Warning System) | ✅ | Monitoring alert dan early warning |
+| **Sumber Resmi** | ✅ Admin | Konfigurasi feed, token, preview, dry-run, rollback, dan audit |
 | Executive Overview | ❌ | Public dashboard |
-| Events, Alerts, Briefing | ❌ | Public |
+| Events, Alerts, Briefing, Riwayat Wilayah | ❌ | Public |
 | AI Copilot | ❌ | Public |
 | Source Health | ❌ | Public |
 
@@ -41,8 +69,8 @@ Jika kebutuhan Anda melebihi `RISK_FREE_LIMIT` di hosting publik, Anda dapat men
 | Backend API | Go + Gin | 1.25 + gin |
 | Data Access | database/sql + pgx | sql, pgx |
 | Worker / Ingestion | Python + FastAPI | 3.11+ + uvicorn |
-| AI / Briefing | TypeScript + Mastra | Latest |
-| Database | PostgreSQL | 16 |
+| AI / Briefing | TypeScript + Mastra | sesuai lockfile |
+| Database | Supabase Postgres / PostgreSQL | kompatibel PostgreSQL 16 |
 | Cache | Redis | 7 |
 | Auth | Supabase Auth (JWT ES256) | — |
 | Package Manager | npm (monorepo workspaces) | v10+ (Node 20+) |
@@ -57,7 +85,6 @@ Jika kebutuhan Anda melebihi `RISK_FREE_LIMIT` di hosting publik, Anda dapat men
 | **API** (Go) | 8001 | Business API `/api/v1/*` |
 | **Worker** (FastAPI) | 8002 | Ingestion, scoring, AI briefing |
 | **Mastra AI** | 4111 | AI assistant backend (local dev saja) |
-| **PostgreSQL** | 5433 (host) → 5432 (container) | Database |
 | **Redis** | 6379 | Cache |
 
 ---
@@ -82,8 +109,8 @@ cd sadar-bencana
 # 2. Copy .env.example ke .env
 cp .env.example .env
 
-# 3. (Opsional) Sesuaikan nilai di .env
-# Edit .env untuk mengubah POSTGRES_PASSWORD, TELEGRAM_BOT_TOKEN, dll.
+# 3. Isi DATABASE_URL dan konfigurasi Supabase di .env
+# Tambahkan token notifikasi atau sumber resmi hanya jika diperlukan.
 
 # 4. Jalankan docker compose
 docker compose up -d
@@ -113,15 +140,9 @@ npm install
 # 3. Jalankan Redis saja dalam container
 docker compose up -d redis
 
-# 4. Copy .env.example dan buat .env.local
+# 4. Copy .env.example menjadi .env.local, lalu edit nilainya
 cp .env.example .env
-cat > .env.local << 'EOF'
-# .env.local: hanya untuk pengembangan lokal
-DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_JWT_SECRET=your-jwt-secret-here
-RISK_FREE_LIMIT=0
-EOF
+cp .env.example .env.local
 
 # 5a. Jalankan semua service sekaligus (recommended)
 ./start.sh
@@ -169,10 +190,16 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `SUPABASE_URL`, `SUPABASE_JWT_SECRET` — konfigurasi Supabase Auth/JWT
 - `REDIS_URL` — koneksi Redis
 - `API_HOST`, `API_PORT`, `API_ENV` — konfigurasi API
+- `WORKER_BASE_URL` — alamat internal worker untuk proxy operasi import/preview
 - `LLM_BASE_URL`, `LLM_TIMEOUT`, `LLM_MODEL` — integrasi llama.cpp (opsional)
 - `VITE_API_BASE_URL` — base URL API untuk Vite (default: `/api/v1`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — delivery alert Telegram (opsional)
 - `CONNECTOR_BMKG_CAP_ENABLED` — ingest peringatan dini cuaca CAP BMKG; aktifkan setelah migration 019 dan 021
+- `CONNECTOR_INATEWS_ENABLED`, `INATEWS_FEED_URL` — bulletin InaTEWS yang telah diizinkan
+- `CONNECTOR_PVMBG_ENABLED`, `PVMBG_FEED_URL` — advisory PVMBG/MAGMA yang telah diizinkan
+- `CONNECTOR_BNPB_ENABLED`, `BNPB_FEED_URL` — situation report BNPB yang telah diizinkan
+- `CONNECTOR_INARISK_ENABLED`, `INARISK_FEED_URL` — enrichment InaRISK yang telah diizinkan
+- `OFFICIAL_SOURCE_SETTINGS_KEY` — kunci enkripsi token sumber resmi di database
 - `EVIDENCE_CORRELATION_ENABLED` — shadow-mode correlation; aktifkan setelah migration 022
 - `AISSTREAM_API_KEY`, `VESSELFINDER_API_KEY`, `OPENSKY_*` — tracking maritim & penerbangan (opsional)
 - `FONNTE_API_TOKEN` — WhatsApp via Fonnte (opsional)
@@ -200,6 +227,7 @@ RISK_FREE_LIMIT=0
 # API_PORT=8001
 # API_ENV=local
 # MASTRA_BASE_URL=http://127.0.0.1:4111
+# WORKER_BASE_URL=http://127.0.0.1:8002
 ```
 
 ### `apps/web/.env.local` (untuk frontend, gitignored)
@@ -255,9 +283,56 @@ Jika menggunakan Supabase untuk autentikasi (recommended untuk production):
 
 ---
 
+## Sumber Data
+
+### Sumber publik default
+
+Instalasi dapat menggunakan sumber yang tidak membutuhkan kredensial khusus:
+
+- BMKG Open Data untuk gempa Indonesia;
+- USGS sebagai cakupan/fallback gempa global;
+- GDACS untuk alert bencana global;
+- NASA FIRMS untuk hotspot;
+- Smithsonian GVP untuk aktivitas gunung api;
+- PetaBencana untuk laporan banjir;
+- RSS berita sebagai evidence pendukung, bukan sumber tunggal alert kritis.
+
+Selalu tampilkan attribution dan URL sumber. Ketersediaan endpoint publik dapat
+berubah; source-health akan menandai sumber stale/error tanpa mengubah berita
+menjadi peringatan resmi.
+
+### Feed resmi yang memerlukan izin atau konfigurasi
+
+InaTEWS, PVMBG/MAGMA, BNPB, dan InaRISK **default disabled**. Jangan mengaktifkan
+connector dengan endpoint hasil scraping atau endpoint yang belum diizinkan.
+Setelah memperoleh izin:
+
+1. login sebagai admin dan buka **Sumber Resmi**;
+2. pilih adapter version dan masukkan endpoint/token;
+3. jalankan Preview;
+4. simpan konfigurasi sebagai dry-run/shadow;
+5. aktifkan hanya jika contract test dan dry-run pada config version yang sama
+   berhasil.
+
+Token dienkripsi menggunakan `OFFICIAL_SOURCE_SETTINGS_KEY`. Preview tidak
+menyimpan payload. Perubahan konfigurasi, aktivasi, dan rollback dicatat dengan
+identitas administrator.
+
+BMKG Data Online saat ini digunakan sebagai sumber unduhan historis XLSX, bukan
+sebagai API credential. Preview XLSX tersedia di halaman **Sumber Resmi**.
+Impor final baru dapat dilakukan setelah titik gempa dipetakan ke administrative
+boundary resmi dan terversi.
+
+Lihat [Pengaturan Sumber Resmi](docs/official-source-settings.md),
+[Onboarding Sumber Resmi](docs/official-source-onboarding.md), dan
+[Impor BMKG Data Online](docs/bmkg-data-online-import.md).
+
+---
+
 ## Migrasi Database
 
-File migrasi SQL tersimpan di `db/schema/` (`001_init.sql`, `002_*.sql`, …, `021_source_evidence_model.sql`). Terapkan **berurutan** menurut nomor.
+File migrasi SQL tersimpan di `db/schema/` (`001_init.sql` sampai
+`033_bmkg_data_online_import.sql`). Terapkan **berurutan** menurut nomor.
 
 ### Untuk Docker Compose
 
@@ -270,7 +345,7 @@ Terapkan migrasi langsung ke database Supabase/Postgres target:
 ```bash
 # Untuk setiap file migrasi (001_init.sql, 002_*, etc.) jalankan ke Supabase:
 psql "$DATABASE_URL" -f db/schema/001_init.sql
-psql "$DATABASE_URL" -f db/schema/002_*.sql
+psql "$DATABASE_URL" -f db/schema/002_briefings.sql
 # ... lanjutkan untuk semua file
 ```
 
@@ -356,11 +431,11 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Remaining Official Sources](docs/remaining-official-sources.md)** — approved-feed contract InaTEWS, PVMBG, BNPB, dan InaRISK
 - **[AI Analysis Evaluation](docs/ai-analysis-evaluation.md)** — numerical consistency, citation coverage, refusal, dan human rubric
 - **[Official Source Settings](docs/official-source-settings.md)** — mode Auto/default/custom, encrypted token, admin access, dan URL allowlist
+- **[Official Source Onboarding](docs/official-source-onboarding.md)** — adapter version, configurable mapping, preview, dry-run, activation, rollback, dan audit
 - **[Historical Backfill Runner](docs/historical-backfill-runner.md)** — JSON/CSV resmi, checkpoint, idempotency, dan rejection queue
 - **[BMKG Data Online Import](docs/bmkg-data-online-import.md)** — preview XLSX historis, staging unresolved, boundary mapping, dan audit
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
-- **[Migration Roadmap](docs/migration/2026-06-26-supabase-cloudflare-roadmap.md)** — roadmap migrasi Supabase + Cloudflare Workers
 
 ---
 
