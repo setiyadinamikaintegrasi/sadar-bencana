@@ -9,16 +9,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.74",
-    "@mastra/ai-sdk": "^1.5.0",
-    "@mastra/core": "^1.45.0",
-    "@mastra/libsql": "^1.14.0",
-    "ai": "^5.0.74",
+    "@ai-sdk/openai": "^3.0.80",
+    "@mastra/ai-sdk": "^1.6.1",
+    "@mastra/core": "^1.49.0",
+    "@mastra/libsql": "^1.15.0",
+    "ai": "^6.0.219",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "mastra": "^1.15.0",
+    "mastra": "^1.18.0",
     "typescript": "^5.9.2"
   }
 }

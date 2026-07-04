@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Truncated Supabase examples in historical README revisions"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = [
+  "aa770d7e12a270b0092ccb0e953c7b6e9a7df3f4",
+  "63c38a689bc15d273c1cef8176409b5b186128df",
+]
+paths = [
+  '''README\.md$''',
+]

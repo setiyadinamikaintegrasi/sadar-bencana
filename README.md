@@ -434,6 +434,7 @@ Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 - **[Official Source Onboarding](docs/official-source-onboarding.md)** — adapter version, configurable mapping, preview, dry-run, activation, rollback, dan audit
 - **[Historical Backfill Runner](docs/historical-backfill-runner.md)** — JSON/CSV resmi, checkpoint, idempotency, dan rejection queue
 - **[BMKG Data Online Import](docs/bmkg-data-online-import.md)** — preview XLSX historis, staging unresolved, boundary mapping, dan audit
+- **[Dependency Risk Register](docs/security/dependency-risk-register.md)** — advisory dependency yang diterima sementara beserta kontrol dan jadwal review
 - **[Architecture](docs/architecture/2026-06-21-technical-architecture.md)** — arsitektur teknis sistem
 - **[Disaster Intelligence Roadmap](docs/roadmap/2026-06-29-disaster-intelligence-improvement-roadmap.md)** — tahapan source resmi, historical intelligence, dan AI analyst
 
@@ -484,7 +485,7 @@ cd apps/worker && pip install -r requirements.txt
 
 ## Lisensi
 
-Proyek ini dirilis di bawah lisensi **[Apache License 2.0](LICENSE)** — lisensi permisif dengan klausul hibah paten eksplisit. Anda bebas menggunakan, memodifikasi, dan menjalankan instance self-hosted Anda sendiri.
+Proyek ini dirilis di bawah lisensi **[Apache License 2.0](LICENSE)** — lisensi permisif dengan klausul hibah paten eksplisit. Anda bebas menggunakan, memodifikasi, dan menjalankan instance self-hosted Anda sendiri. Informasi atribusi tersedia pada [NOTICE](NOTICE).
 
 ---
 
@@ -493,6 +494,10 @@ Proyek ini dirilis di bawah lisensi **[Apache License 2.0](LICENSE)** — lisens
 Untuk pertanyaan, issue, atau kontribusi:
 
 - Baca **[CONTRIBUTING.md](CONTRIBUTING.md)** sebelum mengirim Pull Request
+- Baca **[SUPPORT.md](SUPPORT.md)** untuk memilih kanal bantuan yang tepat
+- Laporkan kerentanan secara privat sesuai **[SECURITY.md](SECURITY.md)**
+- Patuhi **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** dalam seluruh ruang komunitas
+- Lihat **[CHANGELOG.md](CHANGELOG.md)** untuk perubahan penting antarversi
 - Laporkan bug atau usulkan fitur lewat **[GitHub Issues](../../issues)** (tersedia template Laporan Bug & Usulan Fitur)
 - Pertanyaan umum & ide: gunakan **GitHub Discussions**
 

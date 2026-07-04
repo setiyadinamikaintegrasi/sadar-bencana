@@ -1,6 +1,6 @@
-# Panduan Kontribusi
+# Panduan Kontribusi SadarBencana
 
-Terima kasih atas minat Anda berkontribusi ke **Risk Monitor (RM)**. Dokumen ini menjelaskan cara menyiapkan lingkungan, gaya kode, dan alur kerja kontribusi.
+Terima kasih atas minat Anda berkontribusi ke **SadarBencana**. Dokumen ini menjelaskan cara menyiapkan lingkungan, gaya kode, dan alur kerja kontribusi.
 
 Proyek ini berlisensi [Apache-2.0](LICENSE). Dengan mengirim kontribusi, Anda setuju kontribusi tersebut dilisensikan di bawah lisensi yang sama.
 
@@ -95,7 +95,10 @@ Sebutkan di deskripsi PR perintah verifikasi mana yang sudah Anda jalankan dan h
 
 ## Keamanan
 
-Jangan pernah commit secret (token Supabase, kredensial DB, API key). Berkas `.env`, `.env.local`, dan turunannya sudah di-`.gitignore` — jaga tetap demikian. Jika menemukan kerentanan keamanan, jangan buka Issue publik; hubungi pemilik proyek secara privat.
+Jangan pernah commit secret (token Supabase, kredensial DB, API key). Berkas
+`.env` dan seluruh variasinya sudah di-`.gitignore`; hanya template
+`.env.example` yang boleh dilacak. Jika menemukan kerentanan keamanan, ikuti
+[SECURITY.md](SECURITY.md) dan jangan membuka Issue publik.
 
 ---
 

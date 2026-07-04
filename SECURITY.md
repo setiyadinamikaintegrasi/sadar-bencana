@@ -9,14 +9,31 @@
 
 ## Melaporkan Kerentanan
 
-**Jangan melaporkan kerentanan keamanan melalui Pull Request atau diskusi publik.**
+**Jangan melaporkan detail kerentanan melalui Issue, Pull Request, atau
+Discussion publik.**
 
-Laporkan kerentanan melalui:
-👉 **[GitHub Issues](../../issues/new?template=bug_report.md)** dengan label `security` (beri judul yang tidak mengungkap detail teknis kerentanan).
+Gunakan salah satu kanal privat berikut:
 
-Tim akan merespons dalam **3 hari kerja** dan berkoordinasi dengan pelapor untuk:
+- **[GitHub Private Vulnerability Reporting](https://github.com/setiyadinamikaintegrasi/sadar-bencana/security/advisories/new)**; atau
+- email **info@setiyadinamika.id** bila formulir privat GitHub belum tersedia.
+
+Sertakan deskripsi, langkah reproduksi minimal, dampak, versi/commit terdampak,
+dan saran mitigasi bila ada. Jangan sertakan credential atau data pribadi
+produksi.
+
+Maintainer akan memberikan konfirmasi awal paling lambat **3 hari kerja** dan
+berkoordinasi dengan pelapor untuk:
+
 1. Memverifikasi dan mereproduksi kerentanan
 2. Menyiapkan perbaikan
-3. Merilis patch dan mengungkap detail setelah perbaikan tersedia (responsible disclosure)
+3. Merilis patch dan mengungkap detail setelah perbaikan tersedia
+   (*coordinated disclosure*)
+
+## Batasan
+
+SadarBencana merupakan perangkat monitoring dan pendukung keputusan, bukan
+pengganti peringatan atau arahan instansi berwenang. Temuan yang hanya berkaitan
+dengan akurasi sumber eksternal, tanpa dampak keamanan pada aplikasi, dapat
+dilaporkan sebagai Issue biasa tanpa menyertakan informasi sensitif.
 
 Terima kasih telah membantu menjaga keamanan proyek ini.

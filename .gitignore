@@ -13,9 +13,9 @@ dist/
 .vite/
 
 # Env & secrets
-.env
-.env.local
-.env.*.local
+.env*
+!.env.example
+!**/.env.example
 # Local docker-compose dev env (contains dev DB credentials) — keep .env.example tracked
 infra/local/.env
 

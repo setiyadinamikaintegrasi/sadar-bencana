@@ -27,7 +27,11 @@ Kode etik ini berlaku di semua ruang proyek — repository, issue, pull request,
 
 ## Pelaporan
 
-Laporkan perilaku yang tidak pantas melalui [GitHub Issues](../../issues) dengan label `conduct`. Semua laporan akan ditangani secara rahasia.
+Laporkan perilaku yang tidak pantas secara privat ke
+**info@setiyadinamika.id**. Jangan membuka Issue publik untuk laporan yang
+memuat identitas, percakapan privat, atau informasi sensitif. Maintainer akan
+menjaga kerahasiaan laporan sejauh memungkinkan dan memberi tahu pelapor
+tentang tindak lanjut yang relevan.
 
 ---
 
