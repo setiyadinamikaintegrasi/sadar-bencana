@@ -30,10 +30,30 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the Supabase pooled connection string}
       SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:?Set SUPABASE_JWT_SECRET}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
       MASTRA_BASE_URL: ${MASTRA_BASE_URL:-http://mastra:4111}
+      WORKER_BASE_URL: ${WORKER_BASE_URL:-http://worker:8002}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-community}
+      PERSONAL_ASSET_LIMIT: ${PERSONAL_ASSET_LIMIT:-20}
+      ENTITLEMENT_PUBLIC_KEY: ${ENTITLEMENT_PUBLIC_KEY:-}
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:-https://nominatim.openstreetmap.org}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:-SadarBencana/0.1}
+      RISK_FREE_LIMIT: ${RISK_FREE_LIMIT:-0}
+      OFFICIAL_SOURCE_SETTINGS_KEY: ${OFFICIAL_SOURCE_SETTINGS_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@sadarbencana.id}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3001}
     ports:
       - "8001:8001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   worker:
     build:
@@ -63,11 +83,13 @@ services:
       dockerfile: apps/web/Dockerfile.web
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     container_name: sadar-web
     restart: unless-stopped
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "3001:3001"
 

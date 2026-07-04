@@ -49,6 +49,17 @@ if lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
   if [ "$API_RUNNING_HASH" != "$API_SOURCE_HASH" ]; then
     echo "↻  API source changed — restarting :8001"
     stop_listening_port 8001
+    # Saat Vite aktif, dev-backend-supervisor dapat membangun dan menyalakan
+    # API lebih cepat dari blok start di bawah. Tunggu sebentar agar tidak
+    # menjalankan dua binary pada port yang sama.
+    for _ in 1 2 3 4 5; do
+      if lsof -nP -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "$API_SOURCE_HASH" > "$LOG_DIR/api.source-hash"
+        echo "✅ API (:8001) — rebuilt by development supervisor"
+        break
+      fi
+      sleep 1
+    done
   else
     echo "✅ API (:8001) — already running and current"
   fi

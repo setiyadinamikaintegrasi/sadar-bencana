@@ -18,6 +18,10 @@ ENTITLEMENT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY----
 Pada mode hosted, aset personal tersedia bagi semua akun hingga batas yang
 ditetapkan, sedangkan portofolio perusahaan membutuhkan entitlement organisasi.
 
+Jika deployment menggunakan Docker Compose, build frontend memerlukan
+`VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY`. Nilai anon key memang
+ditujukan untuk frontend; jangan pernah memasukkan service-role key.
+
 Sebelum menjalankan versi ini, backup database lalu terapkan migrasi:
 
 ```bash
@@ -61,3 +65,18 @@ Semua endpoint wajib login dengan JWT Supabase. Aset personal di-scope ke
 `auth_user_id`; portofolio community di-scope ke user dan portofolio hosted
 di-scope ke organisasi aktif. Template CSV tetap publik dan tidak berisi data
 pengguna.
+
+## Deploy atau upgrade hosted
+
+Setelah migrasi database diterapkan:
+
+```bash
+git pull origin main
+docker compose up -d --build api web worker
+docker compose ps
+curl -fsS http://127.0.0.1:8001/health
+curl -fsS http://127.0.0.1:3001/api/v1/meta
+```
+
+`docker compose restart` saja tidak cukup setelah source code berubah karena
+perintah tersebut tidak membangun image baru.
