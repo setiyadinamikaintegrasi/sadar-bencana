@@ -7,7 +7,144 @@ export type Meta = {
   version: string
   environment: string
   risk_free_limit: number
+  deployment_mode: 'community' | 'hosted'
+  personal_asset_limit: number
   endpoints: string[]
+}
+
+export type EntitlementStatus = {
+  deployment_mode: 'community' | 'hosted'
+  company_enabled: boolean
+  organization?: {
+    id: string
+    name: string
+    role: 'owner' | 'admin' | 'member'
+    state: 'active' | 'disabled' | 'expired'
+    expires_at: string
+    max_users: number
+    member_count: number
+    max_company_risks: number
+    company_risk_count: number
+  }
+}
+
+export async function getEntitlementStatus(): Promise<EntitlementStatus> {
+  const response = await request<{ data: EntitlementStatus }>('/entitlements/me')
+  return response.data
+}
+
+export async function activateEntitlement(token: string): Promise<void> {
+  await request('/entitlements/activate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+}
+
+export async function createOrganizationInvitation(
+  email: string,
+  role: 'admin' | 'member',
+): Promise<{ invite_token: string; expires_in_days: number }> {
+  const response = await request<{ data: { invite_token: string; expires_in_days: number } }>(
+    '/organizations/invitations',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, role }),
+    },
+  )
+  return response.data
+}
+
+export async function acceptOrganizationInvitation(token: string): Promise<void> {
+  await request('/organization-invitations/accept', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+}
+
+export type PersonalAssetCategory = 'home' | 'building' | 'vehicle' | 'business' | 'land' | 'other'
+
+export type PersonalAsset = {
+  id: string
+  name: string
+  category: PersonalAssetCategory
+  address: string
+  latitude: number
+  longitude: number
+  estimated_value: number | null
+  currency: string
+  notes: string
+  peril_types: string[]
+  alert_radius_km: number
+  thresholds: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type PersonalAssetInput = Omit<PersonalAsset, 'id' | 'created_at' | 'updated_at'>
+
+export type PersonalAssetRisk = {
+  nearby_events: Array<{
+    event_id: string
+    event_type: string
+    place: string
+    magnitude: number
+    distance_km: number
+    score: number
+    severity: string
+    event_time: string
+    source: string
+  }>
+  nearby_event_count: number
+  active_alert_count: number
+  top_event: Record<string, unknown> | null
+  assessed_at: string
+  radius_km: number
+  status_note: string
+}
+
+export async function getPersonalAssets(): Promise<{
+  data: PersonalAsset[]
+  meta: { count: number; limit: number }
+}> {
+  return request('/personal-assets')
+}
+
+export async function createPersonalAsset(body: PersonalAssetInput): Promise<{ data: PersonalAsset }> {
+  return request('/personal-assets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updatePersonalAsset(id: string, body: PersonalAssetInput): Promise<{ data: PersonalAsset }> {
+  return request(`/personal-assets/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deletePersonalAsset(id: string): Promise<void> {
+  await request(`/personal-assets/${id}`, { method: 'DELETE' })
+}
+
+export async function getPersonalAssetRisk(id: string): Promise<PersonalAssetRisk> {
+  const response = await request<{ data: PersonalAssetRisk }>(`/personal-assets/${id}/risk`)
+  return response.data
+}
+
+export type GeocodingResult = { label: string; latitude: number; longitude: number }
+
+export async function searchAddress(query: string): Promise<GeocodingResult[]> {
+  const response = await request<{ data: GeocodingResult[] }>(
+    `/geocoding/search?q=${encodeURIComponent(query)}`,
+  )
+  return response.data
 }
 
 export type Event = {
@@ -862,8 +999,7 @@ export type ImportResult = {
 export async function importContracts(file: File): Promise<ImportResult> {
   const fd = new FormData()
   fd.append('file', file)
-  const res = await fetch(`${BASE_URL}/contracts/import`, { method: 'POST', body: fd })
-  return (await res.json()) as ImportResult
+  return request<ImportResult>('/contracts/import', { method: 'POST', body: fd })
 }
 
 export type AccumulationSummary = {

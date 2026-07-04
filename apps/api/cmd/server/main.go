@@ -49,7 +49,7 @@ func main() {
 	}))
 
 	router.GET("/health", apihttp.Health)
-	router.GET("/api/v1/meta", apihttp.Meta(cfg.Env, cfg.RiskFreeLimit))
+	router.GET("/api/v1/meta", apihttp.Meta(cfg.Env, cfg.RiskFreeLimit, cfg.DeploymentMode, cfg.PersonalAssetLimit))
 	router.GET("/api/v1/events", apihttp.Events(dbPool))
 	router.GET("/api/v1/events/:id/evidence", apihttp.EventEvidenceList(dbPool))
 	router.GET("/api/v1/events/:id/correlation-audit", apihttp.EventCorrelationAudit(dbPool))
@@ -66,16 +66,35 @@ func main() {
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())
 
-	// Daftar Risiko — semua operasi risiko privat & wajib login.
-	risk := router.Group("", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	// Akun privat — aset personal, entitlement, dan undangan wajib login.
+	account := router.Group("", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
-		risk.GET("/api/v1/contracts", apihttp.ContractsList(dbPool))
-		risk.GET("/api/v1/contracts/:id", apihttp.ContractGet(dbPool))
-		risk.POST("/api/v1/contracts", apihttp.ContractCreate(dbPool, cfg.RiskFreeLimit))
-		risk.PUT("/api/v1/contracts/:id", apihttp.ContractUpdate(dbPool))
-		risk.DELETE("/api/v1/contracts/:id", apihttp.ContractDelete(dbPool))
-		risk.POST("/api/v1/contracts/import", apihttp.ContractsImport(dbPool, cfg.RiskFreeLimit))
-		risk.GET("/api/v1/accumulation", apihttp.Accumulation(dbPool))
+		account.GET("/api/v1/entitlements/me", apihttp.EntitlementStatus(dbPool, cfg.DeploymentMode))
+		account.POST("/api/v1/entitlements/activate", apihttp.EntitlementActivate(dbPool, cfg.DeploymentMode, cfg.EntitlementPublicKey))
+		account.POST("/api/v1/organization-invitations/accept", apihttp.OrganizationInviteAccept(dbPool))
+		account.GET("/api/v1/personal-assets", apihttp.PersonalAssetsList(dbPool, cfg.DeploymentMode, cfg.PersonalAssetLimit))
+		account.POST("/api/v1/personal-assets", apihttp.PersonalAssetCreate(dbPool, cfg.DeploymentMode, cfg.PersonalAssetLimit))
+		account.PUT("/api/v1/personal-assets/:id", apihttp.PersonalAssetUpdate(dbPool))
+		account.DELETE("/api/v1/personal-assets/:id", apihttp.PersonalAssetDelete(dbPool))
+		account.GET("/api/v1/personal-assets/:id/risk", apihttp.PersonalAssetRisk(dbPool))
+		account.GET("/api/v1/geocoding/search", apihttp.GeocodingSearch(cfg.GeocoderBaseURL, cfg.GeocoderUserAgent))
+	}
+	// Portofolio perusahaan: bebas pada community, entitlement organisasi pada hosted.
+	company := router.Group("",
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+		apihttp.CompanyAccess(dbPool, cfg.DeploymentMode),
+	)
+	{
+		company.GET("/api/v1/contracts", apihttp.ContractsList(dbPool))
+		company.GET("/api/v1/contracts/:id", apihttp.ContractGet(dbPool))
+		company.POST("/api/v1/contracts", apihttp.ContractCreate(dbPool, cfg.RiskFreeLimit))
+		company.PUT("/api/v1/contracts/:id", apihttp.ContractUpdate(dbPool))
+		company.DELETE("/api/v1/contracts/:id", apihttp.ContractDelete(dbPool))
+		company.POST("/api/v1/contracts/import", apihttp.ContractsImport(dbPool, cfg.RiskFreeLimit))
+		company.GET("/api/v1/accumulation", apihttp.Accumulation(dbPool))
+		company.POST("/api/v1/organizations/invitations", apihttp.OrganizationInviteCreate(
+			dbPool, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom,
+		))
 	}
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{

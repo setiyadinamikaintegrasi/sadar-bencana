@@ -33,20 +33,24 @@ executive dashboard yang dapat diaudit.
   audit administrator;
 - preview XLSX historis BMKG Data Online dengan checksum dan staging aman untuk
   record yang belum memiliki administrative boundary;
-- daftar risiko privat per-user dan accumulation analysis.
+- daftar risiko privat per-user, aset personal dengan pin peta, serta
+  accumulation analysis untuk portofolio perusahaan.
 
-## Model Open-Core / Freemium
+## Community dan Hosted
 
-Proyek ini menggunakan model hybrid: satu codebase dengan perilaku yang dapat disesuaikan melalui environment variable.
+Satu codebase Apache 2.0 mendukung dua mode deployment:
 
-- **`RISK_FREE_LIMIT=0`** (default) — tanpa batas risiko yang dapat dibuat. Digunakan untuk **self-hosted** instance.
-- **`RISK_FREE_LIMIT=5`** (atau nilai lain) — batas jumlah risiko untuk tier gratis. Digunakan di deployment hosting (contoh: sadarbencana.id).
+- **`DEPLOYMENT_MODE=community`** — default self-hosted; aset personal dan
+  portofolio perusahaan tidak memerlukan token.
+- **`DEPLOYMENT_MODE=hosted`** — digunakan sadarbencana.id; aset personal
+  dibatasi `PERSONAL_ASSET_LIMIT` dan portofolio perusahaan memerlukan token
+  organisasi bertanda tangan.
 
 ### Akses halaman (persyaratan login)
 
 | Halaman | Login Wajib | Catatan |
 |---|---|---|
-| **Daftar Risiko** | ✅ | Risiko privat per-user, tidak terlihat user lain. Data di-scope ke `auth_user_id` |
+| **Daftar Risiko** | ✅ | Aset personal di-scope ke user; portofolio hosted di-scope ke organisasi |
 | **EWS** (Early Warning System) | ✅ | Monitoring alert dan early warning |
 | **Sumber Resmi** | ✅ Admin | Konfigurasi feed, token, preview, dry-run, rollback, dan audit |
 | Executive Overview | ❌ | Public dashboard |
@@ -56,7 +60,9 @@ Proyek ini menggunakan model hybrid: satu codebase dengan perilaku yang dapat di
 
 ### Petunjuk untuk pengguna
 
-Jika kebutuhan Anda melebihi `RISK_FREE_LIMIT` di hosting publik, Anda dapat menjalankan **self-hosted instance** (dengan `RISK_FREE_LIMIT=0`) tanpa batasan jumlah risiko. Lihat bagian Instalasi di bawah.
+Pengguna sadarbencana.id memperoleh hingga 20 aset personal. Organisasi dapat
+meminta token portofolio perusahaan kepada pengelola. Instalasi community tetap
+dapat digunakan mandiri tanpa bergantung pada layanan lisensi.
 
 ---
 
@@ -220,7 +226,9 @@ SUPABASE_JWT_SECRET=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 # Supabase JWKS endpoint (opsional, diturunkan otomatis dari SUPABASE_URL)
 # SUPABASE_JWKS_URL=https://your-project.supabase.co/auth/v1/.well-known/jwks.json
 
-# Batas risiko gratis
+# Mode community untuk development/self-hosted
+DEPLOYMENT_MODE=community
+PERSONAL_ASSET_LIMIT=20
 RISK_FREE_LIMIT=0
 
 # (Opsional) Override default API configuration
@@ -251,6 +259,8 @@ Jika environment variable tidak ada, API menggunakan nilai default:
 API_PORT=8001
 API_ENV=local
 MASTRA_BASE_URL=http://127.0.0.1:4111
+DEPLOYMENT_MODE=community
+PERSONAL_ASSET_LIMIT=20
 RISK_FREE_LIMIT=0
 DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 ```
@@ -410,7 +420,7 @@ bash scripts/verify-structure.sh
 
 Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 
-- **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — panduan deployment Daftar Risiko dan `RISK_FREE_LIMIT`
+- **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — mode community/hosted, aset personal, dan token organisasi
 - **[EWS Setup](docs/ews-setup.md)** — konfigurasi Early Warning System
 - **[Official Alert Lifecycle](docs/official-alert-lifecycle.md)** — revision, expiry, update, dan cancellation alert resmi
 - **[BMKG CAP Nowcast](docs/bmkg-cap-nowcast.md)** — konfigurasi, attribution, normalisasi, dan lifecycle peringatan BMKG

@@ -19,6 +19,16 @@ type Config struct {
 	RiskFreeLimit             int
 	AIBriefingTimeout         time.Duration
 	OfficialSourceSettingsKey string
+	DeploymentMode            string
+	PersonalAssetLimit        int
+	EntitlementPublicKey      string
+	GeocoderBaseURL           string
+	GeocoderUserAgent         string
+	SMTPHost                  string
+	SMTPPort                  string
+	SMTPUser                  string
+	SMTPPassword              string
+	SMTPFrom                  string
 }
 
 func Load() Config {
@@ -34,6 +44,16 @@ func Load() Config {
 		RiskFreeLimit:             getEnvInt("RISK_FREE_LIMIT", 0),
 		AIBriefingTimeout:         getEnvDuration("AI_BRIEFING_TIMEOUT", 150*time.Second),
 		OfficialSourceSettingsKey: getEnv("OFFICIAL_SOURCE_SETTINGS_KEY", ""),
+		DeploymentMode:            getEnv("DEPLOYMENT_MODE", "community"),
+		PersonalAssetLimit:        getEnvInt("PERSONAL_ASSET_LIMIT", 20),
+		EntitlementPublicKey:      getEnv("ENTITLEMENT_PUBLIC_KEY", ""),
+		GeocoderBaseURL:           getEnv("GEOCODER_BASE_URL", "https://nominatim.openstreetmap.org"),
+		GeocoderUserAgent:         getEnv("GEOCODER_USER_AGENT", "SadarBencana/0.1 (https://sadarbencana.id)"),
+		SMTPHost:                  getEnv("SMTP_HOST", ""),
+		SMTPPort:                  getEnv("SMTP_PORT", "587"),
+		SMTPUser:                  getEnv("SMTP_USER", ""),
+		SMTPPassword:              getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:                  getEnv("SMTP_FROM", "noreply@sadarbencana.id"),
 	}
 }
 

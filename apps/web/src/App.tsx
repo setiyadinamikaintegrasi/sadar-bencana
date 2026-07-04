@@ -5,7 +5,7 @@ import BriefingPage from './features/briefing/BriefingPage'
 import CopilotPage from './features/copilot/CopilotPage'
 import EventsPage from './features/events/EventsPage'
 import ExecutiveOverview from './features/executive/ExecutiveOverview'
-import ContractsPage from './features/contracts/ContractsPage'
+import RiskRegistryPage from './features/contracts/RiskRegistryPage'
 import SourceHealthPage from './features/health/SourceHealthPage'
 import EwsPage from './features/ews/EwsPage'
 import RegionalHistoryPage from './features/history/RegionalHistoryPage'
@@ -70,7 +70,7 @@ function App() {
           ) : activeSection === 'Events' ? (
             <EventsPage />
           ) : activeSection === 'Daftar Risiko' ? (
-            <ContractsPage />
+            <RiskRegistryPage />
           ) : activeSection === 'Alerts' ? (
             <AlertsPage />
           ) : activeSection === 'Briefing' ? (

@@ -51,13 +51,14 @@ func ContractsImport(db *sql.DB, riskLimit int) gin.HandlerFunc {
 			return
 		}
 
-		if riskLimit > 0 {
-			n, err := countUserRisks(c, db, AuthUserID(c))
+		effectiveLimit := CompanyRiskLimit(c, riskLimit)
+		if effectiveLimit > 0 {
+			n, err := countUserRisks(c, db)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "count_failed", "message": err.Error()})
 				return
 			}
-			if n+len(contracts) > riskLimit {
+			if n+len(contracts) > effectiveLimit {
 				c.JSON(http.StatusForbidden, gin.H{
 					"error":   "risk_limit_reached",
 					"message": "import melebihi batas risiko gratis; jalankan versi self-hosted untuk jumlah tanpa batas",
@@ -85,7 +86,7 @@ func ContractsImport(db *sql.DB, riskLimit int) gin.HandlerFunc {
 				ct.ContractNo, ct.CedantName, ct.ObjectName, ct.ObjectAddress, ct.Peril, ct.TreatyType,
 				ct.Occupancy, ct.Latitude, ct.Longitude, ct.Currency, ct.SumInsured, ct.SharePct,
 				ct.ShareAmount, ct.Premium, ct.ClaimAmount, nullableDate(ct.InceptionDate), nullableDate(ct.ExpiryDate),
-				AuthUserID(c)); err != nil {
+				AuthUserID(c), nullableOrganizationID(c)); err != nil {
 				_ = tx.Rollback()
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error":    "import_failed",

@@ -43,3 +43,5 @@ The alert-classification safety migration is:
   adds dry-run activation gates, rollback snapshots, and administrator audit.
 - `033_bmkg_data_online_import.sql` — adds boundary bounding boxes, import-batch
   audit, and safe staging for BMKG Data Online XLSX records.
+- `034_personal_assets_and_entitlements.sql` — separates private personal assets
+  from organization portfolios and adds hosted entitlement records.

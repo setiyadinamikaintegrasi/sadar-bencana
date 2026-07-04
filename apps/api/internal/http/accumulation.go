@@ -32,9 +32,10 @@ func Accumulation(db *sql.DB) gin.HandlerFunc {
 		// haversine is applied in Go over the small candidate set.
 		where := []string{"latitude BETWEEN $1 AND $2", "longitude BETWEEN $3 AND $4"}
 		args := []any{minLat, maxLat, minLon, maxLon}
-		// Privasi: hanya akumulasi atas risiko milik user yang login.
-		args = append(args, AuthUserID(c))
-		where = append(where, "auth_user_id = $"+strconv.Itoa(len(args)))
+		// Privasi: community per-user, hosted per organisasi aktif.
+		scopeColumn, scopeValue := companyScope(c)
+		args = append(args, scopeValue)
+		where = append(where, scopeColumn+" = $"+strconv.Itoa(len(args)))
 		if peril != "" {
 			args = append(args, peril)
 			where = append(where, "peril = $"+strconv.Itoa(len(args)))

@@ -37,3 +37,15 @@ func TestRiskFreeLimit_InvalidFallsBackToZero(t *testing.T) {
 		t.Fatalf("RiskFreeLimit invalid = %d, want 0", got)
 	}
 }
+
+func TestDeploymentDefaultsToCommunityWithTwentyPersonalAssets(t *testing.T) {
+	t.Setenv("DEPLOYMENT_MODE", "")
+	t.Setenv("PERSONAL_ASSET_LIMIT", "")
+	cfg := Load()
+	if cfg.DeploymentMode != "community" {
+		t.Fatalf("DeploymentMode = %q, want community", cfg.DeploymentMode)
+	}
+	if cfg.PersonalAssetLimit != 20 {
+		t.Fatalf("PersonalAssetLimit = %d, want 20", cfg.PersonalAssetLimit)
+	}
+}

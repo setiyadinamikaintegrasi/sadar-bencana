@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,10 +38,25 @@ func nullableDate(s string) any {
 }
 
 // countUserRisks mengembalikan jumlah risiko milik user. err non-nil = kegagalan DB.
-func countUserRisks(c *gin.Context, db *sql.DB, authUserID string) (int, error) {
+func companyScope(c *gin.Context) (string, string) {
+	if organizationID := OrganizationID(c); organizationID != "" {
+		return "organization_id", organizationID
+	}
+	return "auth_user_id", AuthUserID(c)
+}
+
+func nullableOrganizationID(c *gin.Context) any {
+	if id := OrganizationID(c); id != "" {
+		return id
+	}
+	return nil
+}
+
+func countUserRisks(c *gin.Context, db *sql.DB) (int, error) {
 	var n int
+	column, value := companyScope(c)
 	err := db.QueryRowContext(c.Request.Context(),
-		"SELECT count(*) FROM risk_entries WHERE auth_user_id = $1", authUserID).Scan(&n)
+		"SELECT count(*) FROM risk_entries WHERE "+column+" = $1", value).Scan(&n)
 	return n, err
 }
 
@@ -56,8 +72,9 @@ func ContractsList(db *sql.DB) gin.HandlerFunc {
 			args = append(args, val)
 			where = append(where, strings.Replace(clause, "$$", "$"+strconv.Itoa(len(args)), 1))
 		}
-		// Privasi: hanya risiko milik user yang login.
-		add("auth_user_id = $$", AuthUserID(c))
+		// Privasi: community per-user, hosted per organisasi aktif.
+		scopeColumn, scopeValue := companyScope(c)
+		add(scopeColumn+" = $$", scopeValue)
 		if v := strings.TrimSpace(c.Query("peril")); v != "" {
 			add("peril = $$", v)
 		}
@@ -127,9 +144,10 @@ func ContractGet(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_unavailable", "message": "the database is not configured"})
 			return
 		}
+		scopeColumn, scopeValue := companyScope(c)
 		row := db.QueryRowContext(c.Request.Context(),
-			"SELECT "+contractColumns+" FROM risk_entries WHERE id = $1 AND auth_user_id = $2",
-			c.Param("id"), AuthUserID(c))
+			"SELECT "+contractColumns+" FROM risk_entries WHERE id = $1 AND "+scopeColumn+" = $2",
+			c.Param("id"), scopeValue)
 		ct, err := scanContract(row)
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": "contract not found"})
@@ -147,8 +165,8 @@ const contractInsertSQL = `
 INSERT INTO risk_entries
   (contract_no, cedant_name, object_name, object_address, peril, treaty_type, occupancy,
    latitude, longitude, currency, sum_insured, share_pct, share_amount, premium, claim_amount,
-   inception_date, expiry_date, auth_user_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+   inception_date, expiry_date, auth_user_id, organization_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 RETURNING ` + contractColumns
 
 func ContractCreate(db *sql.DB, riskLimit int) gin.HandlerFunc {
@@ -166,13 +184,14 @@ func ContractCreate(db *sql.DB, riskLimit int) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "validation_failed", "message": err.Error()})
 			return
 		}
-		if riskLimit > 0 {
-			n, err := countUserRisks(c, db, AuthUserID(c))
+		effectiveLimit := CompanyRiskLimit(c, riskLimit)
+		if effectiveLimit > 0 {
+			n, err := countUserRisks(c, db)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "count_failed", "message": err.Error()})
 				return
 			}
-			if n >= riskLimit {
+			if n >= effectiveLimit {
 				c.JSON(http.StatusForbidden, gin.H{
 					"error":   "risk_limit_reached",
 					"message": "batas risiko gratis tercapai; jalankan versi self-hosted untuk jumlah tanpa batas",
@@ -184,7 +203,7 @@ func ContractCreate(db *sql.DB, riskLimit int) gin.HandlerFunc {
 			in.ContractNo, in.CedantName, in.ObjectName, in.ObjectAddress, in.Peril, in.TreatyType,
 			in.Occupancy, in.Latitude, in.Longitude, in.Currency, in.SumInsured, in.SharePct,
 			in.ShareAmount, in.Premium, in.ClaimAmount, nullableDate(in.InceptionDate), nullableDate(in.ExpiryDate),
-			AuthUserID(c))
+			AuthUserID(c), nullableOrganizationID(c))
 		ct, err := scanContract(row)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "insert_failed", "message": err.Error()})
@@ -199,7 +218,7 @@ UPDATE risk_entries SET
   contract_no=$1, cedant_name=$2, object_name=$3, object_address=$4, peril=$5, treaty_type=$6,
   occupancy=$7, latitude=$8, longitude=$9, currency=$10, sum_insured=$11, share_pct=$12,
   share_amount=$13, premium=$14, claim_amount=$15, inception_date=$16, expiry_date=$17, updated_at=now()
-WHERE id=$18 AND auth_user_id=$19
+WHERE id=$18 AND %s=$19
 RETURNING ` + contractColumns
 
 func ContractUpdate(db *sql.DB) gin.HandlerFunc {
@@ -217,11 +236,12 @@ func ContractUpdate(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "validation_failed", "message": err.Error()})
 			return
 		}
-		row := db.QueryRowContext(c.Request.Context(), contractUpdateSQL,
+		scopeColumn, scopeValue := companyScope(c)
+		row := db.QueryRowContext(c.Request.Context(), fmt.Sprintf(contractUpdateSQL, scopeColumn),
 			in.ContractNo, in.CedantName, in.ObjectName, in.ObjectAddress, in.Peril, in.TreatyType,
 			in.Occupancy, in.Latitude, in.Longitude, in.Currency, in.SumInsured, in.SharePct,
 			in.ShareAmount, in.Premium, in.ClaimAmount, nullableDate(in.InceptionDate), nullableDate(in.ExpiryDate),
-			c.Param("id"), AuthUserID(c))
+			c.Param("id"), scopeValue)
 		ct, err := scanContract(row)
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": "contract not found"})
@@ -241,9 +261,10 @@ func ContractDelete(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_unavailable", "message": "the database is not configured"})
 			return
 		}
+		scopeColumn, scopeValue := companyScope(c)
 		res, err := db.ExecContext(c.Request.Context(),
-			"DELETE FROM risk_entries WHERE id=$1 AND auth_user_id=$2",
-			c.Param("id"), AuthUserID(c))
+			"DELETE FROM risk_entries WHERE id=$1 AND "+scopeColumn+"=$2",
+			c.Param("id"), scopeValue)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "delete_failed", "message": err.Error()})
 			return
