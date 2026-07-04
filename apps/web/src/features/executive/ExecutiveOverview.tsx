@@ -1,5 +1,5 @@
 // apps/web/src/features/executive/ExecutiveOverview.tsx
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import RiskMap from '../../components/RiskMap'
@@ -82,7 +82,37 @@ function formatDateTime(dateStr: string | null): string {
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Jakarta',
   })
+}
+
+function earthquakeLocation(place: string): string {
+  return place
+    .replace(/\s*\((?:tidak\s+)?berpotensi tsunami[^)]*\)\s*$/i, '')
+    .trim()
+}
+
+function tsunamiStatus(place: string): {
+  label: string
+  classes: string
+} {
+  const normalizedPlace = place.toLowerCase()
+  if (normalizedPlace.includes('tidak berpotensi tsunami')) {
+    return {
+      label: 'Tidak berpotensi tsunami',
+      classes: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200',
+    }
+  }
+  if (normalizedPlace.includes('berpotensi tsunami')) {
+    return {
+      label: 'Berpotensi tsunami',
+      classes: 'border-rose-400/40 bg-rose-500/15 text-rose-200',
+    }
+  }
+  return {
+    label: 'Status tsunami belum tersedia',
+    classes: 'border-slate-600 bg-slate-800/70 text-slate-300',
+  }
 }
 
 function toneClasses(tone: IntelligenceMoment['tone']): string {
@@ -117,6 +147,8 @@ export default function ExecutiveOverview() {
   const [minMagnitude, setMinMagnitude] = useState(0)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [activePerilFilter, setActivePerilFilter] = useState('all')
+  const [monitoringDeskHeight, setMonitoringDeskHeight] = useState<number | null>(null)
+  const monitoringDeskRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
     if (mode === 'initial') setLoading(true)
@@ -162,6 +194,20 @@ export default function ExecutiveOverview() {
     void loadNews()
   }, [load, loadNews])
 
+  useEffect(() => {
+    const monitoringDesk = monitoringDeskRef.current
+    if (!monitoringDesk) return
+
+    const updateHeight = () => {
+      setMonitoringDeskHeight(Math.ceil(monitoringDesk.getBoundingClientRect().height))
+    }
+    updateHeight()
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(monitoringDesk)
+    return () => observer.disconnect()
+  }, [])
+
   const handleRefresh = useCallback(() => {
     void load('refresh')
     void loadNews()
@@ -184,6 +230,25 @@ export default function ExecutiveOverview() {
     () => filteredEvents.slice(0, 40),
     [filteredEvents],
   )
+
+  const latestBmkgEarthquake = useMemo(() => {
+    return events
+      .filter((event) => {
+        const eventType = event.event_type.toLowerCase()
+        return event.source.toLowerCase().includes('bmkg')
+          && (eventType.includes('earthquake') || eventType.includes('quake'))
+      })
+      .sort(
+        (left, right) =>
+          new Date(right.event_time).getTime() - new Date(left.event_time).getTime(),
+      )[0] ?? null
+  }, [events])
+
+  const handleFocusLatestEarthquake = useCallback(() => {
+    if (!latestBmkgEarthquake) return
+    setActivePerilFilter('earthquake')
+    setSelectedEvent(latestBmkgEarthquake)
+  }, [latestBmkgEarthquake])
 
   const unacknowledgedAlerts = useMemo(
     () => alerts.filter((alert) => !alert.acknowledged).length,
@@ -209,7 +274,7 @@ export default function ExecutiveOverview() {
   }, [events])
 
   const intelligenceMoments = useMemo<IntelligenceMoment[]>(() => {
-    const eventMoments = events.slice(0, 5).map((event) => {
+    const eventMoments = events.map((event) => {
       const severity = severityFor(event.magnitude)
       return {
         id: `event-${event.id}`,
@@ -223,7 +288,7 @@ export default function ExecutiveOverview() {
       }
     })
 
-    const newsMoments = news.slice(0, 5).map((item) => ({
+    const newsMoments = news.map((item) => ({
       id: `news-${item.id}`,
       kind: 'news' as const,
       title: item.title,
@@ -234,7 +299,7 @@ export default function ExecutiveOverview() {
       url: item.url,
     }))
 
-    const alertMoments = alerts.slice(0, 4).map((alert) => ({
+    const alertMoments = alerts.map((alert) => ({
       id: `alert-${alert.id}`,
       kind: 'alert' as const,
       title: alert.message,
@@ -246,7 +311,7 @@ export default function ExecutiveOverview() {
 
     return [...eventMoments, ...newsMoments, ...alertMoments]
       .sort((a, b) => new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime())
-      .slice(0, 9)
+      .slice(0, 18)
   }, [alerts, events, news])
 
   const topRiskScore = riskScores[0]
@@ -358,6 +423,61 @@ export default function ExecutiveOverview() {
             height="min(62vh, 560px)"
           />
         )}
+
+        <div className="mt-4 overflow-hidden rounded-2xl border border-orange-400/20 bg-gradient-to-r from-orange-500/10 via-slate-950/80 to-slate-950/80">
+          {loading ? (
+            <div className="h-28 animate-pulse bg-slate-800/50" />
+          ) : latestBmkgEarthquake ? (
+            <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center">
+              <div className="flex items-center gap-3 lg:min-w-[250px]">
+                <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-orange-300/30 bg-orange-500/15 text-orange-100">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-300">Mag</span>
+                  <span className="text-2xl font-black leading-none">{latestBmkgEarthquake.magnitude.toFixed(1)}</span>
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="font-semibold text-slate-50">Gempa Terbaru BMKG</h4>
+                    <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">
+                      Sumber resmi
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {formatRelativeTime(latestBmkgEarthquake.event_time)} · {formatDateTime(latestBmkgEarthquake.event_time)} WIB
+                  </p>
+                </div>
+              </div>
+
+              <div className="min-w-0 flex-1 border-slate-800 lg:border-l lg:pl-5">
+                <p className="truncate text-sm font-semibold text-slate-100" title={earthquakeLocation(latestBmkgEarthquake.place)}>
+                  {earthquakeLocation(latestBmkgEarthquake.place)}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                  <span>
+                    {latestBmkgEarthquake.latitude.toFixed(3)}, {latestBmkgEarthquake.longitude.toFixed(3)}
+                  </span>
+                  <span
+                    className={`rounded-full border px-2.5 py-1 font-medium ${tsunamiStatus(latestBmkgEarthquake.place).classes}`}
+                  >
+                    {tsunamiStatus(latestBmkgEarthquake.place).label}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleFocusLatestEarthquake}
+                className="shrink-0 rounded-xl border border-indigo-400/30 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 transition hover:border-indigo-300/60 hover:bg-indigo-500/25 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+              >
+                Fokuskan di peta
+              </button>
+            </div>
+          ) : (
+            <div className="p-5 text-center">
+              <p className="text-sm font-semibold text-slate-300">Belum ada event gempa BMKG pada data aktif.</p>
+              <p className="mt-1 text-xs text-slate-500">Ringkasan akan muncul otomatis setelah connector BMKG menerima data terbaru.</p>
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -375,8 +495,15 @@ export default function ExecutiveOverview() {
         ))}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <article className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/40">
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <article
+          className="flex max-h-[720px] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/40 xl:h-[var(--monitoring-desk-height)] xl:max-h-none"
+          style={
+            monitoringDeskHeight
+              ? ({ '--monitoring-desk-height': `${monitoringDeskHeight}px` } as CSSProperties)
+              : undefined
+          }
+        >
           <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
             <div>
               <h3 className="text-lg font-semibold text-slate-50">Live Intelligence Moments</h3>
@@ -397,7 +524,7 @@ export default function ExecutiveOverview() {
               {news.length === 0 && <span>Menunggu RSS/news feed dari backend…</span>}
             </div>
           </div>
-          <div className="grid max-h-[420px] gap-3 overflow-y-auto p-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4 md:grid-cols-2 xl:grid-cols-3">
             {loading || newsLoading ? (
               Array.from({ length: 6 }).map((_, index) => (
                 <div key={index} className="h-32 animate-pulse rounded-xl bg-slate-800/70" />
@@ -437,7 +564,9 @@ export default function ExecutiveOverview() {
           </div>
         </article>
 
-        <LiveVideoDesk />
+        <div ref={monitoringDeskRef} className="self-start">
+          <LiveVideoDesk />
+        </div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
