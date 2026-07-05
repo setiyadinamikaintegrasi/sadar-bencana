@@ -67,8 +67,7 @@ func Load() Config {
 // ValidateSecurity rejects production configurations that would leave
 // internal service-to-service APIs unauthenticated.
 func (cfg Config) ValidateSecurity() error {
-	env := strings.ToLower(strings.TrimSpace(cfg.Env))
-	if env != "production" && env != "hosted" && env != "docker" {
+	if !cfg.IsProductionRuntime() {
 		return nil
 	}
 	if len(strings.TrimSpace(cfg.WorkerAPIToken)) < 32 {
@@ -90,6 +89,17 @@ func (cfg Config) ValidateSecurity() error {
 		}
 	}
 	return nil
+}
+
+// IsProductionRuntime identifies environments that must use fail-closed
+// security defaults and production-safe framework settings.
+func (cfg Config) IsProductionRuntime() bool {
+	switch strings.ToLower(strings.TrimSpace(cfg.Env)) {
+	case "production", "hosted", "docker":
+		return true
+	default:
+		return false
+	}
 }
 
 // supabaseJWKSURL returns the JWKS endpoint used to verify asymmetric
