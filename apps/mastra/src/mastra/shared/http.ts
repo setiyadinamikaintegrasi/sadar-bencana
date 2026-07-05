@@ -3,9 +3,14 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
     'Content-Type': 'application/json',
   }
 
-  // Attach internal bearer token for worker calls
+  // Never forward the Worker secret to the Go API or any other destination.
+  const workerBaseUrl = (
+    process.env.SADAR_WORKER_BASE_URL
+    ?? 'http://127.0.0.1:8002/api/v1/worker'
+  ).replace(/\/+$/, '')
+  const isWorkerRequest = url === workerBaseUrl || url.startsWith(`${workerBaseUrl}/`)
   const workerToken = process.env.WORKER_API_TOKEN
-  if (workerToken) {
+  if (isWorkerRequest && workerToken) {
     headers['Authorization'] = `Bearer ${workerToken}`
   }
 

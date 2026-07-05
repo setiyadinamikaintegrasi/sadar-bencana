@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ type Config struct {
 	Env                       string
 	DatabaseURL               string
 	MastraBaseURL             string
+	MastraAPIToken            string
 	WorkerBaseURL             string
 	WorkerAPIToken            string
 	SupabaseJWTSecret         string
@@ -39,6 +41,7 @@ func Load() Config {
 		Env:                       getEnv("API_ENV", "local"),
 		DatabaseURL:               os.Getenv("DATABASE_URL"),
 		MastraBaseURL:             getEnv("MASTRA_BASE_URL", "http://127.0.0.1:4111"),
+		MastraAPIToken:            getEnv("MASTRA_API_TOKEN", ""),
 		WorkerBaseURL:             getEnv("WORKER_BASE_URL", "http://127.0.0.1:8002"),
 		WorkerAPIToken:            getEnv("WORKER_API_TOKEN", ""),
 		SupabaseJWTSecret:         getEnv("SUPABASE_JWT_SECRET", ""),
@@ -57,6 +60,25 @@ func Load() Config {
 		SMTPPassword:              getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                  getEnv("SMTP_FROM", "noreply@sadarbencana.id"),
 	}
+}
+
+// ValidateSecurity rejects production configurations that would leave
+// internal service-to-service APIs unauthenticated.
+func (cfg Config) ValidateSecurity() error {
+	env := strings.ToLower(strings.TrimSpace(cfg.Env))
+	if env != "production" && env != "hosted" && env != "docker" {
+		return nil
+	}
+	if len(strings.TrimSpace(cfg.WorkerAPIToken)) < 32 {
+		return fmt.Errorf("WORKER_API_TOKEN must contain at least 32 characters")
+	}
+	if len(strings.TrimSpace(cfg.MastraAPIToken)) < 32 {
+		return fmt.Errorf("MASTRA_API_TOKEN must contain at least 32 characters")
+	}
+	if cfg.WorkerAPIToken == cfg.MastraAPIToken {
+		return fmt.Errorf("WORKER_API_TOKEN and MASTRA_API_TOKEN must use different values")
+	}
+	return nil
 }
 
 // supabaseJWKSURL returns the JWKS endpoint used to verify asymmetric

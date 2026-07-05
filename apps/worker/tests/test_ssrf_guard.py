@@ -1,80 +1,70 @@
-"""Contract test: POST /api/v1/worker/ingest must not accept or process URL bodies.
+"""Security tests for Worker authentication and official-feed SSRF controls."""
 
-This test verifies that the ingest endpoint does not parse any body content,
-does not treat any input as a URL, and only triggers hardcoded connector URLs.
-"""
+from __future__ import annotations
 
+import httpx
 import pytest
-from unittest.mock import AsyncMock, patch
+
+from connectors.official_feeds import ApprovedJSONFeedConnector
+from ssrf_guard import is_blocked_ip, resolve_public_ips
+
+
+def test_ssrf_guard_blocks_metadata_and_private_ips():
+    assert is_blocked_ip("169.254.169.254") is True
+    assert is_blocked_ip("127.0.0.1") is True
+    assert is_blocked_ip("10.0.0.1") is True
+    assert is_blocked_ip("192.168.1.1") is True
+    assert is_blocked_ip("172.16.0.1") is True
+    assert is_blocked_ip("::1") is True
+    assert is_blocked_ip("fe80::1") is True
+    assert is_blocked_ip("::ffff:127.0.0.1") is True
+    assert is_blocked_ip("8.8.8.8") is False
+
+
+def test_resolver_rejects_if_any_answer_is_private(monkeypatch):
+    answers = [
+        (2, 1, 6, "", ("203.0.114.10", 0)),
+        (2, 1, 6, "", ("169.254.169.254", 0)),
+    ]
+    monkeypatch.setattr("ssrf_guard.socket.getaddrinfo", lambda *args, **kwargs: answers)
+
+    with pytest.raises(ValueError, match="blocked IP"):
+        resolve_public_ips("data.bnpb.go.id")
 
 
 @pytest.mark.asyncio
-async def test_ingest_does_not_accept_url_body():
-    """Verify that worker_ingest ignores request body entirely."""
-    # The endpoint signature takes no Request parameter — it cannot read body
+async def test_official_connector_pins_validated_ip_and_preserves_tls_host(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["host"] = request.headers["Host"]
+        captured["sni"] = request.extensions["sni_hostname"]
+        return httpx.Response(200, json={"data": [{"report_id": "one"}]})
+
+    monkeypatch.setattr(
+        "connectors.official_feeds.resolve_public_ips",
+        lambda hostname: ("203.0.114.10",),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        connector = ApprovedJSONFeedConnector(
+            "bnpb",
+            "https://data.bnpb.go.id/feed.json",
+            client=client,
+        )
+        payload = await connector.fetch_payload()
+
+    assert payload["data"][0]["report_id"] == "one"
+    assert captured == {
+        "url": "https://203.0.114.10/feed.json",
+        "host": "data.bnpb.go.id",
+        "sni": "data.bnpb.go.id",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ingest_endpoint_has_no_user_supplied_url_parameter():
     import inspect
     from main import worker_ingest
 
-    sig = inspect.signature(worker_ingest)
-    params = list(sig.parameters.keys())
-    assert "request" not in params, "worker_ingest should not accept a request parameter"
-    assert len(params) == 0, f"worker_ingest should take no parameters, got {params}"
-
-
-@pytest.mark.asyncio
-async def test_ingest_does_not_fetch_arbitrary_urls():
-    """Verify that _ingest_cycle only calls hardcoded connector URLs."""
-    from main import _ingest_cycle
-
-    # Collect all URLs passed to httpx during an ingest cycle
-    fetched_urls: list[str] = []
-
-    original_get = None
-
-    class URLTrackingClient:
-        """Minimal mock to track URLs fetched during ingest."""
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def get(self, url, **kwargs):
-            fetched_urls.append(url)
-            raise Exception("blocked in test")
-
-        def raise_for_status(self):
-            pass
-
-        async def aclose(self):
-            pass
-
-    # The test verifies that no arbitrary URL (like http://169.254.169.254/)
-    # ever appears in the connector logic
-    # Connectors use hardcoded constants — no user input flows to URLs
-    assert True, "Connectors use hardcoded URLs only — no user-supplied URLs reach httpx"
-
-
-def test_ssrf_guard_blocks_metadata_ip():
-    """Verify SSRF guard blocks cloud metadata IPs."""
-    from ssrf_guard import is_blocked_ip
-
-    assert is_blocked_ip("169.254.169.254") is True   # AWS/GCP metadata
-    assert is_blocked_ip("127.0.0.1") is True           # loopback
-    assert is_blocked_ip("10.0.0.1") is True            # private
-    assert is_blocked_ip("192.168.1.1") is True         # private
-    assert is_blocked_ip("172.16.0.1") is True          # private
-    assert is_blocked_ip("8.8.8.8") is False             # public DNS = OK
-    assert is_blocked_ip("1.1.1.1") is False             # public = OK
-
-
-def test_ssrf_guard_blocks_ipv6_loopback():
-    """Verify SSRF guard blocks IPv6 loopback/link-local."""
-    from ssrf_guard import is_blocked_ip
-
-    assert is_blocked_ip("::1") is True                  # IPv6 loopback
-    assert is_blocked_ip("fe80::1") is True              # IPv6 link-local
+    assert list(inspect.signature(worker_ingest).parameters) == []

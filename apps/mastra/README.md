@@ -24,6 +24,9 @@ Lihat `.env.example`.
 Yang penting:
 - `SADAR_API_BASE_URL`
 - `SADAR_WORKER_BASE_URL`
+- `WORKER_API_TOKEN`
+- `MASTRA_API_TOKEN`
+- `API_ENV` (`hosted` atau `production` untuk fail-closed)
 - `MASTRA_MODEL`
 - `OPENAI_API_KEY`
 
@@ -37,3 +40,5 @@ npm run dev:mastra
 - tidak menjadi source of record
 - write operation sensitif tetap lewat service domain existing
 - output AI harus tetap mengacu ke source internal
+- production Mastra hanya boleh diakses oleh Go API melalui bearer token dan
+  tidak boleh dipublikasikan sebagai subdomain terbuka

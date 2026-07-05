@@ -77,7 +77,7 @@ type briefingFallbackBriefing struct {
 
 // AIExecutiveBriefingStream proxies the Mastra daily briefing workflow as a
 // normalized SSE endpoint for the frontend.
-func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL string, aiBriefingTimeout time.Duration) gin.HandlerFunc {
+func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL, mastraAPIToken string, aiBriefingTimeout time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		triggerWorkerRefresh, err := parseOptionalBool(c.Query("triggerWorkerRefresh"), false)
 		if err != nil {
@@ -119,7 +119,7 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL string, aiBriefingTimeo
 		})
 		flusher.Flush()
 
-		if err := createMastraRun(c.Request.Context(), mastraBaseURL, runID); err != nil {
+		if err := createMastraRun(c.Request.Context(), mastraBaseURL, mastraAPIToken, runID); err != nil {
 			handleBriefingFallback(c, flusher, db, runID, sanitizeFallbackReason(err, aiBriefingTimeout))
 			return
 		}
@@ -132,7 +132,7 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL string, aiBriefingTimeo
 		})
 		flusher.Flush()
 
-		content, streamErr := streamMastraBriefing(c.Request.Context(), mastraBaseURL, aiBriefingTimeout, runID, triggerWorkerRefresh, func(stage, message string) {
+		content, streamErr := streamMastraBriefing(c.Request.Context(), mastraBaseURL, mastraAPIToken, aiBriefingTimeout, runID, triggerWorkerRefresh, func(stage, message string) {
 			emitSSE(c, "status", sseStatusPayload{
 				Stage:   stage,
 				Message: message,
@@ -215,7 +215,7 @@ func handleBriefingFallback(c *gin.Context, flusher http.Flusher, db *sql.DB, ru
 	flusher.Flush()
 }
 
-func createMastraRun(parent context.Context, mastraBaseURL, runID string) error {
+func createMastraRun(parent context.Context, mastraBaseURL, mastraAPIToken, runID string) error {
 	ctx, cancel := context.WithTimeout(parent, mastraCreateRunTimeout)
 	defer cancel()
 
@@ -230,6 +230,7 @@ func createMastraRun(parent context.Context, mastraBaseURL, runID string) error 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setInternalBearer(req, mastraAPIToken)
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -247,6 +248,7 @@ func createMastraRun(parent context.Context, mastraBaseURL, runID string) error 
 func streamMastraBriefing(
 	parent context.Context,
 	mastraBaseURL string,
+	mastraAPIToken string,
 	aiBriefingTimeout time.Duration,
 	runID string,
 	triggerWorkerRefresh bool,
@@ -276,6 +278,7 @@ func streamMastraBriefing(
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setInternalBearer(req, mastraAPIToken)
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -377,6 +380,12 @@ func streamMastraBriefing(
 	}
 
 	return strings.TrimSpace(finalContent), nil
+}
+
+func setInternalBearer(req *http.Request, token string) {
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 }
 
 func parseMastraEnvelope(raw []byte) (mastraStreamEnvelope, error) {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,5 +48,29 @@ func TestDeploymentDefaultsToCommunityWithTwentyPersonalAssets(t *testing.T) {
 	}
 	if cfg.PersonalAssetLimit != 20 {
 		t.Fatalf("PersonalAssetLimit = %d, want 20", cfg.PersonalAssetLimit)
+	}
+}
+
+func TestValidateSecurityRequiresDistinctStrongTokensOutsideLocal(t *testing.T) {
+	cfg := Config{Env: "hosted", WorkerAPIToken: "w", MastraAPIToken: "m"}
+	if err := cfg.ValidateSecurity(); err == nil {
+		t.Fatal("expected weak production tokens to be rejected")
+	}
+
+	cfg.WorkerAPIToken = "w" + strings.Repeat("1", 31)
+	cfg.MastraAPIToken = cfg.WorkerAPIToken
+	if err := cfg.ValidateSecurity(); err == nil {
+		t.Fatal("expected reused internal token to be rejected")
+	}
+
+	cfg.MastraAPIToken = "m" + strings.Repeat("2", 31)
+	if err := cfg.ValidateSecurity(); err != nil {
+		t.Fatalf("expected distinct strong tokens to pass: %v", err)
+	}
+}
+
+func TestValidateSecurityAllowsTokenlessLocalDevelopment(t *testing.T) {
+	if err := (Config{Env: "local"}).ValidateSecurity(); err != nil {
+		t.Fatalf("local development should not require internal tokens: %v", err)
 	}
 }

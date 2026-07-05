@@ -15,7 +15,6 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from uuid import UUID
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 import hmac
@@ -123,7 +122,6 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 _WORKER_TOKEN: str | None = None
-_SECURITY_SCHEME = HTTPBearer(auto_error=False)
 
 
 def _get_worker_token() -> str:
@@ -136,6 +134,14 @@ def _get_worker_token() -> str:
     if _WORKER_TOKEN is None:
         _WORKER_TOKEN = os.getenv("WORKER_API_TOKEN", "").strip()
     return _WORKER_TOKEN
+
+
+def _validate_worker_auth_config() -> None:
+    token = _get_worker_token()
+    if _is_production and len(token) < 32:
+        raise RuntimeError(
+            "WORKER_API_TOKEN must contain at least 32 characters outside local development"
+        )
 
 
 class WorkerAuthMiddleware(BaseHTTPMiddleware):
@@ -182,9 +188,6 @@ class WorkerAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app.add_middleware(WorkerAuthMiddleware)
-
-
 # ---------------------------------------------------------------------------
 # Rate limiting for mutation endpoints (in-memory, per-IP)
 # ---------------------------------------------------------------------------
@@ -227,6 +230,9 @@ class MutationRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(MutationRateLimitMiddleware)
+# Authentication must run before the mutation limiter. Otherwise unauthenticated
+# requests could exhaust the shared reverse-proxy bucket and deny internal calls.
+app.add_middleware(WorkerAuthMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +255,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=413,
                 content={"detail": "Request body too large"},
+            )
+        if request.headers.get("transfer-encoding", "").lower() == "chunked":
+            return JSONResponse(
+                status_code=411,
+                content={"detail": "Content-Length is required"},
             )
 
         response = await call_next(request)
@@ -776,6 +787,8 @@ async def startup_event() -> None:
     schedulers are started regardless: even with a degraded DB they will
     simply log failures each tick and recover once the pool is available.
     """
+
+    _validate_worker_auth_config()
 
     global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
     global _official_alert_expiry_scheduler, _lifecycle_delivery_scheduler

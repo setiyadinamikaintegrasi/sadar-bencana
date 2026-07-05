@@ -24,7 +24,7 @@ type CopilotEvent struct {
 
 // AICopilotChat proxies a chat request to the Mastra analyst-copilot-agent
 // and streams the AI SDK-compatible SSE response back to the frontend.
-func AICopilotChat(mastraBaseURL string, timeout time.Duration) gin.HandlerFunc {
+func AICopilotChat(mastraBaseURL, mastraAPIToken string, timeout time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CopilotQueryRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -59,6 +59,7 @@ func AICopilotChat(mastraBaseURL string, timeout time.Duration) gin.HandlerFunc 
 			return
 		}
 		mastraReq.Header.Set("Content-Type", "application/json")
+		setInternalBearer(mastraReq, mastraAPIToken)
 
 		client := &http.Client{Timeout: timeout}
 		res, err := client.Do(mastraReq)

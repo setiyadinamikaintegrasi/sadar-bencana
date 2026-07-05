@@ -115,8 +115,10 @@ cd sadar-bencana
 # 2. Copy .env.example ke .env
 cp .env.example .env
 
-# 3. Isi DATABASE_URL dan konfigurasi Supabase di .env
-# Tambahkan token notifikasi atau sumber resmi hanya jika diperlukan.
+# 3. Isi DATABASE_URL, konfigurasi Supabase, dan dua token internal di .env
+# Generate WORKER_API_TOKEN dan MASTRA_API_TOKEN secara terpisah:
+openssl rand -hex 32
+openssl rand -hex 32
 
 # 4. Jalankan docker compose
 docker compose up -d
@@ -127,7 +129,8 @@ docker compose up -d
 
 **Troubleshooting Docker Compose:**
 
-- Jika API/worker gagal start, cek apakah `DATABASE_URL`, `SUPABASE_URL`, dan `SUPABASE_JWT_SECRET` sudah terisi.
+- Jika API/worker gagal start, cek `DATABASE_URL`, konfigurasi Supabase,
+  `WORKER_API_TOKEN`, dan `MASTRA_API_TOKEN`.
 - Lihat status semua container: `docker compose ps`
 - Hentikan semua service: `docker compose down`
 
@@ -197,6 +200,8 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `REDIS_URL` — koneksi Redis
 - `API_HOST`, `API_PORT`, `API_ENV` — konfigurasi API
 - `WORKER_BASE_URL` — alamat internal worker untuk proxy operasi import/preview
+- `WORKER_API_TOKEN` — bearer token internal API ↔ Worker, minimal 32 karakter
+- `MASTRA_BASE_URL`, `MASTRA_API_TOKEN` — alamat dan bearer token internal Mastra
 - `LLM_BASE_URL`, `LLM_TIMEOUT`, `LLM_MODEL` — integrasi llama.cpp (opsional)
 - `VITE_API_BASE_URL` — base URL API untuk Vite (default: `/api/v1`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — delivery alert Telegram (opsional)
@@ -210,6 +215,9 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `AISSTREAM_API_KEY`, `VESSELFINDER_API_KEY`, `OPENSKY_*` — tracking maritim & penerbangan (opsional)
 - `FONNTE_API_TOKEN` — WhatsApp via Fonnte (opsional)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — email SMTP (opsional)
+
+Panduan hardening deployment tersedia di
+[`docs/production-security-deployment.md`](docs/production-security-deployment.md).
 
 ### Root `.env.local` (untuk pengembangan lokal, gitignored)
 

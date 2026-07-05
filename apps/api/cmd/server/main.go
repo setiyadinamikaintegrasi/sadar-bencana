@@ -16,6 +16,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.ValidateSecurity(); err != nil {
+		log.Fatalf("invalid security configuration: %v", err)
+	}
 	if strings.TrimSpace(cfg.DatabaseURL) == "" {
 		log.Fatal("DATABASE_URL is required; configure the Supabase pooled connection string before starting the API")
 	}
@@ -57,8 +60,8 @@ func main() {
 	router.GET("/api/v1/news", apihttp.News(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
-	router.GET("/api/v1/ai/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(dbPool, cfg.MastraBaseURL, cfg.AIBriefingTimeout))
-	router.POST("/api/v1/ai/copilot/chat", apihttp.AICopilotChat(cfg.MastraBaseURL, cfg.AIBriefingTimeout))
+	router.GET("/api/v1/ai/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(dbPool, cfg.MastraBaseURL, cfg.MastraAPIToken, cfg.AIBriefingTimeout))
+	router.POST("/api/v1/ai/copilot/chat", apihttp.AICopilotChat(cfg.MastraBaseURL, cfg.MastraAPIToken, cfg.AIBriefingTimeout))
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
 	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
