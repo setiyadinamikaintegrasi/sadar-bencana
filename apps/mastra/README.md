@@ -27,8 +27,13 @@ Yang penting:
 - `WORKER_API_TOKEN`
 - `MASTRA_API_TOKEN`
 - `API_ENV` (`hosted` atau `production` untuk fail-closed)
-- `MASTRA_MODEL`
-- `OPENAI_API_KEY`
+- `MASTRA_AI_PROVIDER` (`deepseek` untuk hosted, `local` untuk local/community)
+- `DEEPSEEK_API_KEY` (wajib dan harus berformat `sk-...` pada hosted)
+- `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com/v1`)
+- `DEEPSEEK_MODEL` (default `deepseek-v4-flash`)
+- `MASTRA_AI_MAX_OUTPUT_TOKENS` (default `2048`)
+- `MASTRA_AI_MAX_STEPS` (default `6`)
+- `MASTRA_MODEL`, `OPENAI_API_KEY`, dan `OPENAI_BASE_URL` hanya untuk provider local
 
 ## Script
 ```bash
@@ -42,3 +47,6 @@ npm run dev:mastra
 - output AI harus tetap mengacu ke source internal
 - production Mastra hanya boleh diakses oleh Go API melalui bearer token dan
   tidak boleh dipublikasikan sebagai subdomain terbuka
+- Executive Briefing dan Analyst Copilot memakai provider/model yang sama;
+  hosted default menggunakan `deepseek-v4-flash` non-thinking untuk menekan
+  biaya dan latency

@@ -23,6 +23,27 @@ processes must receive the matching values:
 Production services fail closed when a required token is missing or shorter
 than 32 characters. Do not reuse one token for both services.
 
+### Hosted AI provider
+
+Hosted Mastra uses one DeepSeek provider for both Executive Briefing and
+Analyst Copilot. Store the API key only in the protected Mastra environment
+file:
+
+```dotenv
+MASTRA_AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-replace-with-production-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-v4-flash
+MASTRA_AI_MAX_OUTPUT_TOKENS=2048
+MASTRA_AI_MAX_STEPS=6
+```
+
+`deepseek-v4-flash` is the default low-cost model. The integration explicitly
+disables thinking mode to avoid unnecessary reasoning-token output. Hosted
+startup fails closed if the key is missing, the model uses a legacy identifier,
+or the base URL does not point to the official HTTPS DeepSeek endpoint. Output
+tokens and agent steps are also capped to limit runaway cost.
+
 ## 2. Use internal service addresses
 
 For Docker Compose:
