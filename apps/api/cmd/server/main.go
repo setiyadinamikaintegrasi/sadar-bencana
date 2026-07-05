@@ -16,6 +16,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if cfg.IsProductionRuntime() {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	if err := cfg.ValidateSecurity(); err != nil {
 		log.Fatalf("invalid security configuration: %v", err)
 	}

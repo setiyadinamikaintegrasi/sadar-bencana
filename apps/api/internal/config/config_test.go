@@ -112,3 +112,16 @@ func TestValidateSecurityAllowsTokenlessLocalDevelopment(t *testing.T) {
 		t.Fatalf("local development should not require internal tokens: %v", err)
 	}
 }
+
+func TestIsProductionRuntime(t *testing.T) {
+	for _, env := range []string{"production", "hosted", "docker", " HOSTED "} {
+		if !(Config{Env: env}).IsProductionRuntime() {
+			t.Fatalf("expected %q to be a production runtime", env)
+		}
+	}
+	for _, env := range []string{"", "local", "development", "test"} {
+		if (Config{Env: env}).IsProductionRuntime() {
+			t.Fatalf("expected %q not to be a production runtime", env)
+		}
+	}
+}

@@ -40,6 +40,9 @@ back to the API container rather than the Worker container.
 that can directly reach the Go API. Production startup rejects an empty list
 and wildcard networks such as `0.0.0.0/0` or `::/0`.
 
+The Go API automatically enables Gin release mode when `API_ENV` is
+`production`, `hosted`, or `docker`; no separate `GIN_MODE` setting is needed.
+
 ## 3. Keep internal ports private
 
 The Compose file binds Web, API, Worker, and Redis to `127.0.0.1`. Mastra must
