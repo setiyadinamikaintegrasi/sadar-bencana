@@ -52,7 +52,12 @@ func TestDeploymentDefaultsToCommunityWithTwentyPersonalAssets(t *testing.T) {
 }
 
 func TestValidateSecurityRequiresDistinctStrongTokensOutsideLocal(t *testing.T) {
-	cfg := Config{Env: "hosted", WorkerAPIToken: "w", MastraAPIToken: "m"}
+	cfg := Config{
+		Env:            "hosted",
+		WorkerAPIToken: "w",
+		MastraAPIToken: "m",
+		TrustedProxies: []string{"127.0.0.1/32", "172.16.0.0/12"},
+	}
 	if err := cfg.ValidateSecurity(); err == nil {
 		t.Fatal("expected weak production tokens to be rejected")
 	}
@@ -66,6 +71,39 @@ func TestValidateSecurityRequiresDistinctStrongTokensOutsideLocal(t *testing.T) 
 	cfg.MastraAPIToken = "m" + strings.Repeat("2", 31)
 	if err := cfg.ValidateSecurity(); err != nil {
 		t.Fatalf("expected distinct strong tokens to pass: %v", err)
+	}
+}
+
+func TestValidateSecurityRequiresExplicitNarrowTrustedProxies(t *testing.T) {
+	cfg := Config{
+		Env:            "hosted",
+		WorkerAPIToken: "w" + strings.Repeat("1", 31),
+		MastraAPIToken: "m" + strings.Repeat("2", 31),
+	}
+	if err := cfg.ValidateSecurity(); err == nil {
+		t.Fatal("expected empty production trusted proxy list to be rejected")
+	}
+
+	for _, wildcard := range []string{"*", "0.0.0.0/0", "::/0"} {
+		cfg.TrustedProxies = []string{wildcard}
+		if err := cfg.ValidateSecurity(); err == nil {
+			t.Fatalf("expected wildcard trusted proxy %q to be rejected", wildcard)
+		}
+	}
+
+	cfg.TrustedProxies = []string{"127.0.0.1/32", "172.16.0.0/12"}
+	if err := cfg.ValidateSecurity(); err != nil {
+		t.Fatalf("expected narrow trusted proxies to pass: %v", err)
+	}
+}
+
+func TestLoadParsesTrustedProxyList(t *testing.T) {
+	t.Setenv("TRUSTED_PROXIES", " 127.0.0.1/32, 172.16.0.0/12 ,, ::1/128 ")
+
+	got := Load().TrustedProxies
+	want := []string{"127.0.0.1/32", "172.16.0.0/12", "::1/128"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("TrustedProxies = %#v, want %#v", got, want)
 	}
 }
 

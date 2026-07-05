@@ -30,10 +30,15 @@ For Docker Compose:
 ```dotenv
 WORKER_BASE_URL=http://worker:8002
 MASTRA_BASE_URL=http://host.docker.internal:4111
+TRUSTED_PROXIES=127.0.0.1/32,::1/128,172.16.0.0/12
 ```
 
 Do not use `127.0.0.1:8002` from inside the API container; that address points
 back to the API container rather than the Worker container.
+
+`TRUSTED_PROXIES` must contain only the loopback and private Docker networks
+that can directly reach the Go API. Production startup rejects an empty list
+and wildcard networks such as `0.0.0.0/0` or `::/0`.
 
 ## 3. Keep internal ports private
 

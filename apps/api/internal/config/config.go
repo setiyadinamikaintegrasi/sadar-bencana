@@ -32,6 +32,7 @@ type Config struct {
 	SMTPUser                  string
 	SMTPPassword              string
 	SMTPFrom                  string
+	TrustedProxies            []string
 }
 
 func Load() Config {
@@ -59,6 +60,7 @@ func Load() Config {
 		SMTPUser:                  getEnv("SMTP_USER", ""),
 		SMTPPassword:              getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                  getEnv("SMTP_FROM", "noreply@sadarbencana.id"),
+		TrustedProxies:            getEnvList("TRUSTED_PROXIES"),
 	}
 }
 
@@ -77,6 +79,15 @@ func (cfg Config) ValidateSecurity() error {
 	}
 	if cfg.WorkerAPIToken == cfg.MastraAPIToken {
 		return fmt.Errorf("WORKER_API_TOKEN and MASTRA_API_TOKEN must use different values")
+	}
+	if len(cfg.TrustedProxies) == 0 {
+		return fmt.Errorf("TRUSTED_PROXIES must contain at least one explicit proxy address or CIDR")
+	}
+	for _, proxy := range cfg.TrustedProxies {
+		switch strings.ToLower(strings.TrimSpace(proxy)) {
+		case "*", "0.0.0.0", "0.0.0.0/0", "::", "::/0":
+			return fmt.Errorf("TRUSTED_PROXIES must not trust all addresses")
+		}
 	}
 	return nil
 }
@@ -100,6 +111,21 @@ func getEnv(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func getEnvList(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+
+	values := make([]string, 0)
+	for _, value := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 func getEnvInt(key string, fallback int) int {
