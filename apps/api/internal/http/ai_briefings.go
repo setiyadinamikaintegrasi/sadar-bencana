@@ -24,6 +24,7 @@ const (
 	mastraWorkflowPath             = "/api/workflows/daily-briefing-workflow"
 	mastraRecordSeparator          = byte(0x1e)
 	mastraCreateRunTimeout         = 15 * time.Second
+	executiveBriefingCacheKey      = "latest"
 )
 
 type sseStatusPayload struct {
@@ -77,7 +78,13 @@ type briefingFallbackBriefing struct {
 
 // AIExecutiveBriefingStream proxies the Mastra daily briefing workflow as a
 // normalized SSE endpoint for the frontend.
-func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL, mastraAPIToken string, aiBriefingTimeout time.Duration) gin.HandlerFunc {
+func AIExecutiveBriefingStream(
+	db *sql.DB,
+	mastraBaseURL, mastraAPIToken string,
+	aiBriefingTimeout time.Duration,
+	limits AIUsageLimits,
+	cacheTTL time.Duration,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		triggerWorkerRefresh, err := parseOptionalBool(c.Query("triggerWorkerRefresh"), false)
 		if err != nil {
@@ -96,6 +103,26 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL, mastraAPIToken string,
 			})
 			return
 		}
+
+		if !triggerWorkerRefresh && cacheTTL > 0 {
+			if cached, found := loadExecutiveBriefingCache(c.Request.Context(), db, cacheTTL); found {
+				emitCachedExecutiveBriefing(c, runID, cached)
+				return
+			}
+		}
+
+		lease, ok := acquireAIUsage(c, db, "executive_briefing", limits)
+		if !ok {
+			return
+		}
+		completed := false
+		defer func() {
+			status := "failed"
+			if completed {
+				status = "completed"
+			}
+			lease.Finish(context.Background(), status, c.Writer.Status())
+		}()
 
 		w := c.Writer
 		h := w.Header()
@@ -158,6 +185,7 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL, mastraAPIToken string,
 		}
 
 		note := "Dihasilkan oleh workflow Mastra + local LLM."
+		saveExecutiveBriefingCache(c.Request.Context(), db, content, note, AuthUserID(c))
 		emitSSE(c, "final", sseFinalPayload{
 			Content: content,
 			RunID:   runID,
@@ -166,7 +194,62 @@ func AIExecutiveBriefingStream(db *sql.DB, mastraBaseURL, mastraAPIToken string,
 		})
 		emitSSE(c, "done", sseDonePayload{RunID: runID, Mode: "ai"})
 		flusher.Flush()
+		completed = true
 	}
+}
+
+type executiveBriefingCache struct {
+	Content string
+	Note    string
+}
+
+func loadExecutiveBriefingCache(ctx context.Context, db *sql.DB, ttl time.Duration) (executiveBriefingCache, bool) {
+	if db == nil {
+		return executiveBriefingCache{}, false
+	}
+	var cached executiveBriefingCache
+	err := db.QueryRowContext(ctx, `
+SELECT content, note
+FROM ai_executive_briefing_cache
+WHERE cache_key=$1
+  AND generated_at >= NOW() - ($2 * INTERVAL '1 second')`,
+		executiveBriefingCacheKey, int(ttl.Seconds())).
+		Scan(&cached.Content, &cached.Note)
+	return cached, err == nil && strings.TrimSpace(cached.Content) != ""
+}
+
+func saveExecutiveBriefingCache(ctx context.Context, db *sql.DB, content, note, authUserID string) {
+	if db == nil || strings.TrimSpace(content) == "" || authUserID == "" {
+		return
+	}
+	_, _ = db.ExecContext(ctx, `
+INSERT INTO ai_executive_briefing_cache
+    (cache_key, content, note, generated_by, generated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (cache_key) DO UPDATE
+SET content=EXCLUDED.content,
+    note=EXCLUDED.note,
+    generated_by=EXCLUDED.generated_by,
+    generated_at=EXCLUDED.generated_at`,
+		executiveBriefingCacheKey, content, note, authUserID)
+}
+
+func emitCachedExecutiveBriefing(c *gin.Context, runID string, cached executiveBriefingCache) {
+	h := c.Writer.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	h.Set("X-Accel-Buffering", "no")
+	note := cached.Note
+	if strings.TrimSpace(note) == "" {
+		note = "Executive briefing tersimpan."
+	}
+	emitSSE(c, "status", sseStatusPayload{
+		Stage: "cache", Message: "Using cached executive briefing", RunID: runID, Mode: "cache",
+	})
+	emitSSE(c, "final", sseFinalPayload{
+		Content: cached.Content, RunID: runID, Mode: "cache", Note: note,
+	})
+	emitSSE(c, "done", sseDonePayload{RunID: runID, Mode: "cache"})
 }
 
 func handleBriefingFallback(c *gin.Context, flusher http.Flusher, db *sql.DB, runID, reason string) {

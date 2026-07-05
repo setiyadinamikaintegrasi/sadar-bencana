@@ -2,10 +2,14 @@ package http
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,13 +28,46 @@ type CopilotEvent struct {
 
 // AICopilotChat proxies a chat request to the Mastra analyst-copilot-agent
 // and streams the AI SDK-compatible SSE response back to the frontend.
-func AICopilotChat(mastraBaseURL, mastraAPIToken string, timeout time.Duration) gin.HandlerFunc {
+func AICopilotChat(
+	db *sql.DB,
+	mastraBaseURL, mastraAPIToken string,
+	timeout time.Duration,
+	limits AIUsageLimits,
+	maxPromptCharacters int,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CopilotQueryRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "bad request: message is required"})
 			return
 		}
+		req.Message = strings.TrimSpace(req.Message)
+		if req.Message == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad request: message is required"})
+			return
+		}
+		if maxPromptCharacters > 0 && utf8.RuneCountInString(req.Message) > maxPromptCharacters {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error":          "ai_prompt_too_long",
+				"message":        "Pesan Copilot terlalu panjang.",
+				"max_characters": maxPromptCharacters,
+			})
+			return
+		}
+
+		lease, ok := acquireAIUsage(c, db, "copilot", limits)
+		if !ok {
+			return
+		}
+		completed := false
+		defer func() {
+			status := "failed"
+			responseStatus := c.Writer.Status()
+			if completed {
+				status = "completed"
+			}
+			lease.Finish(context.Background(), status, responseStatus)
+		}()
 
 		ctx := c.Request.Context()
 
@@ -102,6 +139,9 @@ func AICopilotChat(mastraBaseURL, mastraAPIToken string, timeout time.Duration) 
 				flusher.Flush()
 			}
 			if readErr != nil {
+				if readErr == io.EOF {
+					completed = true
+				}
 				return
 			}
 		}

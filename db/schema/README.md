@@ -48,3 +48,6 @@ The alert-classification safety migration is:
 - `035_direct_database_access_hardening.sql` — preserves deny-by-default RLS,
   revokes direct browser-role privileges, and makes future application tables
   private unless a reviewed migration explicitly exposes them.
+- `036_ai_access_controls.sql` — stores server-side AI usage leases and the
+  shared Executive Briefing cache; both tables remain inaccessible to browser
+  database roles.

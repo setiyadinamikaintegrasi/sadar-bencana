@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import MarkdownMessage from '../../components/MarkdownMessage'
 import SourceBadge from '../../components/SourceBadge'
+import LoginGate from '../ews/LoginGate'
+import { useAuth } from '../../lib/auth/AuthProvider'
 import {
   getBriefing,
   type AiExecutiveBriefing,
@@ -90,6 +92,7 @@ function getBriefingProgressLabel(stage: string, message?: string) {
 }
 
 export default function BriefingPage() {
+  const { session } = useAuth()
   const [briefing, setBriefing] = useState<Briefing | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -233,11 +236,14 @@ export default function BriefingPage() {
   }, [loadBriefing])
 
   useEffect(() => {
-    if (!briefing || aiBriefing || aiLoading) return
+    if (!session || !briefing || aiBriefing || aiLoading) return
     void loadAiBriefing(false)
-  }, [aiBriefing, aiLoading, briefing, loadAiBriefing])
+  }, [aiBriefing, aiLoading, briefing, loadAiBriefing, session])
 
   useEffect(() => stopAiStream, [stopAiStream])
+  useEffect(() => {
+    if (!session) stopAiStream()
+  }, [session, stopAiStream])
 
   const formattedDate = useMemo(
     () => (briefing ? formatBriefingDate(briefing.date) : '—'),
@@ -246,11 +252,11 @@ export default function BriefingPage() {
 
   const handleRefresh = useCallback(() => {
     void loadBriefing('refresh')
-    loadAiBriefing(true)
+    loadAiBriefing(false)
   }, [loadAiBriefing, loadBriefing])
 
   const handleAiRefresh = useCallback(() => {
-    loadAiBriefing(true)
+    loadAiBriefing(false)
   }, [loadAiBriefing])
 
   return (
@@ -308,7 +314,8 @@ export default function BriefingPage() {
         </section>
       ) : briefing ? (
         <>
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
+          {session ? (
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-3">
@@ -413,7 +420,14 @@ export default function BriefingPage() {
                 </p>
               )}
             </div>
-          </section>
+            </section>
+          ) : (
+            <LoginGate
+              title="AI Executive Briefing"
+              subtitleIn="Masuk untuk membuat atau membuka Executive Briefing berbasis AI."
+              subtitleUp="Daftar dan konfirmasi email untuk menggunakan Executive Briefing."
+            />
+          )}
 
           <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
             <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">

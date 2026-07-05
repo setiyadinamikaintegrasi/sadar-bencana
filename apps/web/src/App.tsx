@@ -10,7 +10,9 @@ import SourceHealthPage from './features/health/SourceHealthPage'
 import EwsPage from './features/ews/EwsPage'
 import RegionalHistoryPage from './features/history/RegionalHistoryPage'
 import OfficialSourcesSettingsPage from './features/settings/OfficialSourcesSettingsPage'
+import LoginGate from './features/ews/LoginGate'
 import TopNav from './components/TopNav'
+import { useAuth } from './lib/auth/AuthProvider'
 
 const sections = [
   { label: 'Executive Overview', icon: '◼' },
@@ -26,6 +28,23 @@ const sections = [
 ] as const
 
 type Section = (typeof sections)[number]['label']
+
+function AIProtected({ children }: { children: React.ReactNode }) {
+  const { session, loading } = useAuth()
+  if (loading) {
+    return <p className="py-12 text-center text-sm text-slate-400">Memeriksa sesi…</p>
+  }
+  if (!session) {
+    return (
+      <LoginGate
+        title="Fitur AI"
+        subtitleIn="Masuk untuk menggunakan Executive Briefing dan Analyst Copilot."
+        subtitleUp="Daftar dan konfirmasi email untuk mengakses fitur AI."
+      />
+    )
+  }
+  return <>{children}</>
+}
 
 const bottomTabs = [
   { label: 'Overview', section: 'Executive Overview' as Section, icon: '◼' },
@@ -76,7 +95,7 @@ function App() {
           ) : activeSection === 'Briefing' ? (
             <BriefingPage />
           ) : activeSection === 'AI Copilot' ? (
-            <CopilotPage />
+            <AIProtected><CopilotPage /></AIProtected>
           ) : activeSection === 'Source Health' ? (
             <SourceHealthPage />
           ) : activeSection === 'Early Warning' ? (
