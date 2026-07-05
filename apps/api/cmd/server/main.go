@@ -106,10 +106,14 @@ func main() {
 		settings.POST("/official-sources/:source/activate", apihttp.OfficialSourceActivate(dbPool))
 		settings.POST("/official-sources/:source/rollback", apihttp.OfficialSourceRollback(dbPool))
 		settings.GET("/official-sources/:source/history", apihttp.OfficialSourceHistory(dbPool))
-		settings.POST("/historical/bmkg-data-online/preview", apihttp.BMKGDataOnlinePreview(dbPool, cfg.WorkerBaseURL))
+		settings.POST("/historical/bmkg-data-online/preview", apihttp.BMKGDataOnlinePreview(dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken))
 	}
-	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
-	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
+	// Asset endpoints require authentication (JWT) — contain operational data
+	assetsAuth := router.Group("/api/v1/assets", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	{
+		assetsAuth.GET("/marine", apihttp.AssetsMarine(dbPool))
+		assetsAuth.GET("/aviation", apihttp.AssetsAviation(dbPool))
+	}
 	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
 	router.GET("/api/v1/map/overlays", apihttp.MapRiskOverlays(dbPool))
 	mapMe := router.Group("/api/v1/map", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))

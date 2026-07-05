@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from models.official_alert import OfficialAlertInput
+from ssrf_guard import validate_resolved_ips
 
 ALLOWED_HOSTS = {
     "inatews": ("bmkg.go.id",),
@@ -42,6 +43,11 @@ class ApprovedJSONFeedConnector:
         self.api_token = api_token
 
     async def fetch_payload(self) -> Any:
+        # SSRF defense-in-depth: validate resolved IPs before connecting
+        parsed = urlparse(self.url)
+        if parsed.hostname:
+            validate_resolved_ips(parsed.hostname)
+
         if self.client is None:
             headers = {"User-Agent": "SadarBencana/0.4 official-source-connector"}
             if self.api_token:

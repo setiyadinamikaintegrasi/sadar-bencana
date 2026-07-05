@@ -55,3 +55,5 @@ apps/mastra/.mastra/
 # Coverage / build output
 coverage/
 build/
+schema_backup*
+.env.pre-*

@@ -13,7 +13,7 @@ import (
 
 const maxBMKGWorkbookBytes = 10 << 20
 
-func BMKGDataOnlinePreview(db *sql.DB, workerBaseURL string) gin.HandlerFunc {
+func BMKGDataOnlinePreview(db *sql.DB, workerBaseURL string, workerToken string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if db == nil || !requireSettingsAdmin(c, db) {
 			if db == nil {
@@ -38,6 +38,9 @@ func BMKGDataOnlinePreview(db *sql.DB, workerBaseURL string) gin.HandlerFunc {
 			return
 		}
 		request.Header.Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		if workerToken != "" {
+			request.Header.Set("Authorization", "Bearer "+workerToken)
+		}
 		response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "worker_unavailable"})

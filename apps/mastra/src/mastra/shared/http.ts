@@ -1,8 +1,18 @@
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  // Attach internal bearer token for worker calls
+  const workerToken = process.env.WORKER_API_TOKEN
+  if (workerToken) {
+    headers['Authorization'] = `Bearer ${workerToken}`
+  }
+
   const response = await fetch(url, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...headers,
       ...(init?.headers ?? {}),
     },
   })

@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import time
+import json
+import sys
 from typing import Any
 
 import asyncpg
@@ -12,6 +15,42 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from uuid import UUID
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+import hmac
+
+# ---------------------------------------------------------------------------
+# Structured security logging (JSON, no token/PII)
+# ---------------------------------------------------------------------------
+
+class _SecurityLogFormatter(logging.Formatter):
+    """Emit JSON log lines with method, path, status, duration — no PII or tokens."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_entry: dict[str, Any] = {
+            "ts": getattr(record, "ts", ""),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        for attr in ("method", "path", "status", "duration_ms", "client_ip", "outcome"):
+            val = getattr(record, attr, None)
+            if val is not None:
+                log_entry[attr] = val
+        return json.dumps(log_entry, default=str)
+
+
+def _setup_logging() -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_SecurityLogFormatter())
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+_setup_logging()
 
 from alerts import evaluate_and_create_alerts
 from alerts.lifecycle_delivery import (
@@ -68,7 +107,178 @@ from scoring.risk import score_events
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Risk Monitor Worker", version="0.1.0")
+# Production hardening: disable docs/openapi in production
+_is_production = os.getenv("API_ENV", "local").strip().lower() in {"production", "hosted", "docker"}
+
+app = FastAPI(
+    title="Risk Monitor Worker",
+    version="0.1.0",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
+)
+
+# ---------------------------------------------------------------------------
+# Security: Bearer token middleware for internal API
+# ---------------------------------------------------------------------------
+
+_WORKER_TOKEN: str | None = None
+_SECURITY_SCHEME = HTTPBearer(auto_error=False)
+
+
+def _get_worker_token() -> str:
+    """Load and validate the WORKER_API_TOKEN from the environment.
+
+    The token is read from the environment on first access so that test
+    harnesses can patch ``os.environ`` before the first request lands.
+    """
+    global _WORKER_TOKEN
+    if _WORKER_TOKEN is None:
+        _WORKER_TOKEN = os.getenv("WORKER_API_TOKEN", "").strip()
+    return _WORKER_TOKEN
+
+
+class WorkerAuthMiddleware(BaseHTTPMiddleware):
+    """Require a valid bearer token for all /api/v1/* routes except /health.
+
+    Uses ``hmac.compare_digest`` for constant-time comparison to prevent
+    timing attacks. /health is exempt so container orchestration probes
+    can function without credentials.
+    """
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        path = request.url.path
+
+        # Allow health checks without authentication
+        if path == "/health":
+            return await call_next(request)
+
+        # Only protect /api/v1/* endpoints
+        if not path.startswith("/api/v1/"):
+            return await call_next(request)
+
+        token = _get_worker_token()
+        if not token:
+            # Fail-closed: if no token is configured, deny all API access
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Worker authentication not configured"},
+            )
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid Authorization header"},
+            )
+
+        provided = auth_header[7:]  # strip "Bearer " prefix
+        if not hmac.compare_digest(provided, token):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid token"},
+            )
+
+        return await call_next(request)
+
+
+app.add_middleware(WorkerAuthMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting for mutation endpoints (in-memory, per-IP)
+# ---------------------------------------------------------------------------
+
+from collections import defaultdict
+from time import monotonic
+
+_MUTATION_WINDOW_S = 60  # 1 minute window
+_MUTATION_MAX = 30       # max 30 mutation requests per minute per IP
+_mutation_log: dict[str, list[float]] = defaultdict(list)
+
+
+class MutationRateLimitMiddleware(BaseHTTPMiddleware):
+    """Simple in-memory rate limiter for POST/PUT/DELETE on /api/v1/*."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        path = request.url.path
+        method = request.method.upper()
+
+        if method not in ("POST", "PUT", "DELETE", "PATCH"):
+            return await call_next(request)
+        if not path.startswith("/api/v1/"):
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        now = monotonic()
+        entries = _mutation_log[client_ip]
+
+        # Prune old entries
+        _mutation_log[client_ip] = [t for t in entries if now - t < _MUTATION_WINDOW_S]
+        if len(_mutation_log[client_ip]) >= _MUTATION_MAX:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+                headers={"Retry-After": str(_MUTATION_WINDOW_S)},
+            )
+
+        _mutation_log[client_ip].append(now)
+        return await call_next(request)
+
+
+app.add_middleware(MutationRateLimitMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# Security headers + response hardening
+# ---------------------------------------------------------------------------
+
+_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB max request body
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add Cache-Control: no-store and basic security headers to API responses."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        _req_start = time.monotonic()
+        path = request.url.path
+
+        # Reject oversized request bodies early
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _MAX_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large"},
+            )
+
+        response = await call_next(request)
+
+        # Structured request log (no PII, no tokens)
+        duration_ms = int((time.monotonic() - _req_start) * 1000)
+        logger.info(
+            "request",
+            extra={
+                "method": request.method,
+                "path": path,
+                "status": response.status_code,
+                "duration_ms": duration_ms,
+                "client_ip": request.client.host if request.client else "-",
+            },
+        )
+
+        # Apply no-store to all API responses (never cache API data)
+        if path.startswith("/api/") or path.startswith("/health"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Module-level scheduler instances. Created lazily in the startup hook so
 # they bind to the running event loop. Captured module-level so the
