@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from models.official_alert import OfficialAlertInput
+from ssrf_guard import resolve_public_ips
 
 ALLOWED_HOSTS = {
     "inatews": ("bmkg.go.id",),
@@ -29,7 +30,13 @@ def validate_official_feed_url(source: str, url: str) -> None:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     allowed = ALLOWED_HOSTS[source]
-    if parsed.scheme != "https" or not any(host == item or host.endswith(f".{item}") for item in allowed):
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+        or not any(host == item or host.endswith(f".{item}") for item in allowed)
+    ):
         raise ValueError(f"{source} feed must use an approved HTTPS official host")
 
 
@@ -42,6 +49,18 @@ class ApprovedJSONFeedConnector:
         self.api_token = api_token
 
     async def fetch_payload(self) -> Any:
+        # Resolve once, validate, then connect to that exact address. Preserve
+        # the official hostname for Host and TLS SNI certificate validation.
+        parsed = urlparse(self.url)
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("official feed URL requires a hostname")
+        resolved_ip = resolve_public_ips(hostname)[0]
+        ip_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        pinned_url = parsed._replace(netloc=f"{ip_host}{port}").geturl()
+        host_header = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+
         if self.client is None:
             headers = {"User-Agent": "SadarBencana/0.4 official-source-connector"}
             if self.api_token:
@@ -51,7 +70,13 @@ class ApprovedJSONFeedConnector:
                 follow_redirects=False,
                 headers=headers,
             )
-        response = await self.client.get(self.url)
+        request = self.client.build_request(
+            "GET",
+            pinned_url,
+            headers={"Host": host_header},
+            extensions={"sni_hostname": hostname},
+        )
+        response = await self.client.send(request)
         response.raise_for_status()
         return response.json()
 

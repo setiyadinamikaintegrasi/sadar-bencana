@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"math"
 	"net/http"
 	"time"
 
@@ -91,6 +92,12 @@ func AssetsMarine(db *sql.DB) gin.HandlerFunc {
 			vessels = append(vessels, v)
 		}
 
+		// Defense-in-depth: round coordinates to ~1.1 km precision
+		for i := range vessels {
+			vessels[i].Latitude = math.Round(vessels[i].Latitude*100) / 100
+			vessels[i].Longitude = math.Round(vessels[i].Longitude*100) / 100
+		}
+
 		if err := rows.Err(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":   "rows_iteration_failed",
@@ -143,6 +150,12 @@ func AssetsAviation(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 			aircraft = append(aircraft, a)
+		}
+
+		// Defense-in-depth: round coordinates to ~1.1 km precision
+		for i := range aircraft {
+			aircraft[i].Latitude = math.Round(aircraft[i].Latitude*100) / 100
+			aircraft[i].Longitude = math.Round(aircraft[i].Longitude*100) / 100
 		}
 
 		if err := rows.Err(); err != nil {

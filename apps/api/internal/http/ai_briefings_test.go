@@ -16,6 +16,9 @@ func TestCreateMastraRunUsesDailyBriefingWorkflowPath(t *testing.T) {
 	var requestedPath atomic.Value
 	server := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		requestedPath.Store(r.URL.Path + "?" + r.URL.RawQuery)
+		if got := r.Header.Get("Authorization"); got != "Bearer mastra-test-token" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
 		if r.URL.Path != "/api/workflows/daily-briefing-workflow/create-run" {
 			t.Fatalf("unexpected create-run path: %s", r.URL.Path)
 		}
@@ -26,7 +29,7 @@ func TestCreateMastraRunUsesDailyBriefingWorkflowPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := createMastraRun(context.Background(), server.URL, "run-123"); err != nil {
+	if err := createMastraRun(context.Background(), server.URL, "mastra-test-token", "run-123"); err != nil {
 		t.Fatalf("createMastraRun returned error: %v", err)
 	}
 
@@ -38,6 +41,9 @@ func TestCreateMastraRunUsesDailyBriefingWorkflowPath(t *testing.T) {
 func TestStreamMastraBriefingUsesWorkflowPathAndReturnsBriefing(t *testing.T) {
 	var streamHits atomic.Int32
 	server := httptest.NewServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer mastra-test-token" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
 		switch r.URL.Path {
 		case "/api/workflows/daily-briefing-workflow/stream":
 			streamHits.Add(1)
@@ -60,6 +66,7 @@ func TestStreamMastraBriefingUsesWorkflowPathAndReturnsBriefing(t *testing.T) {
 	briefing, err := streamMastraBriefing(
 		context.Background(),
 		server.URL,
+		"mastra-test-token",
 		2*time.Second,
 		"run-456",
 		false,
@@ -96,6 +103,7 @@ func TestStreamMastraBriefingHonorsTimeout(t *testing.T) {
 	_, err := streamMastraBriefing(
 		context.Background(),
 		server.URL,
+		"mastra-test-token",
 		20*time.Millisecond,
 		"run-timeout",
 		false,

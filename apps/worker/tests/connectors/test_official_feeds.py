@@ -19,6 +19,10 @@ def test_rejects_non_official_or_insecure_feed_urls():
         validate_official_feed_url("inarisk", "https://evil.example/layers")
     with pytest.raises(ValueError):
         validate_official_feed_url("pvmbg", "http://magma.esdm.go.id/api")
+    with pytest.raises(ValueError):
+        validate_official_feed_url("bnpb", "https://data.bnpb.go.id:8443/api")
+    with pytest.raises(ValueError):
+        validate_official_feed_url("bnpb", "https://attacker@data.bnpb.go.id/api")
     validate_official_feed_url("bnpb", "https://data.bnpb.go.id/api/3/action/package_show")
 
 

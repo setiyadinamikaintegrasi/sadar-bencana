@@ -12,12 +12,13 @@ export default function LoginGate({
   subtitleIn = 'Masuk untuk mengelola Daftar Risiko & preferensi Early Warning System Anda.',
   subtitleUp = 'Daftar untuk mengelola risiko dan menerima peringatan bencana.',
 }: LoginGateProps = {}) {
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, resendConfirmation } = useAuth()
   const [mode, setMode] = useState<'in' | 'up'>('in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [confirmationPending, setConfirmationPending] = useState(false)
 
   const submit = async () => {
     setBusy(true)
@@ -26,7 +27,19 @@ export default function LoginGate({
     const { error } = await fn(email.trim(), password)
     setBusy(false)
     if (error) setMsg(error)
-    else if (mode === 'up') setMsg('Pendaftaran berhasil. Cek email untuk konfirmasi bila diaktifkan, lalu masuk.')
+    else if (mode === 'up') {
+      setConfirmationPending(true)
+      setMsg('Pendaftaran berhasil. Cek email Anda untuk tautan konfirmasi — akun harus dikonfirmasi sebelum bisa masuk.')
+    }
+  }
+
+  const handleResend = async () => {
+    if (!email.trim()) return
+    setBusy(true)
+    const { error } = await resendConfirmation(email.trim())
+    setBusy(false)
+    if (error) setMsg(error)
+    else setMsg('Tautan konfirmasi telah dikirim ulang. Cek email Anda.')
   }
 
   const input = 'w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-indigo-400'
@@ -40,10 +53,29 @@ export default function LoginGate({
         </p>
       </div>
       <div className="space-y-2">
-        <input className={input} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input
+          className={input}
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            setConfirmationPending(false)
+          }}
+        />
         <input className={input} type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </div>
       {msg && <p className="text-sm text-amber-300">{msg}</p>}
+      {mode === 'up' && confirmationPending && (
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={busy || !email}
+          className="w-full text-center text-xs text-slate-500 hover:text-slate-300 disabled:opacity-50"
+        >
+          Tidak menerima email konfirmasi? Kirim ulang
+        </button>
+      )}
       <button
         type="button"
         onClick={submit}
@@ -54,7 +86,11 @@ export default function LoginGate({
       </button>
       <button
         type="button"
-        onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setMsg(null) }}
+        onClick={() => {
+          setMode(mode === 'in' ? 'up' : 'in')
+          setMsg(null)
+          setConfirmationPending(false)
+        }}
         className="w-full text-center text-xs text-slate-400 hover:text-slate-200"
       >
         {mode === 'in' ? 'Belum punya akun? Daftar' : 'Sudah punya akun? Masuk'}

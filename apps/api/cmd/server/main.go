@@ -16,6 +16,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.ValidateSecurity(); err != nil {
+		log.Fatalf("invalid security configuration: %v", err)
+	}
 	if strings.TrimSpace(cfg.DatabaseURL) == "" {
 		log.Fatal("DATABASE_URL is required; configure the Supabase pooled connection string before starting the API")
 	}
@@ -57,8 +60,8 @@ func main() {
 	router.GET("/api/v1/news", apihttp.News(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
-	router.GET("/api/v1/ai/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(dbPool, cfg.MastraBaseURL, cfg.AIBriefingTimeout))
-	router.POST("/api/v1/ai/copilot/chat", apihttp.AICopilotChat(cfg.MastraBaseURL, cfg.AIBriefingTimeout))
+	router.GET("/api/v1/ai/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(dbPool, cfg.MastraBaseURL, cfg.MastraAPIToken, cfg.AIBriefingTimeout))
+	router.POST("/api/v1/ai/copilot/chat", apihttp.AICopilotChat(cfg.MastraBaseURL, cfg.MastraAPIToken, cfg.AIBriefingTimeout))
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
 	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
@@ -106,10 +109,14 @@ func main() {
 		settings.POST("/official-sources/:source/activate", apihttp.OfficialSourceActivate(dbPool))
 		settings.POST("/official-sources/:source/rollback", apihttp.OfficialSourceRollback(dbPool))
 		settings.GET("/official-sources/:source/history", apihttp.OfficialSourceHistory(dbPool))
-		settings.POST("/historical/bmkg-data-online/preview", apihttp.BMKGDataOnlinePreview(dbPool, cfg.WorkerBaseURL))
+		settings.POST("/historical/bmkg-data-online/preview", apihttp.BMKGDataOnlinePreview(dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken))
 	}
-	router.GET("/api/v1/assets/marine", apihttp.AssetsMarine(dbPool))
-	router.GET("/api/v1/assets/aviation", apihttp.AssetsAviation(dbPool))
+	// Asset endpoints require authentication (JWT) — contain operational data
+	assetsAuth := router.Group("/api/v1/assets", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	{
+		assetsAuth.GET("/marine", apihttp.AssetsMarine(dbPool))
+		assetsAuth.GET("/aviation", apihttp.AssetsAviation(dbPool))
+	}
 	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
 	router.GET("/api/v1/map/overlays", apihttp.MapRiskOverlays(dbPool))
 	mapMe := router.Group("/api/v1/map", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))

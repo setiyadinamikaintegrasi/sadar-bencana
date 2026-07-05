@@ -13,7 +13,13 @@ if (!isConfigured) {
 export const supabase = createClient(
   url || 'https://placeholder.supabase.co',
   anonKey || 'placeholder-anon-key',
-  { auth: { persistSession: true, autoRefreshToken: true } },
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  },
 )
 
 export const isSupabaseConfigured = isConfigured

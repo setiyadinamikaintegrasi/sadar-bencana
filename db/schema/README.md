@@ -45,3 +45,6 @@ The alert-classification safety migration is:
   audit, and safe staging for BMKG Data Online XLSX records.
 - `034_personal_assets_and_entitlements.sql` — separates private personal assets
   from organization portfolios and adds hosted entitlement records.
+- `035_direct_database_access_hardening.sql` — preserves deny-by-default RLS,
+  revokes direct browser-role privileges, and makes future application tables
+  private unless a reviewed migration explicitly exposes them.

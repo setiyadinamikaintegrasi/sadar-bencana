@@ -56,6 +56,9 @@ jobs:
       - run: npm run typecheck --workspace apps/mastra
       - run: npm run build --workspace apps/mastra
         env:
+          API_ENV: hosted
+          MASTRA_API_TOKEN: ci-mastra-token-0000000000000000
+          WORKER_API_TOKEN: ci-worker-token-0000000000000000
           MASTRA_TELEMETRY_DISABLED: '1'
           OPENAI_API_KEY: build-placeholder
           OPENAI_BASE_URL: http://127.0.0.1:11434/v1
