@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent'
 
-import { localChatModel } from '../shared/model'
+import { aiChatModel, aiDefaultOptions } from '../shared/model'
 import { getDashboardContextTool } from '../tools/dashboard-context'
 import { generateWorkerBriefingTool } from '../tools/worker-briefing'
 
@@ -23,7 +23,8 @@ Aturan penting:
 - jangan melakukan write operation selain trigger pipeline briefing existing bila diminta workflow
 - fokus pada risk posture, top movers, probable impact, dan tindakan lanjutan
   `,
-  model: localChatModel,
+  model: aiChatModel,
+  defaultOptions: aiDefaultOptions,
   tools: {
     getDashboardContextTool,
     generateWorkerBriefingTool,

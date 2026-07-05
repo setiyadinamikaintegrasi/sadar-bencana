@@ -3,7 +3,6 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { config } from './config'
 
 const openAiKeyName = ['OPENAI', 'API', 'KEY'].join('_')
-const deepseekKeyName = ['DEEPSEEK', 'API', 'KEY'].join('_')
 
 const localOpenAI = createOpenAI({
   apiKey: process.env[openAiKeyName] ?? 'local-dev-placeholder',
@@ -11,14 +10,41 @@ const localOpenAI = createOpenAI({
   name: 'local-openai-compatible',
 })
 
-export const localChatModel = localOpenAI.chat(config.model)
+const deepseekFetch: typeof fetch = async (input, init) => {
+  const requestUrl = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url
 
-// Cloud model untuk agent yang butuh respons cepat (copilot interaktif)
-// DeepSeek via OpenAI-compatible endpoint
-const cloudOpenAI = createOpenAI({
-  apiKey: process.env[deepseekKeyName] ?? '',
-  baseURL: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
+  if (
+    requestUrl.endsWith('/chat/completions')
+    && typeof init?.body === 'string'
+  ) {
+    try {
+      const body = JSON.parse(init.body) as Record<string, unknown>
+      body.thinking = { type: 'disabled' }
+      return fetch(input, { ...init, body: JSON.stringify(body) })
+    } catch {
+      // Preserve the provider request if its body is unexpectedly not JSON.
+    }
+  }
+
+  return fetch(input, init)
+}
+
+const deepseekOpenAI = createOpenAI({
+  apiKey: config.deepseekApiKey || 'local-dev-placeholder',
+  baseURL: config.deepseekBaseUrl,
   name: 'deepseek-cloud',
+  fetch: deepseekFetch,
 })
 
-export const cloudChatModel = cloudOpenAI.chat('deepseek-chat')
+export const aiChatModel = config.aiProvider === 'deepseek'
+  ? deepseekOpenAI.chat(config.deepseekModel)
+  : localOpenAI.chat(config.localModel)
+
+export const aiDefaultOptions = {
+  maxOutputTokens: config.aiMaxOutputTokens,
+  maxSteps: config.aiMaxSteps,
+}

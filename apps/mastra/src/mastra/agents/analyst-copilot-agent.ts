@@ -1,6 +1,6 @@
 import { Agent } from '@mastra/core/agent'
 
-import { cloudChatModel } from '../shared/model'
+import { aiChatModel, aiDefaultOptions } from '../shared/model'
 import { getDashboardContextTool } from '../tools/dashboard-context'
 import { getAccumulationTool } from '../tools/accumulation'
 
@@ -32,7 +32,8 @@ Guardrails:
 - Jangan menambah asumsi bisnis yang tidak ada di data.
 - Semua jawaban harus bisa diaudit ulang dari endpoint internal.
   `,
-  model: cloudChatModel,
+  model: aiChatModel,
+  defaultOptions: aiDefaultOptions,
   tools: {
     getDashboardContextTool,
     getAccumulationTool,
