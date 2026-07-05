@@ -20,3 +20,7 @@ Calon worker untuk ingestion, normalization, scoring, dan AI briefing.
   untuk probe internal.
 - Swagger, ReDoc, dan OpenAPI dinonaktifkan di production.
 - Jangan reverse proxy port Worker langsung ke internet.
+- `ASSET_POLL_INTERVAL_SECONDS` mengatur drain aset streaming (default 60 detik).
+- `OPENSKY_POLL_INTERVAL_SECONDS` mengatur polling OpenSky terpisah (default
+  300 detik). Respons `429` memicu exponential backoff dari
+  `OPENSKY_BACKOFF_INITIAL_SECONDS` hingga `OPENSKY_BACKOFF_MAX_SECONDS`.

@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 class AssetScheduler:
-    """Background loop that polls OpenSky every 60s and drains AIS buffer.
+    """Background loop that drains assets at a configurable interval.
 
-    OpenSky is REST-based: we call fetch_states() each tick.
+    OpenSky uses a separate cadence/backoff gate inside the poll function.
     AIS is WebSocket-based: the connector runs continuously in the background;
     we just drain its buffer each tick.
     """

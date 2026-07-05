@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 import asyncpg
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from uuid import UUID
@@ -102,6 +103,7 @@ from schedulers.briefing import BriefingScheduler
 from schedulers.ingest import IngestScheduler
 from schedulers.news import NewsScheduler
 from schedulers.official_alerts import OfficialAlertExpiryScheduler
+from schedulers.opensky import OpenSkyPollGate, parse_retry_after
 from scoring.risk import score_events
 
 logger = logging.getLogger(__name__)
@@ -302,10 +304,27 @@ _official_alert_expiry_scheduler: OfficialAlertExpiryScheduler | None = None
 _lifecycle_delivery_scheduler: IngestScheduler | None = None
 _ais_connector: AISStreamConnector | None = None
 _vf_connector: VesselFinderConnector | None = None
+_opensky_connector: OpenSkyConnector | None = None
+_opensky_poll_gate: OpenSkyPollGate | None = None
 
 
 def _env_enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_seconds(name: str, default: int, *, minimum: int = 10) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s must be an integer; using %ds", name, default)
+        return default
+    if value < minimum:
+        logger.warning("%s must be at least %ds; using %ds", name, minimum, default)
+        return default
+    return value
 
 
 async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
@@ -693,15 +712,29 @@ async def _asset_poll_cycle() -> dict[str, int]:
 
     # --- Aviation (OpenSky REST) ---
     aircraft_count = 0
-    try:
-        sky = OpenSkyConnector()
-        states = await sky.fetch_states()
-        if states:
-            aircraft_count = await upsert_aircraft(pool, states)
-        await upsert_connector_health(pool, "opensky", aircraft_count)
-    except Exception as e:
-        logger.warning("OpenSky poll failed: %s", e)
-        await upsert_connector_health(pool, "opensky", 0, str(e))
+    if _opensky_connector and _opensky_poll_gate and _opensky_poll_gate.ready():
+        try:
+            states = await _opensky_connector.fetch_states()
+            if states:
+                aircraft_count = await upsert_aircraft(pool, states)
+            await upsert_connector_health(pool, "opensky", aircraft_count)
+            _opensky_poll_gate.succeeded()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                delay = _opensky_poll_gate.rate_limited(
+                    parse_retry_after(exc.response.headers.get("Retry-After"))
+                )
+                message = f"rate limited; retrying in {delay}s"
+                logger.warning("OpenSky %s", message)
+                await upsert_connector_health(pool, "opensky", 0, message)
+            else:
+                _opensky_poll_gate.failed()
+                logger.warning("OpenSky poll failed: %s", exc)
+                await upsert_connector_health(pool, "opensky", 0, str(exc))
+        except Exception as exc:
+            _opensky_poll_gate.failed()
+            logger.warning("OpenSky poll failed: %s", exc)
+            await upsert_connector_health(pool, "opensky", 0, str(exc))
 
     # --- Marine: AISStream (WebSocket buffer drain) ---
     vessel_count = 0
@@ -792,7 +825,7 @@ async def startup_event() -> None:
 
     global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
     global _official_alert_expiry_scheduler, _lifecycle_delivery_scheduler
-    global _ais_connector, _vf_connector
+    global _ais_connector, _vf_connector, _opensky_connector, _opensky_poll_gate
 
     try:
         await init_pool()
@@ -815,8 +848,35 @@ async def startup_event() -> None:
     # Start VesselFinder REST connector (credit-based, on-demand polling).
     _vf_connector = VesselFinderConnector()
 
-    # Start asset position polling (OpenSky REST + AIS drain + VesselFinder, every 60s).
-    _asset_scheduler = AssetScheduler(poll_fn=_asset_poll_cycle, interval_seconds=60)
+    asset_interval = _env_seconds("ASSET_POLL_INTERVAL_SECONDS", 60)
+    opensky_interval = _env_seconds(
+        "OPENSKY_POLL_INTERVAL_SECONDS",
+        300,
+        minimum=60,
+    )
+    opensky_backoff_initial = _env_seconds(
+        "OPENSKY_BACKOFF_INITIAL_SECONDS",
+        900,
+        minimum=60,
+    )
+    opensky_backoff_max = _env_seconds(
+        "OPENSKY_BACKOFF_MAX_SECONDS",
+        3600,
+        minimum=opensky_backoff_initial,
+    )
+    _opensky_connector = OpenSkyConnector()
+    _opensky_poll_gate = OpenSkyPollGate(
+        interval_seconds=opensky_interval,
+        backoff_initial_seconds=opensky_backoff_initial,
+        backoff_max_seconds=opensky_backoff_max,
+    )
+
+    # Drain streaming assets frequently while polling OpenSky at its own,
+    # slower cadence with exponential backoff on HTTP 429.
+    _asset_scheduler = AssetScheduler(
+        poll_fn=_asset_poll_cycle,
+        interval_seconds=asset_interval,
+    )
     _asset_scheduler.start()
 
     # Start RSS news polling (every 15 minutes).
