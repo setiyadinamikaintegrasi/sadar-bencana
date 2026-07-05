@@ -16,6 +16,46 @@ func TestLoadUsesUpdatedDefaultAIBriefingTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadUsesSafeDefaultAIControls(t *testing.T) {
+	for _, key := range []string{
+		"AI_EXECUTIVE_CACHE_TTL",
+		"AI_EXECUTIVE_PER_MINUTE",
+		"AI_EXECUTIVE_PER_DAY",
+		"AI_EXECUTIVE_GLOBAL_PER_DAY",
+		"AI_COPILOT_PER_MINUTE",
+		"AI_COPILOT_PER_DAY",
+		"AI_COPILOT_GLOBAL_PER_MINUTE",
+		"AI_COPILOT_GLOBAL_PER_DAY",
+		"AI_COPILOT_MAX_CHARACTERS",
+	} {
+		t.Setenv(key, "")
+	}
+
+	cfg := Load()
+	if cfg.AIExecutiveCacheTTL != 6*time.Hour {
+		t.Fatalf("AIExecutiveCacheTTL=%s, want 6h", cfg.AIExecutiveCacheTTL)
+	}
+	if cfg.AIExecutivePerMinute != 2 || cfg.AIExecutivePerDay != 3 {
+		t.Fatalf("unexpected Executive limits: minute=%d day=%d", cfg.AIExecutivePerMinute, cfg.AIExecutivePerDay)
+	}
+	if cfg.AIExecutiveGlobalPerDay != 20 {
+		t.Fatalf("AIExecutiveGlobalPerDay=%d, want 20", cfg.AIExecutiveGlobalPerDay)
+	}
+	if cfg.AICopilotPerMinute != 5 || cfg.AICopilotPerDay != 10 {
+		t.Fatalf("unexpected Copilot limits: minute=%d day=%d", cfg.AICopilotPerMinute, cfg.AICopilotPerDay)
+	}
+	if cfg.AICopilotGlobalPerMinute != 30 || cfg.AICopilotGlobalPerDay != 100 {
+		t.Fatalf(
+			"unexpected global Copilot limits: minute=%d day=%d",
+			cfg.AICopilotGlobalPerMinute,
+			cfg.AICopilotGlobalPerDay,
+		)
+	}
+	if cfg.AICopilotMaxCharacters != 2000 {
+		t.Fatalf("AICopilotMaxCharacters=%d, want 2000", cfg.AICopilotMaxCharacters)
+	}
+}
+
 func TestRiskFreeLimit_DefaultZero(t *testing.T) {
 	os.Unsetenv("RISK_FREE_LIMIT")
 	if got := Load().RiskFreeLimit; got != 0 {

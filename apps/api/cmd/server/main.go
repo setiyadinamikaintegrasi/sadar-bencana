@@ -66,8 +66,6 @@ func main() {
 	router.GET("/api/v1/news", apihttp.News(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
-	router.GET("/api/v1/ai/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(dbPool, cfg.MastraBaseURL, cfg.MastraAPIToken, cfg.AIBriefingTimeout))
-	router.POST("/api/v1/ai/copilot/chat", apihttp.AICopilotChat(cfg.MastraBaseURL, cfg.MastraAPIToken, cfg.AIBriefingTimeout))
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
 	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
@@ -88,6 +86,41 @@ func main() {
 		account.GET("/api/v1/personal-assets/:id/risk", apihttp.PersonalAssetRisk(dbPool))
 		account.GET("/api/v1/geocoding/search", apihttp.GeocodingSearch(cfg.GeocoderBaseURL, cfg.GeocoderUserAgent))
 	}
+
+	// Generative AI consumes a paid upstream service. Require a verified
+	// Supabase session and enforce per-account usage limits.
+	ai := router.Group("/api/v1/ai", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	{
+		ai.GET("/briefings/executive/stream", apihttp.AIExecutiveBriefingStream(
+			dbPool,
+			cfg.MastraBaseURL,
+			cfg.MastraAPIToken,
+			cfg.AIBriefingTimeout,
+			apihttp.AIUsageLimits{
+				PerMinute:        cfg.AIExecutivePerMinute,
+				PerDay:           cfg.AIExecutivePerDay,
+				Concurrent:       1,
+				GlobalPerDay:     cfg.AIExecutiveGlobalPerDay,
+				GlobalConcurrent: 1,
+			},
+			cfg.AIExecutiveCacheTTL,
+		))
+		ai.POST("/copilot/chat", apihttp.AICopilotChat(
+			dbPool,
+			cfg.MastraBaseURL,
+			cfg.MastraAPIToken,
+			cfg.AIBriefingTimeout,
+			apihttp.AIUsageLimits{
+				PerMinute:       cfg.AICopilotPerMinute,
+				PerDay:          cfg.AICopilotPerDay,
+				Concurrent:      1,
+				GlobalPerMinute: cfg.AICopilotGlobalPerMinute,
+				GlobalPerDay:    cfg.AICopilotGlobalPerDay,
+			},
+			cfg.AICopilotMaxCharacters,
+		))
+	}
+
 	// Portofolio perusahaan: bebas pada community, entitlement organisasi pada hosted.
 	company := router.Group("",
 		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),

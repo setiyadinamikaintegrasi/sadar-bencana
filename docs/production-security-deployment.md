@@ -129,3 +129,33 @@ curl -i https://mastra.example.org/api/agents
 The main API must succeed. Public Worker and Mastra requests must return 404.
 Then verify authenticated application flows, email confirmation, personal
 assets, official-source preview, AI briefing, and logout.
+
+## 9. Enable authenticated AI features
+
+Apply the AI access-control migration before deploying the API build that
+contains authenticated AI routes:
+
+```bash
+psql "$DATABASE_URL" --single-transaction \
+  -f db/schema/036_ai_access_controls.sql
+```
+
+The defaults require a Supabase login, cache Executive Briefing for six hours,
+and limit Copilot to 5 requests/minute and 10 requests/day per account. These
+values can be adjusted without rebuilding:
+
+```dotenv
+AI_EXECUTIVE_CACHE_TTL=6h
+AI_EXECUTIVE_PER_MINUTE=2
+AI_EXECUTIVE_PER_DAY=3
+AI_EXECUTIVE_GLOBAL_PER_DAY=20
+AI_COPILOT_PER_MINUTE=5
+AI_COPILOT_PER_DAY=10
+AI_COPILOT_GLOBAL_PER_MINUTE=30
+AI_COPILOT_GLOBAL_PER_DAY=100
+AI_COPILOT_MAX_CHARACTERS=2000
+```
+
+After deployment, unauthenticated calls to both AI endpoints must return 401.
+Authenticated calls require migration `036`; if its tables are absent the API
+fails closed with 503 instead of sending a paid upstream request.

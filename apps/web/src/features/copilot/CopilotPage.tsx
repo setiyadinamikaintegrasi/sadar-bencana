@@ -183,6 +183,7 @@ export default function CopilotPage() {
               onKeyDown={handleKeyDown}
               placeholder="Tanyakan sesuatu tentang data dashboard..."
               rows={2}
+              maxLength={2000}
               disabled={loading}
               className="min-h-[44px] flex-1 resize-none rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 transition focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-60"
             />
@@ -212,7 +213,7 @@ export default function CopilotPage() {
             </div>
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            Analyst Copilot adalah AI read-only — tidak dapat melakukan perubahan data.
+            Analyst Copilot adalah AI read-only — tidak dapat melakukan perubahan data. {input.length}/2000 karakter.
           </p>
         </div>
       </section>

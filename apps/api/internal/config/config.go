@@ -21,6 +21,15 @@ type Config struct {
 	SupabaseJWKSURL           string
 	RiskFreeLimit             int
 	AIBriefingTimeout         time.Duration
+	AIExecutiveCacheTTL       time.Duration
+	AIExecutivePerMinute      int
+	AIExecutivePerDay         int
+	AIExecutiveGlobalPerDay   int
+	AICopilotPerMinute        int
+	AICopilotPerDay           int
+	AICopilotGlobalPerMinute  int
+	AICopilotGlobalPerDay     int
+	AICopilotMaxCharacters    int
 	OfficialSourceSettingsKey string
 	DeploymentMode            string
 	PersonalAssetLimit        int
@@ -49,6 +58,15 @@ func Load() Config {
 		SupabaseJWKSURL:           supabaseJWKSURL(),
 		RiskFreeLimit:             getEnvInt("RISK_FREE_LIMIT", 0),
 		AIBriefingTimeout:         getEnvDuration("AI_BRIEFING_TIMEOUT", 150*time.Second),
+		AIExecutiveCacheTTL:       getEnvDuration("AI_EXECUTIVE_CACHE_TTL", 6*time.Hour),
+		AIExecutivePerMinute:      getEnvInt("AI_EXECUTIVE_PER_MINUTE", 2),
+		AIExecutivePerDay:         getEnvInt("AI_EXECUTIVE_PER_DAY", 3),
+		AIExecutiveGlobalPerDay:   getEnvInt("AI_EXECUTIVE_GLOBAL_PER_DAY", 20),
+		AICopilotPerMinute:        getEnvInt("AI_COPILOT_PER_MINUTE", 5),
+		AICopilotPerDay:           getEnvInt("AI_COPILOT_PER_DAY", 10),
+		AICopilotGlobalPerMinute:  getEnvInt("AI_COPILOT_GLOBAL_PER_MINUTE", 30),
+		AICopilotGlobalPerDay:     getEnvInt("AI_COPILOT_GLOBAL_PER_DAY", 100),
+		AICopilotMaxCharacters:    getEnvInt("AI_COPILOT_MAX_CHARACTERS", 2000),
 		OfficialSourceSettingsKey: getEnv("OFFICIAL_SOURCE_SETTINGS_KEY", ""),
 		DeploymentMode:            getEnv("DEPLOYMENT_MODE", "community"),
 		PersonalAssetLimit:        getEnvInt("PERSONAL_ASSET_LIMIT", 20),

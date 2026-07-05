@@ -163,33 +163,7 @@ export type Event = {
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers)
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
-
-  if (res.status === 401) {
-    // Token expired — attempt one silent refresh then retry
-    const { data: refreshData } = await supabase.auth.refreshSession()
-    const freshToken = refreshData.session?.access_token
-    if (freshToken) {
-      const retryHeaders = new Headers(init?.headers)
-      retryHeaders.set('Authorization', `Bearer ${freshToken}`)
-      const retryRes = await fetch(`${BASE_URL}${path}`, { ...init, headers: retryHeaders })
-      if (retryRes.ok) return (await retryRes.json()) as T
-      if (retryRes.status !== 401) {
-        const err = new Error(`API request failed: ${retryRes.status} ${retryRes.statusText}`) as Error & { status?: number }
-        err.status = retryRes.status
-        throw err
-      }
-    }
-    await supabase.auth.signOut()
-    const err = new Error(`API request failed: ${res.status} ${res.statusText}`) as Error & { status?: number }
-    err.status = res.status
-    throw err
-  }
+  const res = await authenticatedFetch(`${BASE_URL}${path}`, init)
 
   if (!res.ok) {
     const err = new Error(`API request failed: ${res.status} ${res.statusText}`) as Error & { status?: number }
@@ -198,6 +172,27 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await res.json()) as T
+}
+
+async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  const res = await fetch(input, { ...init, headers })
+
+  if (res.status === 401) {
+    const { data: refreshData } = await supabase.auth.refreshSession()
+    const freshToken = refreshData.session?.access_token
+    if (freshToken) {
+      const retryHeaders = new Headers(init?.headers)
+      retryHeaders.set('Authorization', `Bearer ${freshToken}`)
+      return fetch(input, { ...init, headers: retryHeaders })
+    }
+  }
+
+  return res
 }
 
 export async function getMeta(): Promise<Meta> {
@@ -558,7 +553,7 @@ export async function getConnectorHealth(): Promise<ConnectorHealth[]> {
 
 export type AiExecutiveBriefing = {
   content: string
-  mode: 'ai' | 'fallback'
+  mode: 'ai' | 'fallback' | 'cache'
   runId: string
   note: string
 }
@@ -567,19 +562,19 @@ export type AiBriefingStatusEvent = {
   stage: string
   message: string
   runId: string
-  mode?: 'ai' | 'fallback'
+  mode?: 'ai' | 'fallback' | 'cache'
 }
 
 export type AiBriefingPartialEvent = {
   content: string
   runId: string
-  mode: 'ai' | 'fallback'
+  mode: 'ai' | 'fallback' | 'cache'
 }
 
 export type AiBriefingFinalEvent = {
   content: string
   runId: string
-  mode: 'ai' | 'fallback'
+  mode: 'ai' | 'fallback' | 'cache'
   note: string
 }
 
@@ -590,7 +585,7 @@ export type AiBriefingErrorEvent = {
 
 export type AiBriefingDoneEvent = {
   runId: string
-  mode: 'ai' | 'fallback'
+  mode: 'ai' | 'fallback' | 'cache'
 }
 
 export type StreamAiExecutiveBriefingOptions = {
@@ -608,10 +603,6 @@ type ParsedAiBriefingEventMap = {
   final: AiBriefingFinalEvent
   briefing_error: AiBriefingErrorEvent
   done: AiBriefingDoneEvent
-}
-
-function parseStreamEvent<T>(event: MessageEvent<string>): T {
-  return JSON.parse(event.data) as T
 }
 
 function buildDeterministicBriefing(
@@ -721,7 +712,7 @@ export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOpti
   params.set('_ts', Date.now().toString())
 
   const url = `${BASE_URL}/ai/briefings/executive/stream?${params.toString()}`
-  const eventSource = new EventSource(url)
+  const controller = new AbortController()
 
   let closed = false
   let settled = false
@@ -736,7 +727,7 @@ export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOpti
   const cleanup = () => {
     if (closed) return
     closed = true
-    eventSource.close()
+    controller.abort()
   }
 
   const finishSuccess = () => {
@@ -753,39 +744,68 @@ export function streamAiExecutiveBriefing(options: StreamAiExecutiveBriefingOpti
     rejectCompleted(error)
   }
 
-  const attach = <K extends keyof ParsedAiBriefingEventMap>(
+  const dispatch = <K extends keyof ParsedAiBriefingEventMap>(
     eventName: K,
-    handler?: (event: ParsedAiBriefingEventMap[K]) => void,
+    data: string,
   ) => {
-    eventSource.addEventListener(eventName, (rawEvent) => {
-      try {
-        const parsedEvent = parseStreamEvent<ParsedAiBriefingEventMap[K]>(
-          rawEvent as MessageEvent<string>,
-        )
-        handler?.(parsedEvent)
+    const parsedEvent = JSON.parse(data) as ParsedAiBriefingEventMap[K]
+    const handlers: {
+      [P in keyof ParsedAiBriefingEventMap]?: (event: ParsedAiBriefingEventMap[P]) => void
+    } = {
+      status: options.onStatus,
+      partial: options.onPartial,
+      final: options.onFinal,
+      briefing_error: options.onError,
+      done: options.onDone,
+    }
+    handlers[eventName]?.(parsedEvent)
 
-        if (eventName === 'briefing_error') {
-          finishError(new Error((parsedEvent as AiBriefingErrorEvent).message || 'AI briefing stream failed.'))
-        }
+    if (eventName === 'briefing_error') {
+      finishError(new Error((parsedEvent as AiBriefingErrorEvent).message || 'AI briefing stream failed.'))
+    } else if (eventName === 'done') {
+      finishSuccess()
+    }
+  }
 
-        if (eventName === 'done') {
-          finishSuccess()
-        }
-      } catch (error) {
-        finishError(error instanceof Error ? error : new Error('Invalid AI briefing stream payload.'))
+  void authenticatedFetch(url, {
+    headers: { Accept: 'text/event-stream' },
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { message?: string } | null
+        throw new Error(body?.message ?? `AI briefing API error ${response.status}`)
       }
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('Response body is not readable')
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!settled) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n')
+        const blocks = buffer.split('\n\n')
+        buffer = blocks.pop() ?? ''
+
+        for (const block of blocks) {
+          let eventName = ''
+          const dataLines: string[] = []
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim()
+            if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+          }
+          if (eventName in ({ status: 1, partial: 1, final: 1, briefing_error: 1, done: 1 })) {
+            dispatch(eventName as keyof ParsedAiBriefingEventMap, dataLines.join('\n'))
+          }
+        }
+        if (done) break
+      }
+      if (!settled) finishError(new Error('Koneksi AI briefing terputus sebelum selesai.'))
     })
-  }
-
-  attach('status', options.onStatus)
-  attach('partial', options.onPartial)
-  attach('final', options.onFinal)
-  attach('briefing_error', options.onError)
-  attach('done', options.onDone)
-
-  eventSource.onerror = () => {
-    finishError(new Error('Koneksi AI briefing terputus sebelum selesai.'))
-  }
+    .catch((error) => {
+      if (controller.signal.aborted || settled) return
+      finishError(error instanceof Error ? error : new Error('Koneksi AI briefing gagal.'))
+    })
 
   return {
     close: () => {
@@ -810,7 +830,7 @@ export function streamCopilotChat(
 ): AbortController {
   const controller = new AbortController()
 
-  fetch(`${BASE_URL}/ai/copilot/chat`, {
+  void authenticatedFetch(`${BASE_URL}/ai/copilot/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
@@ -818,8 +838,8 @@ export function streamCopilotChat(
   })
     .then(async (response) => {
       if (!response.ok) {
-        const body = await response.text()
-        throw new Error(`Copilot API error ${response.status}: ${body}`)
+        const body = await response.json().catch(() => null) as { message?: string; error?: string } | null
+        throw new Error(body?.message ?? body?.error ?? `Copilot API error ${response.status}`)
       }
 
       const reader = response.body?.getReader()
