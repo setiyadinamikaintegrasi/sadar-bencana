@@ -229,7 +229,7 @@ DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler
 
 # Supabase Auth (opsional, jika menggunakan Supabase)
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_JWT_SECRET=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_JWT_SECRET=replace-with-supabase-jwt-secret
 
 # Supabase JWKS endpoint (opsional, diturunkan otomatis dari SUPABASE_URL)
 # SUPABASE_JWKS_URL=https://your-project.supabase.co/auth/v1/.well-known/jwks.json
@@ -253,7 +253,7 @@ Disalin dari `apps/web/.env.example`. Variabel:
 ```env
 # Supabase Auth
 VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+VITE_SUPABASE_ANON_KEY=replace-with-supabase-anon-key
 
 # (Opsional) API base URL — default: /api/v1
 # VITE_API_BASE_URL=/api/v1
@@ -286,13 +286,13 @@ Jika menggunakan Supabase untuk autentikasi (recommended untuk production):
 2. **Konfigurasi frontend** (`apps/web/.env.local`):
    ```env
    VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+   VITE_SUPABASE_ANON_KEY=replace-with-supabase-anon-key
    ```
 
 3. **Konfigurasi backend** (root `.env.local`):
    ```env
    SUPABASE_URL=https://your-project.supabase.co
-   SUPABASE_JWT_SECRET=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+   SUPABASE_JWT_SECRET=replace-with-supabase-jwt-secret
    ```
 
 4. **Verifikasi koneksi:**

@@ -41,7 +41,7 @@ Add these to your `.env` (templated in `.env.example`):
 ### Telegram
 
 ```bash
-TELEGRAM_BOT_TOKEN=123456:ABC-your-bot-token
+TELEGRAM_BOT_TOKEN=replace-with-telegram-bot-token
 ```
 
 Each subscriber's `telegram_chat_id` is their personal/group chat id. Create a
@@ -54,7 +54,7 @@ the bot and reading `getUpdates`.
 SMTP_HOST=smtp.resend.com
 SMTP_PORT=587
 SMTP_USER=resend
-SMTP_PASSWORD=re_xxxxxxxxx
+SMTP_PASSWORD=replace-with-resend-smtp-password
 SMTP_FROM=noreply@sadarbencana.id
 EWS_PUBLIC_BASE_URL=https://sadarbencana.id
 EWS_DELIVERY_ENABLED=false

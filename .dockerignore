@@ -6,10 +6,24 @@
 .env
 .env.*
 !.env.example
+.DS_Store
+.local-notes
+.local-notes/
+.superpowers
+.superpowers/
+.impeccable
+.impeccable/
+.logs
+.logs/
+logs
+logs/
+*.log
 
 # Other apps are irrelevant to the web build and only bloat the context.
 apps/api
 apps/worker
+apps/mastra
+packages
 
 # Node / build artifacts (regenerated inside the image).
 node_modules
@@ -22,9 +36,20 @@ apps/web/.vite
 **/*.pyc
 **/*.pyo
 apps/worker/.venv
+**/.venv
+**/venv
 
 # Misc.
-.DS_Store
 docs
 infra
 *.md
+schema_backup*
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
