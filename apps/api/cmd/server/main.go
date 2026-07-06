@@ -183,6 +183,15 @@ func main() {
 		ewsAdmin.GET("/subscribers/:id/preferences", apihttp.EWSNotificationPrefsGet(dbPool))
 		ewsAdmin.PUT("/subscribers/:id/preferences", apihttp.EWSNotificationPrefsUpdate(dbPool))
 		ewsAdmin.GET("/notifications", apihttp.EWSNotificationLog(dbPool))
+		ewsAdmin.GET("/channels/status", apihttp.EWSChannelsStatus(cfg.WorkerBaseURL, cfg.WorkerAPIToken))
+		ewsAdmin.GET("/channels/audit", apihttp.EWSChannelSettingAudit(dbPool))
+		ewsAdmin.PUT("/channels/:channel", apihttp.EWSChannelSettingUpdate(dbPool))
+		ewsAdmin.POST("/subscribers/:id/channels/:channel/test", apihttp.EWSAdminChannelTest(
+			dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken,
+		))
+		ewsAdmin.POST("/deliveries/:id/retry", apihttp.EWSDeliveryRetry(
+			cfg.WorkerBaseURL, cfg.WorkerAPIToken,
+		))
 	}
 
 	// EWS self-service (authenticated; scoped to the logged-in subscriber)
@@ -196,6 +205,12 @@ func main() {
 		ewsMe.DELETE("/watch-zones/:id", apihttp.EWSMeWatchZoneDelete(dbPool))
 		ewsMe.GET("/preferences", apihttp.EWSMePrefsGet(dbPool))
 		ewsMe.PUT("/preferences", apihttp.EWSMePrefsUpdate(dbPool))
+		ewsMe.GET("/channels/status", apihttp.EWSMeChannelsStatus(
+			dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken,
+		))
+		ewsMe.POST("/channels/:channel/test", apihttp.EWSMeChannelTest(
+			dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken,
+		))
 		ewsMe.GET("/notifications", apihttp.EWSMeNotifications(dbPool))
 		ewsMe.POST("/notifications/:id/acknowledge", apihttp.EWSMeNotificationAcknowledge(dbPool))
 	}

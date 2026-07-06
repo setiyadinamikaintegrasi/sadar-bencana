@@ -43,7 +43,7 @@ class SubscriberHelpersTests(unittest.IsolatedAsyncioTestCase):
         conn = AsyncMock()
         conn.fetch.return_value = [
             {"id": uuid4(), "name": "Demo User", "email": "j@x.id",
-             "phone_whatsapp": None, "telegram_chat_id": 1, "role": "admin"},
+             "telegram_chat_id": 1, "role": "admin", "timezone": "Asia/Jakarta"},
         ]
         pool = _PoolStub(conn)
         result = await fetch_active_subscribers(cast(Any, pool))

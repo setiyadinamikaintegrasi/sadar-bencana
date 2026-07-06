@@ -26,3 +26,9 @@ def test_cancellation_message_preserves_official_text():
     )
     assert message.startswith("[DIBATALKAN] Peringatan Dini Cuaca")
     assert "dicabut BMKG" in message
+
+
+def test_regular_alert_message_uses_persisted_alert_text():
+    assert lifecycle_message(
+        {"delivery_kind": "alert", "headline": "Gempa M6.1 dekat Jakarta"}
+    ) == "Gempa M6.1 dekat Jakarta"

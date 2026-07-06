@@ -1,7 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,27 +80,45 @@ func EWSMeProfile(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		var s EWSSubscriber
-		var email, phone sql.NullString
+		var email sql.NullString
 		var chatID sql.NullInt64
 		err := db.QueryRowContext(c.Request.Context(),
-			`SELECT id, name, email, phone_whatsapp, telegram_chat_id, role, is_active, created_at
+			`SELECT id, name, email, telegram_chat_id, timezone, role, is_active, created_at
 			 FROM ews_subscribers WHERE id = $1`, subID).
-			Scan(&s.ID, &s.Name, &email, &phone, &chatID, &s.Role, &s.IsActive, &s.CreatedAt)
+			Scan(&s.ID, &s.Name, &email, &chatID, &s.Timezone, &s.Role, &s.IsActive, &s.CreatedAt)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed", "message": err.Error()})
 			return
 		}
 		s.Email = nullStringPtr(email)
-		s.PhoneWhatsApp = nullStringPtr(phone)
 		s.TelegramChatID = nullInt64Ptr(chatID)
 		c.JSON(http.StatusOK, gin.H{"data": s})
 	}
 }
 
 type ewsMeProfileBody struct {
-	Name           *string `json:"name"`
-	PhoneWhatsApp  *string `json:"phone_whatsapp"`
-	TelegramChatID *int64  `json:"telegram_chat_id"`
+	Name           *string       `json:"name"`
+	TelegramChatID optionalInt64 `json:"telegram_chat_id"`
+	Timezone       *string       `json:"timezone"`
+}
+
+type optionalInt64 struct {
+	Set   bool
+	Value *int64
+}
+
+func (value *optionalInt64) UnmarshalJSON(data []byte) error {
+	value.Set = true
+	if bytes.Equal(data, []byte("null")) {
+		value.Value = nil
+		return nil
+	}
+	var parsed int64
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	value.Value = &parsed
+	return nil
 }
 
 // EWSMeProfileUpdate updates the authenticated subscriber's name + contact handles.
@@ -117,25 +137,64 @@ func EWSMeProfileUpdate(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": err.Error()})
 			return
 		}
+		if body.TelegramChatID.Set && body.TelegramChatID.Value != nil &&
+			*body.TelegramChatID.Value == 0 {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_telegram_chat_id"})
+			return
+		}
+		if body.Timezone != nil {
+			if _, err := time.LoadLocation(strings.TrimSpace(*body.Timezone)); err != nil {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_timezone"})
+				return
+			}
+		}
+		telegramChanged := false
+		if body.TelegramChatID.Set {
+			var currentChatID sql.NullInt64
+			if err := db.QueryRowContext(
+				c.Request.Context(),
+				`SELECT telegram_chat_id FROM ews_subscribers WHERE id = $1`,
+				subID,
+			).Scan(&currentChatID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed"})
+				return
+			}
+			if body.TelegramChatID.Value == nil {
+				telegramChanged = currentChatID.Valid
+			} else {
+				telegramChanged = !currentChatID.Valid ||
+					currentChatID.Int64 != *body.TelegramChatID.Value
+			}
+		}
 		var s EWSSubscriber
-		var email, phone sql.NullString
+		var email sql.NullString
 		var chatID sql.NullInt64
 		err := db.QueryRowContext(c.Request.Context(),
 			`UPDATE ews_subscribers SET
 			   name = COALESCE($2, name),
-			   phone_whatsapp = COALESCE($3, phone_whatsapp),
-			   telegram_chat_id = COALESCE($4, telegram_chat_id),
+			   telegram_chat_id = CASE WHEN $3 THEN $4 ELSE telegram_chat_id END,
+			   timezone = COALESCE($5, timezone),
 			   updated_at = now()
 			 WHERE id = $1
-			 RETURNING id, name, email, phone_whatsapp, telegram_chat_id, role, is_active, created_at`,
-			subID, body.Name, body.PhoneWhatsApp, body.TelegramChatID).
-			Scan(&s.ID, &s.Name, &email, &phone, &chatID, &s.Role, &s.IsActive, &s.CreatedAt)
+			 RETURNING id, name, email, telegram_chat_id, timezone, role, is_active, created_at`,
+			subID, body.Name, body.TelegramChatID.Set, body.TelegramChatID.Value, body.Timezone).
+			Scan(&s.ID, &s.Name, &email, &chatID, &s.Timezone, &s.Role, &s.IsActive, &s.CreatedAt)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed", "message": err.Error()})
 			return
 		}
+		if telegramChanged {
+			if _, err := db.ExecContext(
+				c.Request.Context(),
+				`DELETE FROM ews_channel_verifications
+				 WHERE subscriber_id = $1 AND channel = 'telegram'`,
+				subID,
+			); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "verification_reset_failed"})
+				return
+			}
+		}
 		s.Email = nullStringPtr(email)
-		s.PhoneWhatsApp = nullStringPtr(phone)
 		s.TelegramChatID = nullInt64Ptr(chatID)
 		c.JSON(http.StatusOK, gin.H{"data": s})
 	}
@@ -407,8 +466,10 @@ func EWSMePrefsUpdate(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": err.Error()})
 			return
 		}
-		if strings.TrimSpace(body.Channel) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing_channel", "message": "channel required"})
+		if !validateEWSPreference(
+			c, db, subID, body.Channel, body.MinSeverity, body.AlertTypes,
+			body.QuietHoursStart, body.QuietHoursEnd, body.IsEnabled,
+		) {
 			return
 		}
 		var channel, minSeverity, alertTypes string

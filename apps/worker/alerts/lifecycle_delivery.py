@@ -16,12 +16,21 @@ BASE_RETRY_SECONDS = 30
 _ENQUEUE_ACTIVE_SQL = """
 INSERT INTO ews_notification_log (
     subscriber_id, official_alert_id, channel, status, source, source_alert_id,
-    alert_revision, lifecycle_action, next_attempt_at, correlation_id
+    alert_revision, lifecycle_action, next_attempt_at, correlation_id,
+    delivery_kind
 )
-SELECT s.id, $1, p.channel, 'pending', $2, $3, $4, $5, now(), $6
+SELECT s.id, $1, p.channel, 'pending', $2, $3, $4, $5, now(), $6,
+       'official_lifecycle'
 FROM ews_subscribers s
 JOIN ews_notification_prefs p ON p.subscriber_id = s.id
-WHERE s.is_active = TRUE AND p.is_enabled = TRUE
+JOIN ews_channel_settings cs ON cs.channel = p.channel
+WHERE s.is_active = TRUE
+  AND p.is_enabled = TRUE
+  AND cs.is_enabled = TRUE
+  AND EXISTS (
+      SELECT 1 FROM ews_watch_zones z
+      WHERE z.subscriber_id = s.id AND z.is_active = TRUE
+  )
 ON CONFLICT DO NOTHING
 RETURNING id
 """
@@ -29,12 +38,15 @@ RETURNING id
 _ENQUEUE_PRIOR_RECIPIENTS_SQL = """
 INSERT INTO ews_notification_log (
     subscriber_id, official_alert_id, channel, status, source, source_alert_id,
-    alert_revision, lifecycle_action, next_attempt_at, correlation_id
+    alert_revision, lifecycle_action, next_attempt_at, correlation_id,
+    delivery_kind
 )
-SELECT DISTINCT subscriber_id, $1, channel, 'pending', $2, $3, $4, $5, now(), $6
-FROM ews_notification_log
-WHERE source = $2 AND source_alert_id = $3
-  AND status IN ('sent', 'acknowledged')
+SELECT DISTINCT l.subscriber_id, $1, l.channel, 'pending', $2, $3, $4, $5, now(), $6,
+       'official_lifecycle'
+FROM ews_notification_log l
+JOIN ews_channel_settings cs ON cs.channel = l.channel AND cs.is_enabled = TRUE
+WHERE l.source = $2 AND l.source_alert_id = $3
+  AND l.status IN ('sent', 'acknowledged')
 ON CONFLICT DO NOTHING
 RETURNING id
 """
@@ -43,28 +55,39 @@ _CLAIM_DUE_SQL = """
 WITH due AS (
     SELECT l.id
     FROM ews_notification_log l
+    JOIN ews_channel_settings cs
+      ON cs.channel = l.channel AND cs.is_enabled = TRUE
     WHERE l.status IN ('pending', 'failed')
       AND l.next_attempt_at <= now()
       AND l.attempt_count < $1
     ORDER BY l.next_attempt_at
     LIMIT $2
     FOR UPDATE SKIP LOCKED
+), claimed AS (
+    UPDATE ews_notification_log l
+    SET attempt_count = l.attempt_count + 1,
+        last_attempt_at = now()
+    FROM due
+    WHERE l.id = due.id
+    RETURNING l.*
 )
-UPDATE ews_notification_log l
-SET attempt_count = l.attempt_count + 1,
-    last_attempt_at = now()
-FROM due, ews_subscribers s, official_alerts oa
-WHERE l.id = due.id
-  AND s.id = l.subscriber_id
-  AND oa.id = l.official_alert_id
-RETURNING l.*, s.email, s.phone_whatsapp, s.telegram_chat_id,
-          oa.headline, oa.description, oa.sent_at
+SELECT c.*, s.email, s.telegram_chat_id,
+       COALESCE(oa.headline, a.message, 'Peringatan SadarBencana') AS headline,
+       COALESCE(oa.description, '') AS description,
+       COALESCE(oa.sent_at, a.created_at, c.created_at) AS source_sent_at,
+       COALESCE(a.severity, '') AS severity,
+       COALESCE(a.alert_type, c.lifecycle_action, 'alert') AS alert_type
+FROM claimed c
+JOIN ews_subscribers s ON s.id = c.subscriber_id
+LEFT JOIN official_alerts oa ON oa.id = c.official_alert_id
+LEFT JOIN alerts a ON a.id = c.alert_id
 """
 
 _MARK_SENT_SQL = """
 UPDATE ews_notification_log
 SET status = 'sent', error_message = NULL, sent_at = $2,
     next_attempt_at = NULL,
+    provider_id = $4,
     delivery_latency_ms = GREATEST(0, (EXTRACT(EPOCH FROM ($2 - $3)) * 1000)::bigint)
 WHERE id = $1
 """
@@ -93,6 +116,8 @@ def lifecycle_action(message_type: str, status: str) -> str:
 
 
 def lifecycle_message(row: dict[str, Any]) -> str:
+    if row.get("delivery_kind") == "alert":
+        return str(row.get("headline") or "Peringatan SadarBencana")
     label = {
         "alert": "PERINGATAN",
         "update": "PEMBARUAN",
@@ -135,8 +160,6 @@ def _recipient(row: dict[str, Any]) -> str | None:
     channel = row["channel"]
     if channel == "telegram" and row.get("telegram_chat_id"):
         return str(row["telegram_chat_id"])
-    if channel == "whatsapp":
-        return row.get("phone_whatsapp")
     if channel == "email":
         return row.get("email")
     return None
@@ -169,10 +192,16 @@ async def process_due_deliveries(
         elif recipient is None:
             error = "recipient_unavailable"
         else:
+            subject = (
+                f"[SadarBencana][{row.get('severity') or 'ALERT'}] "
+                f"{row.get('alert_type') or 'alert'}"
+                if row.get("delivery_kind") == "alert"
+                else f"[SadarBencana] {row['lifecycle_action']}"
+            )
             send_result = await adapter.send(
                 recipient,
                 lifecycle_message(row),
-                subject=f"[SadarBencana] {row['lifecycle_action']}",
+                subject=subject,
             )
             error = send_result.get("error")
 
@@ -182,24 +211,26 @@ async def process_due_deliveries(
                     _MARK_SENT_SQL,
                     row["id"],
                     current,
-                    row["sent_at"],
+                    row["source_sent_at"],
+                    send_result.get("provider_id"),
                 )
                 result["sent"] += 1
-                await record_observation(
-                    pool,
-                    correlation_id=row["correlation_id"],
-                    stage="notification_sent",
-                    source_name=row.get("source"),
-                    success=True,
-                    duration_ms=max(
-                        0,
-                        int((current - row["sent_at"]).total_seconds() * 1000),
-                    ),
-                    metadata={
-                        "channel": row["channel"],
-                        "lifecycle_action": row["lifecycle_action"],
-                    },
-                )
+                if row.get("correlation_id"):
+                    await record_observation(
+                        pool,
+                        correlation_id=row["correlation_id"],
+                        stage="notification_sent",
+                        source_name=row.get("source"),
+                        success=True,
+                        duration_ms=max(
+                            0,
+                            int((current - row["source_sent_at"]).total_seconds() * 1000),
+                        ),
+                        metadata={
+                            "channel": row["channel"],
+                            "lifecycle_action": row["lifecycle_action"],
+                        },
+                    )
             else:
                 attempts = int(row["attempt_count"])
                 dead = attempts >= MAX_DELIVERY_ATTEMPTS
@@ -213,15 +244,16 @@ async def process_due_deliveries(
                     next_attempt,
                 )
                 result[status] += 1
-                await record_observation(
-                    pool,
-                    correlation_id=row["correlation_id"],
-                    stage="notification_delivery",
-                    source_name=row.get("source"),
-                    success=False,
-                    error_code=error or "delivery_failed",
-                    metadata={"channel": row["channel"], "status": status},
-                )
+                if row.get("correlation_id"):
+                    await record_observation(
+                        pool,
+                        correlation_id=row["correlation_id"],
+                        stage="notification_delivery",
+                        source_name=row.get("source"),
+                        success=False,
+                        error_code=error or "delivery_failed",
+                        metadata={"channel": row["channel"], "status": status},
+                    )
     return result
 
 

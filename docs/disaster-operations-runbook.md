@@ -30,6 +30,7 @@ Feature flags:
 CONNECTOR_BMKG_CAP_ENABLED=false
 EVIDENCE_CORRELATION_ENABLED=false
 EWS_LIFECYCLE_DELIVERY_ENABLED=false
+EWS_DELIVERY_ENABLED=false
 ```
 
 ## False alert atau korelasi salah

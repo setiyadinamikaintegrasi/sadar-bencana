@@ -19,8 +19,8 @@ type EWSSubscriber struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
 	Email          *string   `json:"email"`
-	PhoneWhatsApp  *string   `json:"phone_whatsapp"`
 	TelegramChatID *int64    `json:"telegram_chat_id"`
+	Timezone       string    `json:"timezone"`
 	Role           string    `json:"role"`
 	IsActive       bool      `json:"is_active"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -175,7 +175,7 @@ func dbUnavailable(c *gin.Context) {
 // ── Subscriber CRUD ─────────────────────────────────────────
 
 const ewsSubscribersListQuery = `
-SELECT id, name, email, phone_whatsapp, telegram_chat_id, role, is_active, created_at
+SELECT id, name, email, telegram_chat_id, timezone, role, is_active, created_at
 FROM ews_subscribers
 WHERE ($1::boolean IS NULL OR is_active = $1)
 ORDER BY created_at DESC
@@ -218,10 +218,10 @@ func EWSSubscribersList(db *sql.DB) gin.HandlerFunc {
 		subs := make([]EWSSubscriber, 0)
 		for rows.Next() {
 			var s EWSSubscriber
-			var email, phone sql.NullString
+			var email sql.NullString
 			var chatID sql.NullInt64
 			if err := rows.Scan(
-				&s.ID, &s.Name, &email, &phone, &chatID,
+				&s.ID, &s.Name, &email, &chatID, &s.Timezone,
 				&s.Role, &s.IsActive, &s.CreatedAt,
 			); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
@@ -231,7 +231,6 @@ func EWSSubscribersList(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 			s.Email = nullStringPtr(email)
-			s.PhoneWhatsApp = nullStringPtr(phone)
 			s.TelegramChatID = nullInt64Ptr(chatID)
 			subs = append(subs, s)
 		}
@@ -246,15 +245,15 @@ func EWSSubscribersList(db *sql.DB) gin.HandlerFunc {
 type ewsSubscriberCreateBody struct {
 	Name           string  `json:"name"`
 	Email          *string `json:"email"`
-	PhoneWhatsApp  *string `json:"phone_whatsapp"`
 	TelegramChatID *int64  `json:"telegram_chat_id"`
+	Timezone       *string `json:"timezone"`
 	Role           *string `json:"role"`
 }
 
 const ewsSubscriberCreateQuery = `
-INSERT INTO ews_subscribers (name, email, phone_whatsapp, telegram_chat_id, role)
-VALUES ($1, $2, $3, $4, COALESCE($5, 'viewer'))
-RETURNING id, name, email, phone_whatsapp, telegram_chat_id, role, is_active, created_at
+INSERT INTO ews_subscribers (name, email, telegram_chat_id, timezone, role)
+VALUES ($1, $2, $3, COALESCE($4, 'Asia/Jakarta'), COALESCE($5, 'viewer'))
+RETURNING id, name, email, telegram_chat_id, timezone, role, is_active, created_at
 `
 
 // EWSSubscriberCreate inserts a new subscriber.
@@ -280,15 +279,19 @@ func EWSSubscriberCreate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
+		if body.Timezone != nil && !validEWSTimezone(*body.Timezone) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_timezone"})
+			return
+		}
 
 		var s EWSSubscriber
-		var email, phone sql.NullString
+		var email sql.NullString
 		var chatID sql.NullInt64
 		err := db.QueryRowContext(
 			c.Request.Context(), ewsSubscriberCreateQuery,
-			body.Name, body.Email, body.PhoneWhatsApp, body.TelegramChatID, body.Role,
+			body.Name, body.Email, body.TelegramChatID, body.Timezone, body.Role,
 		).Scan(
-			&s.ID, &s.Name, &email, &phone, &chatID,
+			&s.ID, &s.Name, &email, &chatID, &s.Timezone,
 			&s.Role, &s.IsActive, &s.CreatedAt,
 		)
 		if err != nil {
@@ -299,7 +302,6 @@ func EWSSubscriberCreate(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		s.Email = nullStringPtr(email)
-		s.PhoneWhatsApp = nullStringPtr(phone)
 		s.TelegramChatID = nullInt64Ptr(chatID)
 
 		c.JSON(http.StatusCreated, gin.H{"data": s})
@@ -309,8 +311,8 @@ func EWSSubscriberCreate(db *sql.DB) gin.HandlerFunc {
 type ewsSubscriberUpdateBody struct {
 	Name           *string `json:"name"`
 	Email          *string `json:"email"`
-	PhoneWhatsApp  *string `json:"phone_whatsapp"`
 	TelegramChatID *int64  `json:"telegram_chat_id"`
+	Timezone       *string `json:"timezone"`
 	Role           *string `json:"role"`
 	IsActive       *bool   `json:"is_active"`
 }
@@ -319,13 +321,13 @@ const ewsSubscriberUpdateQuery = `
 UPDATE ews_subscribers SET
     name             = COALESCE($2, name),
     email            = COALESCE($3, email),
-    phone_whatsapp   = COALESCE($4, phone_whatsapp),
-    telegram_chat_id = COALESCE($5, telegram_chat_id),
+    telegram_chat_id = COALESCE($4, telegram_chat_id),
+    timezone         = COALESCE($5, timezone),
     role             = COALESCE($6, role),
     is_active        = COALESCE($7, is_active),
     updated_at       = now()
 WHERE id = $1
-RETURNING id, name, email, phone_whatsapp, telegram_chat_id, role, is_active, created_at
+RETURNING id, name, email, telegram_chat_id, timezone, role, is_active, created_at
 `
 
 // EWSSubscriberUpdate updates mutable subscriber fields.
@@ -352,16 +354,20 @@ func EWSSubscriberUpdate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
+		if body.Timezone != nil && !validEWSTimezone(*body.Timezone) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_timezone"})
+			return
+		}
 
 		var s EWSSubscriber
-		var email, phone sql.NullString
+		var email sql.NullString
 		var chatID sql.NullInt64
 		err := db.QueryRowContext(
 			c.Request.Context(), ewsSubscriberUpdateQuery,
-			id, body.Name, body.Email, body.PhoneWhatsApp,
-			body.TelegramChatID, body.Role, body.IsActive,
+			id, body.Name, body.Email, body.TelegramChatID,
+			body.Timezone, body.Role, body.IsActive,
 		).Scan(
-			&s.ID, &s.Name, &email, &phone, &chatID,
+			&s.ID, &s.Name, &email, &chatID, &s.Timezone,
 			&s.Role, &s.IsActive, &s.CreatedAt,
 		)
 		if err != nil {
@@ -378,8 +384,18 @@ func EWSSubscriberUpdate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
+		if body.TelegramChatID != nil {
+			if _, err := db.ExecContext(
+				c.Request.Context(),
+				`DELETE FROM ews_channel_verifications
+				 WHERE subscriber_id = $1 AND channel = 'telegram'`,
+				id,
+			); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "verification_reset_failed"})
+				return
+			}
+		}
 		s.Email = nullStringPtr(email)
-		s.PhoneWhatsApp = nullStringPtr(phone)
 		s.TelegramChatID = nullInt64Ptr(chatID)
 
 		c.JSON(http.StatusOK, gin.H{"data": s})
@@ -819,11 +835,10 @@ func EWSNotificationPrefsUpdate(db *sql.DB) gin.HandlerFunc {
 			})
 			return
 		}
-		if strings.TrimSpace(body.Channel) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":   "missing_channel",
-				"message": "field 'channel' is required",
-			})
+		if !validateEWSPreference(
+			c, db, subID, body.Channel, body.MinSeverity, body.AlertTypes,
+			body.QuietHoursStart, body.QuietHoursEnd, body.IsEnabled,
+		) {
 			return
 		}
 

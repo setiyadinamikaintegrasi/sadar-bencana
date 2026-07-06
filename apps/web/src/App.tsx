@@ -10,6 +10,7 @@ import SourceHealthPage from './features/health/SourceHealthPage'
 import EwsPage from './features/ews/EwsPage'
 import RegionalHistoryPage from './features/history/RegionalHistoryPage'
 import OfficialSourcesSettingsPage from './features/settings/OfficialSourcesSettingsPage'
+import EwsAdminSettingsPage from './features/settings/EwsAdminSettingsPage'
 import LoginGate from './features/ews/LoginGate'
 import TopNav from './components/TopNav'
 import { useAuth } from './lib/auth/AuthProvider'
@@ -25,6 +26,7 @@ const sections = [
   { label: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', icon: '⚙' },
+  { label: 'Admin EWS', icon: '⚙' },
 ] as const
 
 type Section = (typeof sections)[number]['label']
@@ -60,6 +62,7 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
   { label: 'Source Health', section: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', section: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', section: 'Sumber Resmi', icon: '⚙' },
+  { label: 'Admin EWS', section: 'Admin EWS', icon: '⚙' },
 ]
 
 function App() {
@@ -104,6 +107,8 @@ function App() {
             <RegionalHistoryPage />
           ) : activeSection === 'Sumber Resmi' ? (
             <OfficialSourcesSettingsPage />
+          ) : activeSection === 'Admin EWS' ? (
+            <EwsAdminSettingsPage />
           ) : (
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-slate-950/40">
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>

@@ -6,8 +6,8 @@ export interface EWSSubscriber {
   id: string
   name: string
   email?: string | null
-  phone_whatsapp?: string | null
   telegram_chat_id?: number | null
+  timezone: string
   role: string
   is_active: boolean
   created_at: string
@@ -34,7 +34,7 @@ export interface EWSPerilThresholds {
   wildfire?: { min_frp?: number }
 }
 
-export type EWSChannel = 'telegram' | 'whatsapp' | 'email'
+export type EWSChannel = 'telegram' | 'email'
 export type EWSSeverity = 'Moderate' | 'High' | 'Critical'
 
 export interface EWSNotificationPref {
@@ -52,7 +52,7 @@ export interface EWSNotificationLogEntry {
   subscriber_name?: string | null
   alert_id?: string | null
   channel: EWSChannel
-  status: 'pending' | 'sent' | 'failed' | 'skipped'
+  status: 'pending' | 'sent' | 'failed' | 'skipped' | 'dead_letter' | 'acknowledged'
   error_message?: string | null
   sent_at?: string | null
   created_at: string
@@ -198,7 +198,7 @@ export async function fetchMyProfile(): Promise<EWSSubscriber> {
   return res.data
 }
 export async function updateMyProfile(
-  data: { name?: string; phone_whatsapp?: string | null; telegram_chat_id?: number | null },
+  data: { name?: string; telegram_chat_id?: number | null; timezone?: string },
 ): Promise<EWSSubscriber> {
   const res = await request<ItemResponse<EWSSubscriber>>('/ews/me', {
     method: 'PUT',
@@ -253,4 +253,77 @@ export async function updateMyPref(
 export async function fetchMyNotifications(): Promise<EWSNotificationLogEntry[]> {
   const res = await request<ListResponse<EWSNotificationLogEntry>>('/ews/me/notifications')
   return res.data
+}
+
+export interface EWSChannelStatus {
+  channel: EWSChannel
+  provider: string
+  configured: boolean
+  is_enabled: boolean
+  sender?: string
+  recipient_configured?: boolean
+  has_watch_zone?: boolean
+  is_verified?: boolean
+  last_success_at?: string | null
+  last_failure_at?: string | null
+  pending: number
+  failed: number
+  dead_letter: number
+}
+
+export async function fetchMyChannelStatus(): Promise<EWSChannelStatus[]> {
+  const res = await request<{ data: EWSChannelStatus[] }>('/ews/me/channels/status')
+  return res.data
+}
+
+export async function testMyChannel(channel: EWSChannel): Promise<void> {
+  await request(`/ews/me/channels/${encodeURIComponent(channel)}/test`, {
+    method: 'POST',
+  })
+}
+
+export async function fetchAdminChannelStatus(): Promise<EWSChannelStatus[]> {
+  const res = await request<{ data: EWSChannelStatus[] }>('/ews/channels/status')
+  return res.data
+}
+
+export async function updateAdminChannel(
+  channel: EWSChannel,
+  isEnabled: boolean,
+): Promise<void> {
+  await request(`/ews/channels/${encodeURIComponent(channel)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_enabled: isEnabled }),
+  })
+}
+
+export interface EWSChannelAuditEntry {
+  id: string
+  channel: EWSChannel
+  previous_enabled: boolean
+  new_enabled: boolean
+  changed_by: string
+  changed_at: string
+}
+
+export async function fetchAdminChannelAudit(): Promise<EWSChannelAuditEntry[]> {
+  const res = await request<{ data: EWSChannelAuditEntry[] }>('/ews/channels/audit')
+  return res.data
+}
+
+export async function testSubscriberChannel(
+  subscriberId: string,
+  channel: EWSChannel,
+): Promise<void> {
+  await request(
+    `/ews/subscribers/${encodeURIComponent(subscriberId)}/channels/${encodeURIComponent(channel)}/test`,
+    { method: 'POST' },
+  )
+}
+
+export async function retryDelivery(deliveryId: string): Promise<void> {
+  await request(`/ews/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
+    method: 'POST',
+  })
 }

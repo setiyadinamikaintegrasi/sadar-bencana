@@ -12,7 +12,7 @@ class BaseChannel(abc.ABC):
     @property
     @abc.abstractmethod
     def name(self) -> str:
-        """Channel identifier: 'telegram', 'whatsapp', 'email'."""
+        """Channel identifier: 'telegram' or 'email'."""
         ...
 
     @abc.abstractmethod
@@ -23,8 +23,7 @@ class BaseChannel(abc.ABC):
         Send a notification.
 
         Args:
-            recipient: chat_id (Telegram), phone E.164 (WhatsApp),
-                       or email address (Email).
+            recipient: chat_id (Telegram) or email address (Email).
             message: The alert message text.
             **kwargs: Channel-specific options (subject, severity, etc.)
 

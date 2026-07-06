@@ -2,6 +2,9 @@
 
 Migration `025_ews_alert_lifecycle_delivery.sql` menambahkan delivery per revisi
 official alert, exponential retry, dead-letter, acknowledgement, dan latency.
+Migration `037_ews_delivery_hardening.sql` memakai mekanisme queue yang sama
+untuk alert biasa, menambahkan idempotency, timezone subscriber, dan pengaturan
+kanal Telegram/email.
 
 Dedup key terdiri dari subscriber, channel, source, source alert identifier,
 revision, dan lifecycle action. Update tetap terkirim sebagai revisi baru,

@@ -15,6 +15,7 @@ const OVERFLOW_TABS = [
   { label: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', icon: '⚙' },
+  { label: 'Admin EWS', icon: '⚙' },
 ] as const
 
 interface TopNavProps {

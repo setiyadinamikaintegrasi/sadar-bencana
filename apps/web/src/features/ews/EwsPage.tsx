@@ -6,17 +6,20 @@ import {
   createMyWatchZone,
   deleteMyWatchZone,
   fetchMyNotifications,
+  fetchMyChannelStatus,
   fetchMyPrefs,
   fetchMyProfile,
   fetchMyWatchZones,
   updateMyPref,
   updateMyProfile,
+  testMyChannel,
   type EWSChannel,
   type EWSNotificationLogEntry,
   type EWSNotificationPref,
   type EWSSeverity,
   type EWSPerilThresholds,
   type EWSWatchZone,
+  type EWSChannelStatus,
 } from '../../lib/api/ews'
 
 type Tab = 'zones' | 'prefs' | 'notifs'
@@ -25,7 +28,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'prefs', label: 'Preferences' },
   { key: 'notifs', label: 'Notifikasi Saya' },
 ]
-const CHANNELS: EWSChannel[] = ['telegram', 'whatsapp', 'email']
+const CHANNELS: EWSChannel[] = ['telegram', 'email']
 const SEVERITIES: EWSSeverity[] = ['Moderate', 'High', 'Critical']
 const PERILS = ['earthquake', 'flood', 'volcano', 'wildfire', 'windstorm']
 const input = 'w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-indigo-400'
@@ -34,6 +37,8 @@ const statusClasses: Record<string, string> = {
   failed: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
   skipped: 'bg-slate-500/15 text-slate-400 ring-1 ring-inset ring-slate-500/30',
   pending: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
+  dead_letter: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
+  acknowledged: 'bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30',
 }
 
 function thresholdLabels(thresholds: EWSPerilThresholds): string[] {
@@ -150,47 +155,101 @@ function ZoneForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
 
 function PrefsTab() {
   const [prefs, setPrefs] = useState<EWSNotificationPref[]>([])
-  const [profile, setProfile] = useState<{ telegram_chat_id?: number | null; phone_whatsapp?: string | null }>({})
+  const [profile, setProfile] = useState<{ telegram_chat_id?: number | null; timezone: string }>({ timezone: 'Asia/Jakarta' })
+  const [channelStatus, setChannelStatus] = useState<EWSChannelStatus[]>([])
+  const [hasZone, setHasZone] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busyCh, setBusyCh] = useState<EWSChannel | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [p, prof] = await Promise.all([fetchMyPrefs(), fetchMyProfile()])
-      setPrefs(p); setProfile({ telegram_chat_id: prof.telegram_chat_id, phone_whatsapp: prof.phone_whatsapp })
+      const [p, prof, statuses, zones] = await Promise.all([
+        fetchMyPrefs(), fetchMyProfile(), fetchMyChannelStatus(), fetchMyWatchZones(),
+      ])
+      setPrefs(p)
+      setProfile({ telegram_chat_id: prof.telegram_chat_id, timezone: prof.timezone || 'Asia/Jakarta' })
+      setChannelStatus(statuses)
+      setHasZone(zones.length > 0)
     } finally { setLoading(false) }
   }, [])
   useEffect(() => { void load() }, [load])
   const prefFor = (ch: EWSChannel): EWSNotificationPref => prefs.find((p) => p.channel === ch) ?? { channel: ch, min_severity: 'High', alert_types: [], quiet_hours_start: null, quiet_hours_end: null, is_enabled: false }
   const save = async (ch: EWSChannel, patch: Partial<EWSNotificationPref>) => {
-    setBusyCh(ch)
-    try { const saved = await updateMyPref({ ...prefFor(ch), ...patch, channel: ch }); setPrefs((cur) => [...cur.filter((p) => p.channel !== ch), saved]) } finally { setBusyCh(null) }
+    setBusyCh(ch); setError(null); setMessage(null)
+    try {
+      const saved = await updateMyPref({ ...prefFor(ch), ...patch, channel: ch })
+      setPrefs((cur) => [...cur.filter((p) => p.channel !== ch), saved])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Gagal menyimpan preferensi.')
+    } finally { setBusyCh(null) }
   }
+  const saveProfile = async (patch: { telegram_chat_id?: number | null; timezone?: string }) => {
+    setError(null); setMessage(null)
+    try {
+      const saved = await updateMyProfile(patch)
+      setProfile({ telegram_chat_id: saved.telegram_chat_id, timezone: saved.timezone })
+      setMessage('Kontak dan timezone tersimpan.')
+      await load()
+    } catch (e) { setError(e instanceof Error ? e.message : 'Gagal menyimpan profil.') }
+  }
+  const runTest = async (ch: EWSChannel) => {
+    setBusyCh(ch); setError(null); setMessage(null)
+    try {
+      await testMyChannel(ch)
+      setMessage(`Test ${ch} berhasil dikirim.`)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Test ${ch} gagal.`)
+    } finally { setBusyCh(null) }
+  }
+  const statusFor = (ch: EWSChannel) => channelStatus.find((item) => item.channel === ch)
   if (loading) return <Spinner />
   return (
     <div className="space-y-4">
+      {!hasZone && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">Buat minimal satu watch zone sebelum mengaktifkan notifikasi.</div>}
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
         <p className="mb-2 text-sm font-semibold text-slate-100">Kontak saya</p>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="block text-xs text-slate-400">Telegram chat id
-            <input className={input} value={profile.telegram_chat_id ?? ''} onChange={(e) => setProfile({ ...profile, telegram_chat_id: e.target.value ? Number(e.target.value) : null })} onBlur={() => updateMyProfile({ telegram_chat_id: profile.telegram_chat_id ?? null })} />
+            <input className={input} value={profile.telegram_chat_id ?? ''} onChange={(e) => setProfile({ ...profile, telegram_chat_id: e.target.value ? Number(e.target.value) : null })} onBlur={() => { void saveProfile({ telegram_chat_id: profile.telegram_chat_id ?? null }) }} />
           </label>
-          <label className="block text-xs text-slate-400">WhatsApp (62…)
-            <input className={input} value={profile.phone_whatsapp ?? ''} onChange={(e) => setProfile({ ...profile, phone_whatsapp: e.target.value || null })} onBlur={() => updateMyProfile({ phone_whatsapp: profile.phone_whatsapp ?? null })} />
+          <label className="block text-xs text-slate-400">Timezone quiet hours
+            <select className={input} value={profile.timezone} onChange={(e) => { const timezone = e.target.value; setProfile({ ...profile, timezone }); void saveProfile({ timezone }) }}>
+              <option value="Asia/Jakarta">WIB — Asia/Jakarta</option>
+              <option value="Asia/Makassar">WITA — Asia/Makassar</option>
+              <option value="Asia/Jayapura">WIT — Asia/Jayapura</option>
+            </select>
           </label>
         </div>
+        <p className="mt-2 text-xs text-slate-500">Buka chat dengan bot Telegram, kirim <code>/start</code>, lalu masukkan chat ID Anda. Mengosongkan field akan mencabut tujuan Telegram.</p>
       </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        {CHANNELS.map((ch) => { const p = prefFor(ch); return (
+      {message && <p className="text-sm text-emerald-300">{message}</p>}
+      {error && <p className="text-sm text-rose-300">{error}</p>}
+      <div className="grid gap-3 md:grid-cols-2">
+        {CHANNELS.map((ch) => { const p = prefFor(ch); const status = statusFor(ch); return (
           <div key={ch} className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
             <div className="flex items-center justify-between"><p className="font-semibold capitalize text-slate-100">{ch}</p>
               <input type="checkbox" checked={p.is_enabled} disabled={busyCh === ch} onChange={(e) => save(ch, { is_enabled: e.target.checked })} className="accent-indigo-500" />
             </div>
+            <p className={`mt-1 text-xs ${status?.configured ? 'text-emerald-300' : 'text-amber-300'}`}>{status?.configured ? 'Provider siap' : 'Provider belum dikonfigurasi admin'} · {status?.recipient_configured ? 'kontak siap' : 'kontak belum siap'} · {status?.is_verified ? 'terverifikasi' : 'belum dites'}</p>
             <label className="mt-3 block text-xs text-slate-400">Min severity
               <select className={input} value={p.min_severity} disabled={busyCh === ch} onChange={(e) => save(ch, { min_severity: e.target.value as EWSSeverity })}>
                 {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </label>
+            <div className="mt-3">
+              <p className="text-xs text-slate-400">Jenis alert (kosong = semua)</p>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {[...PERILS, 'risk_score'].map((kind) => <label key={kind} className="flex items-center gap-1 text-xs text-slate-300"><input type="checkbox" checked={p.alert_types.includes(kind)} onChange={(e) => save(ch, { alert_types: e.target.checked ? [...p.alert_types, kind] : p.alert_types.filter((item) => item !== kind) })} className="accent-indigo-500" />{kind}</label>)}
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <label className="text-xs text-slate-400">Quiet mulai<input type="time" className={input} value={p.quiet_hours_start ?? ''} onChange={(e) => save(ch, { quiet_hours_start: e.target.value || null, quiet_hours_end: e.target.value ? (p.quiet_hours_end || '07:00') : null })} /></label>
+              <label className="text-xs text-slate-400">Quiet selesai<input type="time" className={input} value={p.quiet_hours_end ?? ''} onChange={(e) => save(ch, { quiet_hours_end: e.target.value || null, quiet_hours_start: e.target.value ? (p.quiet_hours_start || '22:00') : null })} /></label>
+            </div>
+            <button type="button" disabled={busyCh === ch || !p.is_enabled || !hasZone} onClick={() => { void runTest(ch) }} className="mt-4 rounded-lg border border-indigo-400/40 px-3 py-1.5 text-xs font-semibold text-indigo-200 disabled:opacity-40">Kirim test</button>
           </div>
         ) })}
       </div>
