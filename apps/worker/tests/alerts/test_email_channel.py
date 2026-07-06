@@ -1,0 +1,126 @@
+"""Tests for safe multipart EWS email rendering."""
+
+from __future__ import annotations
+
+import unittest
+from email import message_from_string
+from email.policy import default
+from unittest.mock import patch
+
+from alerts.channels.email import EmailChannel
+from alerts.channels.email_template import (
+    DEFAULT_PUBLIC_BASE_URL,
+    render_html_email,
+    safe_public_base_url,
+)
+
+
+class EmailTemplateTests(unittest.TestCase):
+    def test_dynamic_content_is_escaped_and_unsafe_url_falls_back(self):
+        html = render_html_email(
+            subject='Alert <img src=x onerror="bad()">',
+            message="<script>alert('x')</script>\nTetap waspada",
+            public_base_url="javascript:alert(1)",
+            severity="Critical",
+            alert_type="earthquake",
+            source="<b>untrusted</b>",
+        )
+
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("<img src=x", html)
+        self.assertNotIn("<b>untrusted</b>", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertIn("&lt;b&gt;untrusted&lt;/b&gt;", html)
+        self.assertIn(f'href="{DEFAULT_PUBLIC_BASE_URL}/"', html)
+        self.assertNotIn("javascript:", html)
+
+    def test_only_absolute_https_public_url_is_accepted(self):
+        self.assertEqual(
+            safe_public_base_url("https://sadarbencana.id/app/"),
+            "https://sadarbencana.id/app",
+        )
+        self.assertEqual(
+            safe_public_base_url("http://sadarbencana.id"),
+            DEFAULT_PUBLIC_BASE_URL,
+        )
+        self.assertEqual(
+            safe_public_base_url("https://user:pass@sadarbencana.id"),
+            DEFAULT_PUBLIC_BASE_URL,
+        )
+
+
+class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_builds_plain_and_html_alternatives(self):
+        channel = EmailChannel()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+            "EWS_PUBLIC_BASE_URL": "https://sadarbencana.id",
+        }
+
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch.object(channel, "_smtp_send") as smtp_send,
+        ):
+            result = await channel.send(
+                "recipient@example.com",
+                "Gempa terdeteksi di wilayah pantauan.",
+                subject="[SadarBencana][Critical] Gempa",
+                notification_kind="alert",
+                severity="Critical",
+                alert_type="earthquake",
+                headline="Gempa M6.1 dekat Jakarta",
+                source="BMKG",
+            )
+
+        self.assertTrue(result["success"])
+        smtp_send.assert_called_once()
+        serialized = smtp_send.call_args.args[-1]
+        email = message_from_string(serialized, policy=default)
+
+        self.assertEqual(email.get_content_type(), "multipart/alternative")
+        self.assertEqual(
+            email.get_body(preferencelist=("plain",)).get_content_type(),
+            "text/plain",
+        )
+        self.assertEqual(
+            email.get_body(preferencelist=("html",)).get_content_type(),
+            "text/html",
+        )
+        self.assertIn(
+            "Gempa terdeteksi",
+            email.get_body(preferencelist=("plain",)).get_content(),
+        )
+        self.assertIn(
+            "Buka Dashboard SadarBencana",
+            email.get_body(preferencelist=("html",)).get_content(),
+        )
+
+    async def test_header_injection_is_removed_from_subject(self):
+        channel = EmailChannel()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+        }
+
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch.object(channel, "_smtp_send") as smtp_send,
+        ):
+            result = await channel.send(
+                "recipient@example.com",
+                "Test",
+                subject="Valid\r\nBcc: attacker@example.com",
+            )
+
+        self.assertTrue(result["success"])
+        serialized = smtp_send.call_args.args[-1]
+        email = message_from_string(serialized, policy=default)
+        self.assertNotIn("Bcc", email)
+        self.assertEqual(email["Subject"], "Valid  Bcc: attacker@example.com")

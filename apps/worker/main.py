@@ -1338,6 +1338,10 @@ async def ews_test_dispatch(
         send_kwargs: dict[str, Any] = {}
         if pref_channel == "email":
             send_kwargs["subject"] = "[Sadar Bencana EWS] Test notification"
+            send_kwargs["notification_kind"] = "test"
+            send_kwargs["severity"] = "test"
+            send_kwargs["alert_type"] = "system_test"
+            send_kwargs["headline"] = "Pengujian kanal email EWS"
         res = await adapter.send(recipient, message, **send_kwargs)
         status = "sent" if res["success"] else "failed"
         delivery_id = await log_notification(

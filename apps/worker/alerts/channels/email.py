@@ -6,11 +6,11 @@ import asyncio
 import logging
 import os
 import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from typing import Any
 
 from alerts.channels.base import BaseChannel
+from alerts.channels.email_template import render_html_email
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +35,29 @@ class EmailChannel(BaseChannel):
             return {"success": False, "provider_id": None,
                     "error": "SMTP not configured"}
 
-        subject = kwargs.get("subject", "[Sadar Bencana EWS] Alert Notification")
-
-        msg = MIMEMultipart("alternative")
-        msg["From"] = from_addr
-        msg["To"] = recipient
-        msg["Subject"] = subject
-        msg.attach(MIMEText(message, "plain"))
-
         try:
+            subject = str(
+                kwargs.get("subject", "[Sadar Bencana EWS] Alert Notification")
+            ).replace("\r", " ").replace("\n", " ")[:200]
+            msg = EmailMessage()
+            msg["From"] = from_addr
+            msg["To"] = recipient
+            msg["Subject"] = subject
+            msg.set_content(message)
+            msg.add_alternative(
+                render_html_email(
+                    subject=subject,
+                    message=message,
+                    public_base_url=os.getenv("EWS_PUBLIC_BASE_URL"),
+                    **{
+                        key: value
+                        for key, value in kwargs.items()
+                        if key not in {"subject", "public_base_url"}
+                    },
+                ),
+                subtype="html",
+            )
+
             # Run blocking SMTP in thread executor for async compatibility.
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
