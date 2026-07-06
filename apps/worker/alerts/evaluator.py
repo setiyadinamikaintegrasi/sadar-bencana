@@ -41,7 +41,7 @@ FROM exposure_rules
 """
 
 _LOAD_HIGH_RISK_SQL = """
-SELECT rs.entity_id, e.place, e.magnitude
+SELECT rs.entity_id, e.place, e.magnitude, e.latitude, e.longitude, e.event_type
 FROM risk_scores rs
 JOIN events e ON rs.entity_id = e.event_id
 WHERE rs.entity_type = 'event' AND rs.score >= $1
@@ -259,10 +259,10 @@ async def evaluate_alerts(
             created.append(record)
             logger.info("Risk-score alert: %s", ext_event_id)
             await dispatch_alert(pool, record, {
-                "latitude": None,  # risk-score alerts may not have geo
-                "longitude": None,
+                "latitude": row["latitude"],
+                "longitude": row["longitude"],
                 "magnitude": magnitude,
-                "event_type": "risk_score",
+                "event_type": row["event_type"] or "risk_score",
             })
 
     return created

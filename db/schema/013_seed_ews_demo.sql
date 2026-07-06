@@ -1,11 +1,10 @@
 BEGIN;
 
 -- Demo subscriber
-INSERT INTO ews_subscribers (name, email, phone_whatsapp, telegram_chat_id, role)
+INSERT INTO ews_subscribers (name, email, telegram_chat_id, role)
 VALUES (
     'Demo Admin',
     'admin@example.com',
-    '62812xxxxxxxx',
     123456789,
     'admin'
 )

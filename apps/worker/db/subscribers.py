@@ -10,7 +10,7 @@ import asyncpg
 # ── Subscribers ──────────────────────────────────────────────
 
 _LOAD_ACTIVE_SUBSCRIBERS_SQL = """
-SELECT id, name, email, phone_whatsapp, telegram_chat_id, role
+SELECT id, name, email, telegram_chat_id, role, timezone
 FROM ews_subscribers
 WHERE is_active = TRUE
 """
@@ -63,8 +63,10 @@ async def fetch_active_watch_zones(
 
 _INSERT_LOG_SQL = """
 INSERT INTO ews_notification_log
-    (subscriber_id, alert_id, channel, status, error_message, sent_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+    (subscriber_id, alert_id, channel, status, error_message, sent_at,
+     delivery_kind, next_attempt_at, last_attempt_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        CASE WHEN $7 = 'test' THEN now() ELSE NULL END)
 RETURNING id
 """
 
@@ -77,12 +79,14 @@ async def log_notification(
     status: str,
     error_message: str | None = None,
     sent_at: Any = None,
+    delivery_kind: str = "alert",
+    next_attempt_at: Any = None,
 ) -> UUID | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             _INSERT_LOG_SQL,
             subscriber_id, alert_id, channel, status,
-            error_message, sent_at,
+            error_message, sent_at, delivery_kind, next_attempt_at,
         )
     return row["id"] if row else None
 
@@ -108,3 +112,40 @@ async def is_already_notified(
             _CHECK_ALREADY_NOTIFIED_SQL, subscriber_id, alert_id, channel
         )
     return row is not None
+
+
+_ENQUEUE_ALERT_SQL = """
+INSERT INTO ews_notification_log
+    (subscriber_id, alert_id, channel, status, delivery_kind, next_attempt_at)
+VALUES ($1, $2, $3, 'pending', 'alert', now())
+ON CONFLICT (subscriber_id, alert_id, channel)
+    WHERE alert_id IS NOT NULL
+DO NOTHING
+RETURNING id
+"""
+
+
+async def enqueue_alert_notification(
+    pool: asyncpg.Pool,
+    subscriber_id: UUID,
+    alert_id: UUID,
+    channel: str,
+) -> UUID | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            _ENQUEUE_ALERT_SQL, subscriber_id, alert_id, channel
+        )
+    return row["id"] if row else None
+
+
+_CHANNEL_ENABLED_SQL = """
+SELECT is_enabled
+FROM ews_channel_settings
+WHERE channel = $1
+"""
+
+
+async def is_channel_enabled(pool: asyncpg.Pool, channel: str) -> bool:
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(_CHANNEL_ENABLED_SQL, channel)
+    return bool(value)

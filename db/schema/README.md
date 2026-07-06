@@ -51,3 +51,5 @@ The alert-classification safety migration is:
 - `036_ai_access_controls.sql` — stores server-side AI usage leases and the
   shared Executive Briefing cache; both tables remain inaccessible to browser
   database roles.
+- `037_ews_delivery_hardening.sql` — adds subscriber timezones, provider-safe
+  channel settings, idempotent delivery, and test audit metadata.

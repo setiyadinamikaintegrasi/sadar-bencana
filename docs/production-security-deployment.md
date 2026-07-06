@@ -180,3 +180,31 @@ AI_COPILOT_MAX_CHARACTERS=2000
 After deployment, unauthenticated calls to both AI endpoints must return 401.
 Authenticated calls require migration `036`; if its tables are absent the API
 fails closed with 503 instead of sending a paid upstream request.
+
+## 10. Enable EWS delivery
+
+Apply the EWS hardening migration before deploying the API and worker build:
+
+```bash
+psql "$DATABASE_URL" --single-transaction \
+  -f db/schema/037_ews_delivery_hardening.sql
+```
+
+Configure Telegram and Resend SMTP in the server `.env`. Keep delivery disabled
+until both test sends succeed:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
+SMTP_USER=resend
+SMTP_PASSWORD=
+SMTP_FROM=noreply@sadarbencana.id
+EWS_DELIVERY_ENABLED=false
+EWS_LIFECYCLE_DELIVERY_ENABLED=false
+```
+
+Rebuild `api`, `worker`, and `web`, then use **Admin EWS** to verify provider
+status and send one Telegram and one email test. Set both EWS flags to `true`
+only after successful tests, recreate the worker, and monitor pending, failed,
+and dead-letter counts for 24 hours.

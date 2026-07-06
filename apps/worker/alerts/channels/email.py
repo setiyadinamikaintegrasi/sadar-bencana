@@ -31,7 +31,7 @@ class EmailChannel(BaseChannel):
         password = os.getenv("SMTP_PASSWORD")
         from_addr = os.getenv("SMTP_FROM", "ews@example.com")
 
-        if not host or not user:
+        if not host or not user or not password or not from_addr:
             return {"success": False, "provider_id": None,
                     "error": "SMTP not configured"}
 
@@ -52,8 +52,15 @@ class EmailChannel(BaseChannel):
             )
             return {"success": True, "provider_id": None}
         except Exception as exc:
-            logger.warning("Email send failed for %s: %s", recipient, exc)
-            return {"success": False, "provider_id": None, "error": str(exc)}
+            logger.warning(
+                "Email delivery failed (error_type=%s)",
+                type(exc).__name__,
+            )
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "email_delivery_failed",
+            }
 
     @staticmethod
     def _smtp_send(

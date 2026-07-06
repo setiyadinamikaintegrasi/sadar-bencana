@@ -213,8 +213,8 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `OFFICIAL_SOURCE_SETTINGS_KEY` — kunci enkripsi token sumber resmi di database
 - `EVIDENCE_CORRELATION_ENABLED` — shadow-mode correlation; aktifkan setelah migration 022
 - `AISSTREAM_API_KEY`, `VESSELFINDER_API_KEY`, `OPENSKY_*` — tracking maritim & penerbangan (opsional)
-- `FONNTE_API_TOKEN` — WhatsApp via Fonnte (opsional)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — email SMTP (opsional)
+- `EWS_DELIVERY_ENABLED`, `EWS_LIFECYCLE_DELIVERY_ENABLED` — queue delivery dan lifecycle EWS
 
 Panduan hardening deployment tersedia di
 [`docs/production-security-deployment.md`](docs/production-security-deployment.md).

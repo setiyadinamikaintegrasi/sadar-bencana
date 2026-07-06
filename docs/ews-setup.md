@@ -1,6 +1,6 @@
 # EWS Setup Guide — Early Warning System
 
-The EWS adds a multi-channel notification layer (Telegram, WhatsApp, Email) on
+The EWS adds a notification layer (Telegram and Email) on
 top of the existing alert engine. When the worker creates an alert, the
 `dispatcher` matches it against registered subscribers' geofenced watch zones
 and delivers notifications through each subscriber's enabled channels.
@@ -19,6 +19,8 @@ psql "$DATABASE_URL" -f db/schema/011_ews_subscribers.sql
 psql "$DATABASE_URL" -f db/schema/012_ews_watch_zones.sql
 psql "$DATABASE_URL" -f db/schema/013_seed_ews_demo.sql   # optional demo data
 psql "$DATABASE_URL" -f db/schema/020_peril_specific_watch_zone_thresholds.sql
+psql "$DATABASE_URL" -f db/schema/025_ews_alert_lifecycle_delivery.sql
+psql "$DATABASE_URL" -f db/schema/037_ews_delivery_hardening.sql
 ```
 
 This creates four tables:
@@ -46,28 +48,20 @@ Each subscriber's `telegram_chat_id` is their personal/group chat id. Create a
 bot via [@BotFather](https://t.me/BotFather) and obtain a chat id by messaging
 the bot and reading `getUpdates`.
 
-### WhatsApp (Fonnte)
+### Email (Resend SMTP)
 
 ```bash
-FONNTE_API_TOKEN=your-fonnte-device-token
-```
-
-Register a device at [fonnte.com](https://fonnte.com/), connect a WhatsApp
-number, and copy the device token. Subscriber numbers use the `62…` format
-(e.g. `628123456789`).
-
-### Email (SMTP)
-
-```bash
-SMTP_HOST=smtp.gmail.com
+SMTP_HOST=smtp.resend.com
 SMTP_PORT=587
-SMTP_USER=ews@example.com
-SMTP_PASSWORD=app-specific-password
-SMTP_FROM=ews@example.com
+SMTP_USER=resend
+SMTP_PASSWORD=re_xxxxxxxxx
+SMTP_FROM=noreply@sadarbencana.id
+EWS_DELIVERY_ENABLED=false
+EWS_LIFECYCLE_DELIVERY_ENABLED=false
 ```
 
-The adapter uses STARTTLS on the configured port. For Gmail, use an
-[App Password](https://support.google.com/accounts/answer/185833).
+The adapter uses STARTTLS on the configured port. Verify the sender domain in
+Resend before enabling delivery.
 
 > A channel with missing credentials fails gracefully — the delivery is logged
 > as `failed` with an explanatory `error_message`; it never raises.
@@ -96,9 +90,8 @@ curl -X PUT http://localhost:8001/api/v1/ews/subscribers/<SUB_ID>/preferences \
   -d '{"channel":"telegram","min_severity":"High","is_enabled":true}'
 ```
 
-> **Global watchers:** a subscriber with *no* watch zones receives every alert
-> (subject to severity/peril/quiet-hours preferences). Add a watch zone to
-> restrict a subscriber to events within a geographic radius.
+> A subscriber must have at least one active watch zone before any channel can
+> be enabled. Subscribers without watch zones do not receive alerts.
 
 ---
 
@@ -108,7 +101,8 @@ The worker exposes a test-dispatch endpoint that sends a synthetic notification
 to a subscriber via all their enabled channels (bypassing geo-matching):
 
 ```bash
-curl -X POST http://localhost:8002/api/v1/worker/ews/test-dispatch/<SUB_ID>
+curl -X POST http://localhost:8001/api/v1/ews/me/channels/telegram/test \
+  -H "Authorization: Bearer <SUPABASE_ACCESS_TOKEN>"
 ```
 
 Response:
@@ -135,19 +129,19 @@ curl 'http://localhost:8001/api/v1/ews/notifications?status=sent'
 For each new alert, `dispatch_alert` (in `apps/worker/alerts/dispatcher.py`):
 
 1. Loads all active subscribers and active watch zones.
-2. **Geo-match** (if the event has coordinates): a subscriber *with* zones is
-   included only if one of their zones contains the event
+2. **Geo-match**: a subscriber is included only if one of their active zones contains the event
    (haversine distance ≤ radius) and passes the zone's peril-specific threshold:
    magnitude for earthquakes, water depth for floods, activity level for
-   volcanoes, or FRP for wildfires. A subscriber *without* zones is always
-   included (global watcher).
+   volcanoes, or FRP for wildfires. A subscriber without zones is excluded.
 3. For each of the subscriber's enabled channel preferences:
    - **Severity filter** — skip if alert severity < `min_severity`.
    - **Alert-type filter** — skip if `alert_types` is set and excludes this type.
    - **Quiet hours** — if the current time is inside the window, log `skipped`.
    - **Dedup** — skip if a `sent`/`pending` log row already exists for
      (subscriber, alert, channel).
-   - **Send** via the channel adapter, then log `sent` or `failed`.
+   - **Queue** an idempotent delivery.
+4. The delivery worker retries failures at 30, 60, 120, 240, and 480 seconds,
+   then moves exhausted deliveries to `dead_letter`.
 
 ---
 

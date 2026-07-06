@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 from datetime import datetime, time, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
-from alerts.channels import CHANNELS
 from alerts.geo import find_matching_subscriber_ids
 from db.subscribers import (
+    enqueue_alert_notification,
     fetch_active_subscribers,
     fetch_active_watch_zones,
     fetch_subscriber_prefs,
+    is_channel_enabled,
     is_already_notified,
     log_notification,
 )
@@ -28,13 +30,20 @@ def _severity_rank(severity: str) -> int:
 
 
 def _is_within_quiet_hours(
-    start: time | None, end: time | None, now_utc: datetime | None = None
+    start: time | None,
+    end: time | None,
+    now_utc: datetime | None = None,
+    timezone_name: str = "Asia/Jakarta",
 ) -> bool:
     """Check if current time falls within quiet hours window."""
     if not start or not end:
         return False
     now = now_utc or datetime.now(timezone.utc)
-    current_time = now.astimezone().time()
+    try:
+        subscriber_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        subscriber_timezone = ZoneInfo("Asia/Jakarta")
+    current_time = now.astimezone(subscriber_timezone).time()
     if start <= end:
         return start <= current_time <= end
     # Wraps midnight (e.g., 22:00–07:00)
@@ -55,7 +64,7 @@ async def dispatch_alert(
         event_data: Optional event dict with lat, lon, magnitude, event_type.
 
     Returns:
-        Number of notifications successfully sent.
+        Number of notifications successfully queued.
     """
     alert_id = alert.get("id")
     severity = alert.get("severity", "High")
@@ -84,20 +93,18 @@ async def dispatch_alert(
             float(event_data.get("magnitude", 0)),
             event_data,
         )
-        # Subscribers WITH zones must match; subscribers WITHOUT any zones
-        # remain global watchers and are always included.
+        # Subscribers must own at least one active zone and match it.
 
-    sent_count = 0
+    queued_count = 0
 
     for sub in subscribers:
         sub_id = str(sub["id"])
 
-        has_zones = any(
-            str(z["subscriber_id"]) == sub_id for z in zones
-        )
+        has_zones = any(str(z["subscriber_id"]) == sub_id for z in zones)
+        if not has_zones:
+            continue
         if (
-            has_zones
-            and matched_subscriber_ids is not None
+            matched_subscriber_ids is not None
             and sub_id not in matched_subscriber_ids
         ):
             continue
@@ -123,7 +130,9 @@ async def dispatch_alert(
 
             # Quiet hours filter
             if _is_within_quiet_hours(
-                pref.get("quiet_hours_start"), pref.get("quiet_hours_end")
+                pref.get("quiet_hours_start"),
+                pref.get("quiet_hours_end"),
+                timezone_name=sub.get("timezone") or "Asia/Jakarta",
             ):
                 await log_notification(
                     pool, sub["id"], alert_id, channel, "skipped",
@@ -135,6 +144,13 @@ async def dispatch_alert(
             if await is_already_notified(pool, sub["id"], alert_id, channel):
                 continue
 
+            if not await is_channel_enabled(pool, channel):
+                await log_notification(
+                    pool, sub["id"], alert_id, channel, "skipped",
+                    "channel_disabled",
+                )
+                continue
+
             # Resolve recipient address for this channel
             recipient = _get_recipient(sub, channel)
             if not recipient:
@@ -144,40 +160,17 @@ async def dispatch_alert(
                 )
                 continue
 
-            # Send via channel adapter
-            adapter = CHANNELS.get(channel)
-            if not adapter:
-                continue
-
-            send_kwargs: dict[str, Any] = {}
-            if channel == "email":
-                send_kwargs["subject"] = (
-                    f"[Sadar Bencana EWS][{severity.upper()}] {alert_type}"
-                )
-
-            result = await adapter.send(recipient, message, **send_kwargs)
-
-            status = "sent" if result.get("success") else "failed"
-            error = result.get("error")
-
-            await log_notification(
-                pool, sub["id"], alert_id, channel, status,
-                error, datetime.now(timezone.utc),
+            queued = await enqueue_alert_notification(
+                pool, sub["id"], alert_id, channel
             )
-
-            if result.get("success"):
-                sent_count += 1
+            if queued:
+                queued_count += 1
                 logger.info(
-                    "EWS sent: subscriber=%s channel=%s alert=%s",
-                    sub["name"], channel, alert_id,
-                )
-            else:
-                logger.warning(
-                    "EWS failed: subscriber=%s channel=%s error=%s",
-                    sub["name"], channel, error,
+                    "EWS queued: subscriber_id=%s channel=%s alert=%s",
+                    sub_id, channel, alert_id,
                 )
 
-    return sent_count
+    return queued_count
 
 
 def _get_recipient(subscriber: dict[str, Any], channel: str) -> str | None:
@@ -185,8 +178,6 @@ def _get_recipient(subscriber: dict[str, Any], channel: str) -> str | None:
     if channel == "telegram":
         cid = subscriber.get("telegram_chat_id")
         return str(cid) if cid else None
-    if channel == "whatsapp":
-        return subscriber.get("phone_whatsapp")
     if channel == "email":
         return subscriber.get("email")
     return None

@@ -8,6 +8,7 @@ import os
 import time
 import json
 import sys
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -325,6 +326,13 @@ def _env_seconds(name: str, default: int, *, minimum: int = 10) -> int:
         logger.warning("%s must be at least %ds; using %ds", name, minimum, default)
         return default
     return value
+
+
+def _masked_email(value: str) -> str:
+    local, separator, domain = value.partition("@")
+    if not separator:
+        return ""
+    return f"{local[:1]}***@{domain}"
 
 
 async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
@@ -888,7 +896,7 @@ async def startup_event() -> None:
     )
     _official_alert_expiry_scheduler.start()
 
-    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+    if _env_enabled("EWS_DELIVERY_ENABLED"):
         _lifecycle_delivery_scheduler = IngestScheduler(
             ingest_fn=_process_lifecycle_deliveries_once,
             interval_seconds=30,
@@ -1261,11 +1269,26 @@ async def worker_asset_poll() -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/worker/ews/test-dispatch/{subscriber_id}")
-async def ews_test_dispatch(subscriber_id: str) -> JSONResponse:
+async def ews_test_dispatch(
+    subscriber_id: str,
+    channel: str | None = None,
+    force: bool = False,
+) -> JSONResponse:
     """Send a test notification to a subscriber via all their active channels."""
 
     from alerts.channels import CHANNELS
-    from db.subscribers import fetch_active_subscribers, fetch_subscriber_prefs
+    from db.subscribers import (
+        fetch_active_subscribers,
+        fetch_subscriber_prefs,
+        is_channel_enabled,
+        log_notification,
+    )
+
+    if channel is not None and channel not in CHANNELS:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "unsupported_channel"},
+        )
 
     try:
         pool = get_pool()
@@ -1289,33 +1312,141 @@ async def ews_test_dispatch(subscriber_id: str) -> JSONResponse:
     prefs = await fetch_subscriber_prefs(pool, target["id"])
     results: list[dict[str, Any]] = []
     for pref in prefs:
-        channel = pref["channel"]
-        adapter = CHANNELS.get(channel)
+        pref_channel = pref["channel"]
+        if channel is not None and pref_channel != channel:
+            continue
+        adapter = CHANNELS.get(pref_channel)
         if not adapter:
             continue
+        if not force and not await is_channel_enabled(pool, pref_channel):
+            results.append({
+                "channel": pref_channel,
+                "status": "skipped",
+                "reason": "channel_disabled",
+            })
+            continue
         recipient = None
-        if channel == "telegram":
+        if pref_channel == "telegram":
             recipient = str(target.get("telegram_chat_id") or "") or None
-        elif channel == "whatsapp":
-            recipient = target.get("phone_whatsapp")
-        elif channel == "email":
+        elif pref_channel == "email":
             recipient = target.get("email")
         if not recipient:
             results.append(
-                {"channel": channel, "status": "skipped", "reason": "no_address"}
+                {"channel": pref_channel, "status": "skipped", "reason": "no_address"}
             )
             continue
-        res = await adapter.send(recipient, message)
+        send_kwargs: dict[str, Any] = {}
+        if pref_channel == "email":
+            send_kwargs["subject"] = "[Sadar Bencana EWS] Test notification"
+        res = await adapter.send(recipient, message, **send_kwargs)
+        status = "sent" if res["success"] else "failed"
+        delivery_id = await log_notification(
+            pool,
+            target["id"],
+            None,
+            pref_channel,
+            status,
+            res.get("error"),
+            datetime.now(timezone.utc) if res["success"] else None,
+            delivery_kind="test",
+        )
+        if res["success"]:
+            await pool.execute(
+                """
+                INSERT INTO ews_channel_verifications
+                    (subscriber_id, channel, verified_at)
+                VALUES ($1, $2, now())
+                ON CONFLICT (subscriber_id, channel)
+                DO UPDATE SET verified_at = EXCLUDED.verified_at
+                """,
+                target["id"],
+                pref_channel,
+            )
         results.append({
-            "channel": channel,
-            "status": "sent" if res["success"] else "failed",
+            "channel": pref_channel,
+            "status": status,
             "error": res.get("error"),
+            "delivery_id": str(delivery_id) if delivery_id else None,
         })
 
+    if not results:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "no_enabled_delivery_channel", "results": []},
+        )
+    if any(item["status"] == "sent" for item in results):
+        response_status = 200
+    elif any(item["status"] == "failed" for item in results):
+        response_status = 502
+    else:
+        response_status = 409
     return JSONResponse(
-        status_code=200,
+        status_code=response_status,
         content={"subscriber": target["name"], "results": results},
     )
+
+
+@app.get("/api/v1/worker/ews/channels/status")
+async def ews_channel_status() -> JSONResponse:
+    """Return provider readiness without exposing credentials."""
+
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT s.channel, s.is_enabled, s.provider,
+               max(l.sent_at) FILTER (WHERE l.status = 'sent') AS last_success_at,
+               max(l.last_attempt_at) FILTER (WHERE l.status IN ('failed','dead_letter')) AS last_failure_at,
+               count(*) FILTER (WHERE l.status = 'pending') AS pending,
+               count(*) FILTER (WHERE l.status = 'failed') AS failed,
+               count(*) FILTER (WHERE l.status = 'dead_letter') AS dead_letter
+        FROM ews_channel_settings s
+        LEFT JOIN ews_notification_log l ON l.channel = s.channel
+        GROUP BY s.channel, s.is_enabled, s.provider
+        ORDER BY s.channel
+        """
+    )
+    output = []
+    for raw in rows:
+        item = dict(raw)
+        configured = (
+            bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
+            if item["channel"] == "telegram"
+            else all(
+                os.getenv(name, "").strip()
+                for name in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM")
+            )
+        )
+        item["configured"] = configured
+        if item["channel"] == "email":
+            item["sender"] = _masked_email(os.getenv("SMTP_FROM", ""))
+        for key in ("last_success_at", "last_failure_at"):
+            if item.get(key) is not None:
+                item[key] = item[key].isoformat()
+        output.append(item)
+    return JSONResponse(status_code=200, content={"data": output})
+
+
+@app.post("/api/v1/worker/ews/deliveries/{delivery_id}/retry")
+async def ews_retry_delivery(delivery_id: str) -> JSONResponse:
+    """Requeue a failed or dead-letter EWS delivery."""
+
+    try:
+        parsed_id = UUID(delivery_id)
+    except ValueError:
+        return JSONResponse(status_code=422, content={"error": "invalid_delivery_id"})
+    row = await get_pool().fetchrow(
+        """
+        UPDATE ews_notification_log
+        SET status = 'pending', attempt_count = 0, next_attempt_at = now(),
+            dead_lettered_at = NULL, error_message = NULL
+        WHERE id = $1 AND status IN ('failed', 'dead_letter')
+        RETURNING id
+        """,
+        parsed_id,
+    )
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "delivery_not_retryable"})
+    return JSONResponse(status_code=202, content={"data": {"id": str(row["id"]), "status": "pending"}})
 
 
 if __name__ == "__main__":

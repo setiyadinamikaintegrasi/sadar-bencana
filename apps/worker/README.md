@@ -20,6 +20,11 @@ Calon worker untuk ingestion, normalization, scoring, dan AI briefing.
   untuk probe internal.
 - Swagger, ReDoc, dan OpenAPI dinonaktifkan di production.
 - Jangan reverse proxy port Worker langsung ke internet.
+- EWS hanya mendukung Telegram dan email (Resend SMTP).
+- Set `EWS_DELIVERY_ENABLED=true` hanya setelah migration 037 dan test-send
+  kedua provider berhasil.
+- Delivery alert biasa dan official lifecycle menggunakan queue dengan lima
+  percobaan sebelum `dead_letter`.
 - `ASSET_POLL_INTERVAL_SECONDS` mengatur drain aset streaming (default 60 detik).
 - `OPENSKY_POLL_INTERVAL_SECONDS` mengatur polling OpenSky terpisah (default
   300 detik). Respons `429` memicu exponential backoff dari

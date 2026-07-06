@@ -232,7 +232,7 @@ Tujuannya: mengantarkan notifikasi bencana ke subscriber terdaftar berdasarkan
 | Schema | `db/schema/011–013` | `ews_subscribers`, `ews_watch_zones`, `ews_notification_prefs`, `ews_notification_log` |
 | Dispatcher | `apps/worker/alerts/dispatcher.py` | Orkestrasi: geo-match → filter preferensi → fan-out channel → log |
 | Geo | `apps/worker/alerts/geo.py` | Haversine distance + zone matching |
-| Channel adapters | `apps/worker/alerts/channels/` | `telegram`, `whatsapp` (Fonnte), `email` (SMTP) di balik `BaseChannel` |
+| Channel adapters | `apps/worker/alerts/channels/` | `telegram` dan `email` (Resend SMTP) di balik `BaseChannel` |
 | DB helpers | `apps/worker/db/subscribers.py` | Fetch subscriber/prefs/zones, log, dedup |
 | API | `apps/api/internal/http/ews.go` | CRUD subscriber/watch-zone/preferences + delivery log |
 | Web | `apps/web/src/features/ews/` | Admin UI (4 tab) + interactive map picker |
@@ -246,7 +246,7 @@ evaluator.py  ──create_alert()──►  alerts table
               │
               ├── load active subscribers + watch zones
               ├── geo-match (haversine ≤ radius, peril + magnitude filter)
-              │     • subscriber tanpa zone = global watcher (selalu lolos)
+              │     • subscriber tanpa zone tidak menerima alert
               ├── per channel pref: severity / alert-type / quiet-hours / dedup
               └── channel adapter .send() ──► ews_notification_log (sent|failed|skipped)
 ```
