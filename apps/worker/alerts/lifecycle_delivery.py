@@ -202,6 +202,14 @@ async def process_due_deliveries(
                 recipient,
                 lifecycle_message(row),
                 subject=subject,
+                notification_kind=row.get("delivery_kind"),
+                severity=row.get("severity"),
+                alert_type=row.get("alert_type"),
+                headline=row.get("headline"),
+                description=row.get("description"),
+                source=row.get("source"),
+                occurred_at=row.get("source_sent_at"),
+                lifecycle_action=row.get("lifecycle_action"),
             )
             error = send_result.get("error")
 

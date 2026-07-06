@@ -56,12 +56,15 @@ SMTP_PORT=587
 SMTP_USER=resend
 SMTP_PASSWORD=re_xxxxxxxxx
 SMTP_FROM=noreply@sadarbencana.id
+EWS_PUBLIC_BASE_URL=https://sadarbencana.id
 EWS_DELIVERY_ENABLED=false
 EWS_LIFECYCLE_DELIVERY_ENABLED=false
 ```
 
 The adapter uses STARTTLS on the configured port. Verify the sender domain in
-Resend before enabling delivery.
+Resend before enabling delivery. Email is sent as `multipart/alternative` with
+a plain-text fallback and a responsive HTML template. Dynamic alert values are
+HTML-escaped, and the dashboard button accepts only an absolute HTTPS base URL.
 
 > A channel with missing credentials fails gracefully — the delivery is logged
 > as `failed` with an explanatory `error_message`; it never raises.
