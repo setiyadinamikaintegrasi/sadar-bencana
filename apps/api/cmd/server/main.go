@@ -62,12 +62,10 @@ func main() {
 	router.GET("/api/v1/events", apihttp.Events(dbPool))
 	router.GET("/api/v1/events/:id/evidence", apihttp.EventEvidenceList(dbPool))
 	router.GET("/api/v1/events/:id/correlation-audit", apihttp.EventCorrelationAudit(dbPool))
-	router.GET("/api/v1/correlations/review-queue", apihttp.CorrelationReviewQueue(dbPool))
 	router.GET("/api/v1/news", apihttp.News(dbPool))
 	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
-	router.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
 	router.GET("/api/v1/official-alerts", apihttp.OfficialAlerts(dbPool))
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
@@ -85,6 +83,7 @@ func main() {
 		account.DELETE("/api/v1/personal-assets/:id", apihttp.PersonalAssetDelete(dbPool))
 		account.GET("/api/v1/personal-assets/:id/risk", apihttp.PersonalAssetRisk(dbPool))
 		account.GET("/api/v1/geocoding/search", apihttp.GeocodingSearch(cfg.GeocoderBaseURL, cfg.GeocoderUserAgent))
+		account.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
 	}
 
 	// Generative AI consumes a paid upstream service. Require a verified
@@ -137,6 +136,14 @@ func main() {
 		company.POST("/api/v1/organizations/invitations", apihttp.OrganizationInviteCreate(
 			dbPool, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom,
 		))
+	}
+	correlationAdmin := router.Group(
+		"/api/v1/correlations",
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+		apihttp.RequireEWSAdmin(dbPool),
+	)
+	{
+		correlationAdmin.GET("/review-queue", apihttp.CorrelationReviewQueue(dbPool))
 	}
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{

@@ -31,7 +31,7 @@ file:
 
 ```dotenv
 MASTRA_AI_PROVIDER=deepseek
-DEEPSEEK_API_KEY=sk-replace-with-production-key
+DEEPSEEK_API_KEY=replace-with-deepseek-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-v4-flash
 MASTRA_AI_MAX_OUTPUT_TOKENS=2048

@@ -37,6 +37,7 @@ apps/api/sadar-api
 .logs/
 .superpowers/
 .impeccable/
+.local-notes/
 # Local databases / state
 *.db
 *.sqlite
