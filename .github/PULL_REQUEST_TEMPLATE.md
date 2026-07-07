@@ -26,3 +26,6 @@
 - [ ] Tidak ada secret/token yang ter-commit
 - [ ] Hanya berkas relevan yang di-stage (bukan `git add -A` membabi buta)
 - [ ] Dokumentasi diperbarui bila perlu
+- [ ] Jika menyentuh seed/screenshot/docs publik: tidak ada data produksi,
+      brand internal, atau contoh credential token-shaped
+- [ ] Jika menyentuh endpoint privat/mutatif: authz/authn sudah diuji
