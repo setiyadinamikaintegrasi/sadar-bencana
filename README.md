@@ -12,6 +12,11 @@ executive dashboard yang dapat diaudit.
 > PVMBG, BPBD, dan instansi berwenang lainnya. Aplikasi tidak memprediksi waktu
 > atau lokasi gempa.
 
+> **Data demo:** seed, screenshot, dan contoh konfigurasi di repository ini
+> adalah data sintetis untuk pengembangan dan demonstrasi. Nilai eksposur,
+> premi, klaim, aset, dan organisasi demo tidak merepresentasikan portofolio
+> produksi mana pun.
+
 ## Tampilan Aplikasi
 
 ![Dashboard SadarBencana](docs/images/sadar-bencana-dashboard.png)
@@ -55,7 +60,7 @@ Satu codebase Apache 2.0 mendukung dua mode deployment:
 | **Sumber Resmi** | ✅ Admin | Konfigurasi feed, token, preview, dry-run, rollback, dan audit |
 | Executive Overview | ❌ | Public dashboard |
 | Events, Alerts, Briefing, Riwayat Wilayah | ❌ | Public |
-| AI Copilot | ❌ | Public |
+| AI Copilot | ✅ | Generative AI berbayar; wajib sesi Supabase dan rate limit |
 | Source Health | ❌ | Public |
 
 ### Petunjuk untuk pengguna

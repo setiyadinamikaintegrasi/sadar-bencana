@@ -1,1 +1,15 @@
+# Default owner for all changes.
 * @setiyadinamikaintegrasi
+
+# Security-sensitive and release-governance surfaces.
+/.github/ @setiyadinamikaintegrasi
+/SECURITY.md @setiyadinamikaintegrasi
+/.env.example @setiyadinamikaintegrasi
+/docker-compose.yml @setiyadinamikaintegrasi
+/db/schema/ @setiyadinamikaintegrasi
+
+# Application areas.
+/apps/api/ @setiyadinamikaintegrasi
+/apps/worker/ @setiyadinamikaintegrasi
+/apps/web/ @setiyadinamikaintegrasi
+/apps/mastra/ @setiyadinamikaintegrasi
