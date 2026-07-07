@@ -13,7 +13,7 @@
     "@mastra/ai-sdk": "^1.6.1",
     "@mastra/core": "^1.49.0",
     "@mastra/libsql": "^1.15.0",
-    "ai": "^6.0.219",
+    "ai": "^7.0.16",
     "zod": "^3.25.76"
   },
   "devDependencies": {
