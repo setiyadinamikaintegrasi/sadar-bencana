@@ -13,6 +13,14 @@ internal, metadata PR lama, atau branch kerja yang tidak ditujukan untuk publik.
 - [ ] Tidak ada perubahan lokal yang belum commit kecuali catatan private yang
       di-ignore.
 - [ ] Catat commit SHA yang akan menjadi sumber snapshot community.
+- [ ] Bersihkan branch stale di `origin` yang isinya sudah superseded oleh
+      `main` sebelum snapshot diambil (jangan ikut ter-clone ke community
+      repo baru). Per audit open-source readiness terakhir, ini mencakup
+      minimal:
+  - `security/backend-hardening` — fork lama sebelum migrasi
+    `db/schema/035–037` dan `docs/production-security-deployment.md`
+    di-merge ke `main`.
+  - `security/rls-hardening` — fork lama dengan isu yang sama.
 
 ## 2. Export snapshot tanpa riwayat Git
 

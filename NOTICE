@@ -3,3 +3,16 @@ Copyright 2026 Setiya Dinamika Integrasi
 
 This product is licensed under the Apache License, Version 2.0.
 See the LICENSE file distributed with this work for the complete terms.
+
+## Third-party license exceptions
+
+This product depends on the following third-party packages that are not
+licensed under an OSI-approved open source license. They are used unmodified
+as runtime dependencies and are not required by contributors to this
+repository's own code.
+
+- `react-leaflet` and `@react-leaflet/core` (used for the interactive risk
+  map in `apps/web`) are licensed under the Hippocratic License 2.1, an
+  ethical-source license with field-of-use restrictions. See
+  https://github.com/PaulLeCam/react-leaflet/blob/main/LICENSE.md for the
+  full terms.
