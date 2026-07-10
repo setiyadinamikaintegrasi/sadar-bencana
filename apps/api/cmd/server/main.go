@@ -160,6 +160,7 @@ func main() {
 		evacuationAdmin.PATCH("/:id", apihttp.EvacuationLocationUpdate(dbPool))
 		evacuationAdmin.DELETE("/:id", apihttp.EvacuationLocationDelete(dbPool))
 		evacuationAdmin.POST("/import", apihttp.EvacuationImport(dbPool))
+		evacuationAdmin.POST("/photo", apihttp.EvacuationPhotoUpload(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
 	}
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
