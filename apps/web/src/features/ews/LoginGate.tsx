@@ -1,5 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAuth } from '../../lib/auth/AuthProvider'
+import Turnstile, { type TurnstileHandle } from '../../components/Turnstile'
+
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined
 
 type LoginGateProps = {
   title?: string
@@ -19,13 +22,18 @@ export default function LoginGate({
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [confirmationPending, setConfirmationPending] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
 
   const submit = async () => {
     setBusy(true)
     setMsg(null)
     const fn = mode === 'in' ? signIn : signUp
-    const { error } = await fn(email.trim(), password)
+    const { error } = await fn(email.trim(), password, captchaToken ?? undefined)
     setBusy(false)
+    // Token Turnstile sekali pakai — reset widget setelah setiap percobaan (sukses maupun gagal).
+    turnstileRef.current?.reset()
+    setCaptchaToken(null)
     if (error) setMsg(error)
     else if (mode === 'up') {
       setConfirmationPending(true)
@@ -65,6 +73,14 @@ export default function LoginGate({
         />
         <input className={input} type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </div>
+      {TURNSTILE_SITE_KEY && (
+        <Turnstile
+          ref={turnstileRef}
+          siteKey={TURNSTILE_SITE_KEY}
+          onVerify={setCaptchaToken}
+          onExpire={() => setCaptchaToken(null)}
+        />
+      )}
       {msg && <p className="text-sm text-amber-300">{msg}</p>}
       {mode === 'up' && confirmationPending && (
         <button
@@ -79,7 +95,7 @@ export default function LoginGate({
       <button
         type="button"
         onClick={submit}
-        disabled={busy || !email || !password}
+        disabled={busy || !email || !password || (!!TURNSTILE_SITE_KEY && !captchaToken)}
         className="w-full rounded-lg bg-indigo-500/20 px-4 py-2 text-sm font-semibold text-indigo-100 ring-1 ring-inset ring-indigo-400/40 hover:bg-indigo-500/30 disabled:opacity-50"
       >
         {busy ? 'Memproses…' : mode === 'in' ? 'Masuk' : 'Daftar'}
