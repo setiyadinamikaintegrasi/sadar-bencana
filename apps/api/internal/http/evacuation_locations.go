@@ -219,3 +219,107 @@ func EvacuationLocationsNearest(db *sql.DB) gin.HandlerFunc {
 		}})
 	}
 }
+
+// EvacuationLocationCreate menambah lokasi manual (admin).
+func EvacuationLocationCreate(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		var body evacuationLocationInput
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": err.Error()})
+			return
+		}
+		if err := validateEvacuationLocationInput(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "validation_failed", "message": err.Error()})
+			return
+		}
+		loc, err := scanEvacuationLocation(db.QueryRowContext(c.Request.Context(), `
+INSERT INTO evacuation_locations
+  (name, location_type, source_type, latitude, longitude, address, photo_url,
+   capacity, is_open, is_full, phone, person_in_charge, facilities,
+   operating_hours, created_by)
+VALUES ($1,$2,'manual',$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12::text[],$13,$14)
+RETURNING `+evacuationLocationColumns,
+			strings.TrimSpace(body.Name), body.LocationType, body.Latitude, body.Longitude,
+			strings.TrimSpace(body.Address), strings.TrimSpace(body.PhotoURL),
+			body.Capacity, body.IsOpen, body.IsFull, strings.TrimSpace(body.Phone),
+			strings.TrimSpace(body.PersonInCharge), toPGTextArray(body.Facilities),
+			strings.TrimSpace(body.OperatingHours), AuthUserID(c)))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "insert_failed", "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"data": loc})
+	}
+}
+
+// EvacuationLocationUpdate mengubah lokasi (admin), termasuk status
+// buka/tutup & penuh/tidak, dan is_active.
+func EvacuationLocationUpdate(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		var body evacuationLocationInput
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": err.Error()})
+			return
+		}
+		if err := validateEvacuationLocationInput(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "validation_failed", "message": err.Error()})
+			return
+		}
+		active := true
+		if body.IsActive != nil {
+			active = *body.IsActive
+		}
+		loc, err := scanEvacuationLocation(db.QueryRowContext(c.Request.Context(), `
+UPDATE evacuation_locations SET
+  name=$1, location_type=$2, latitude=$3, longitude=$4, address=$5,
+  photo_url=NULLIF($6,''), capacity=$7, is_open=$8, is_full=$9, phone=$10,
+  person_in_charge=$11, facilities=$12::text[], operating_hours=$13,
+  is_active=$14, updated_at=now()
+WHERE id=$15
+RETURNING `+evacuationLocationColumns,
+			strings.TrimSpace(body.Name), body.LocationType, body.Latitude, body.Longitude,
+			strings.TrimSpace(body.Address), strings.TrimSpace(body.PhotoURL),
+			body.Capacity, body.IsOpen, body.IsFull, strings.TrimSpace(body.Phone),
+			strings.TrimSpace(body.PersonInCharge), toPGTextArray(body.Facilities),
+			strings.TrimSpace(body.OperatingHours), active, c.Param("id")))
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "update_failed", "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": loc})
+	}
+}
+
+// EvacuationLocationDelete melakukan soft-delete (is_active=false).
+func EvacuationLocationDelete(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		result, err := db.ExecContext(c.Request.Context(),
+			`UPDATE evacuation_locations SET is_active=FALSE, updated_at=now() WHERE id=$1`,
+			c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "delete_failed", "message": err.Error()})
+			return
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": true}})
+	}
+}

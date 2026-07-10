@@ -149,6 +149,16 @@ func main() {
 	{
 		correlationAdmin.GET("/review-queue", apihttp.CorrelationReviewQueue(dbPool))
 	}
+	evacuationAdmin := router.Group(
+		"/api/v1/evacuation-locations",
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+		apihttp.RequireEWSAdmin(dbPool),
+	)
+	{
+		evacuationAdmin.POST("", apihttp.EvacuationLocationCreate(dbPool))
+		evacuationAdmin.PATCH("/:id", apihttp.EvacuationLocationUpdate(dbPool))
+		evacuationAdmin.DELETE("/:id", apihttp.EvacuationLocationDelete(dbPool))
+	}
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
 		settings.GET("/official-sources", apihttp.OfficialSourceSettingsList(dbPool))
