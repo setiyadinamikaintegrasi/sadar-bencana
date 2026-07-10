@@ -53,3 +53,4 @@ The alert-classification safety migration is:
   database roles.
 - `037_ews_delivery_hardening.sql` — adds subscriber timezones, provider-safe
   channel settings, idempotent delivery, and test audit metadata.
+- `038_evacuation_locations.sql` — tabel lokasi evakuasi (OSM + manual) untuk fitur Lokasi Evakuasi.
