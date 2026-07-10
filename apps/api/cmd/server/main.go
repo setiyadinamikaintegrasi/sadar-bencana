@@ -71,6 +71,10 @@ func main() {
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())
 
+	// Lokasi evakuasi: informasi keselamatan, publik tanpa login.
+	router.GET("/api/v1/evacuation-locations", apihttp.EvacuationLocationsList(dbPool))
+	router.GET("/api/v1/evacuation-locations/nearest", apihttp.EvacuationLocationsNearest(dbPool))
+
 	// Akun privat — aset personal, entitlement, dan undangan wajib login.
 	account := router.Group("", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
