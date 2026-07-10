@@ -70,6 +70,7 @@ func main() {
 	router.GET("/api/v1/official-alerts", apihttp.OfficialAlerts(dbPool))
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())
+	router.GET("/api/v1/evacuation-locations/import/template", apihttp.EvacuationImportTemplate())
 
 	// Lokasi evakuasi: informasi keselamatan, publik tanpa login.
 	router.GET("/api/v1/evacuation-locations", apihttp.EvacuationLocationsList(dbPool))
@@ -158,6 +159,7 @@ func main() {
 		evacuationAdmin.POST("", apihttp.EvacuationLocationCreate(dbPool))
 		evacuationAdmin.PATCH("/:id", apihttp.EvacuationLocationUpdate(dbPool))
 		evacuationAdmin.DELETE("/:id", apihttp.EvacuationLocationDelete(dbPool))
+		evacuationAdmin.POST("/import", apihttp.EvacuationImport(dbPool))
 	}
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
