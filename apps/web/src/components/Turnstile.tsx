@@ -24,6 +24,14 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(function Turnstile
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const widgetId = useRef<string | null>(null)
+  // Callbacks kerap dibuat ulang tiap render (mis. inline arrow di caller).
+  // Dibaca lewat ref supaya tidak jadi dependency effect di bawah — kalau
+  // ikut jadi dependency, widget di-mount ulang tiap keystroke email/password
+  // dan memicu Turnstile error 600010 (challenge loop).
+  const onVerifyRef = useRef(onVerify)
+  const onExpireRef = useRef(onExpire)
+  onVerifyRef.current = onVerify
+  onExpireRef.current = onExpire
 
   useEffect(() => {
     let cancelled = false
@@ -33,8 +41,8 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(function Turnstile
       if (cancelled || !containerRef.current || !window.turnstile) return
       widgetId.current = window.turnstile.render(containerRef.current, {
         sitekey: siteKey,
-        callback: onVerify,
-        'expired-callback': onExpire,
+        callback: (token: string) => onVerifyRef.current(token),
+        'expired-callback': () => onExpireRef.current?.(),
       })
     }
 
@@ -54,7 +62,7 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(function Turnstile
       if (pollId) clearInterval(pollId)
       if (widgetId.current && window.turnstile) window.turnstile.remove(widgetId.current)
     }
-  }, [siteKey, onVerify, onExpire])
+  }, [siteKey])
 
   useImperativeHandle(ref, () => ({
     reset: () => {
