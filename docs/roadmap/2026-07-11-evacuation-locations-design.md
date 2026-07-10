@@ -11,9 +11,11 @@ SAR, gudang logistik) di peta, membantu pengguna menemukan tempat aman
 terdekat, memberi rekomendasi lokasi berbasis jenis bencana yang sedang
 aktif, dan menyediakan navigasi ke lokasi terpilih.
 
-Halaman baru `/lokasi-evakuasi`, **publik tanpa login** — konsisten dengan
-prinsip bahwa informasi keselamatan harus bisa diakses siapa saja saat
-darurat, termasuk pengunjung tanpa akun.
+Section navigasi baru "Lokasi Evakuasi" (aplikasi memakai navigasi
+state-based section, bukan URL router), **publik tanpa login** — konsisten
+dengan prinsip bahwa informasi keselamatan harus bisa diakses siapa saja
+saat darurat, termasuk pengunjung tanpa akun. Section admin terpisah
+"Admin Evakuasi" untuk pengelolaan data.
 
 ## 2. Batasan Keselamatan (penting)
 
@@ -74,9 +76,11 @@ Migrasi baru `db/schema/038_evacuation_locations.sql`, tabel
 | `created_by` | uuid, nullable | admin yang input (entri manual) |
 | `created_at`, `updated_at` | timestamptz | |
 
-RLS: `SELECT` publik untuk `is_active = true` saja (baris soft-delete tidak
-boleh terlihat publik). `INSERT`/`UPDATE`/`DELETE` cuma admin — pola sama
-dengan Sumber Resmi/EWS admin yang sudah ada.
+RLS: mengikuti posture deny-all migrasi `035` — RLS aktif **tanpa policy
+permisif apa pun** untuk role browser (anon/authenticated tidak punya jalur
+data langsung). Seluruh pembacaan publik dilayani lewat Go API (yang
+memfilter `is_active = true`), dan seluruh tulis lewat endpoint admin Go
+API. Tidak ada grant/policy PostgREST baru.
 
 ## 5. Backend API
 
@@ -93,6 +97,8 @@ di `personal_assets.go`.
 | `PATCH /api/v1/evacuation-locations/:id` | Admin | Edit, termasuk toggle `is_open`/`is_full` |
 | `DELETE /api/v1/evacuation-locations/:id` | Admin | Soft-delete (`is_active=false`) |
 | `POST /api/v1/evacuation-locations/import` | Admin | Import CSV bulk, pola validasi sama dengan `contracts_import.go` |
+| `GET /api/v1/evacuation-locations/import/template` | Publik | Template CSV statis (pola sama `contracts/import/template`) |
+| `POST /api/v1/evacuation-locations/photo` | Admin | Upload foto (multipart) — di-proxy ke Supabase Storage via service role key (lihat bagian 7) |
 
 ### Logika `/nearest`
 
@@ -136,6 +142,9 @@ pola `aisstream.py` saat API key kosong).
   upsert pakai `source_ref` (OSM id) sebagai kunci dedup, `source_type='osm'`
 - v1: upsert-only, tidak menghapus otomatis entri yang hilang dari OSM
 - Scheduler baru di `apps/worker/schedulers/`, jadwal mingguan
+- Opt-in lewat env flag `CONNECTOR_EVACUATION_OSM_ENABLED` (default
+  nonaktif) — konsisten dengan pola flag connector lain, karena query
+  Overpass se-Indonesia cukup berat untuk diaktifkan diam-diam
 
 ## 7. Frontend
 
@@ -169,9 +178,20 @@ Setelah pilih lokasi dari panel/detail, tiga opsi:
 
 ### Upload Foto
 
-Langsung dari browser ke Supabase Storage lewat `supabase-js` client yang
-sudah ada di `lib/supabase.ts` (sama pola dengan auth — tidak proxy binary
-lewat Go API). URL hasil upload disimpan ke `photo_url` saat submit form.
+**Di-proxy lewat Go API** (`POST /evacuation-locations/photo`, admin-gated,
+multipart, max 5 MB, tipe `image/jpeg|png|webp`), yang meneruskan file ke
+Supabase Storage REST API memakai `SUPABASE_SERVICE_ROLE_KEY` (env baru,
+opsional). Bucket `evacuation-photos` dibuat public-read; URL publik hasil
+upload disimpan ke `photo_url` saat submit form.
+
+Alasan tidak browser-direct: migrasi `035` menerapkan deny-all untuk role
+browser pada schema `public`, sehingga storage policy tidak dapat memeriksa
+status admin (`ews_subscribers`) tanpa membuka jalur data langsung baru.
+Proxy lewat Go API konsisten dengan prinsip "seluruh data mengalir lewat
+API". Jika `SUPABASE_SERVICE_ROLE_KEY` tidak diset (mis. community deploy
+tanpa Supabase Storage), endpoint mengembalikan 503
+`photo_storage_not_configured` dan fitur foto nonaktif secara anggun.
+
 Upload gagal tidak boleh memblokir penyimpanan lokasi — field foto opsional,
 admin bisa retry lewat edit.
 
