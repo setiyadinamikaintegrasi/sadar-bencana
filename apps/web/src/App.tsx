@@ -11,6 +11,8 @@ import EwsPage from './features/ews/EwsPage'
 import RegionalHistoryPage from './features/history/RegionalHistoryPage'
 import OfficialSourcesSettingsPage from './features/settings/OfficialSourcesSettingsPage'
 import EwsAdminSettingsPage from './features/settings/EwsAdminSettingsPage'
+import EvacuationPage from './features/evacuation/EvacuationPage'
+import EvacuationAdminPage from './features/evacuation/EvacuationAdminPage'
 import LoginGate from './features/ews/LoginGate'
 import TopNav from './components/TopNav'
 import { useAuth } from './lib/auth/AuthProvider'
@@ -23,10 +25,12 @@ const sections = [
   { label: 'Briefing', icon: '◇' },
   { label: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', icon: '◔' },
+  { label: 'Lokasi Evakuasi', icon: '⛑' },
   { label: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', icon: '⚙' },
   { label: 'Admin EWS', icon: '⚙' },
+  { label: 'Admin Evakuasi', icon: '⚙' },
 ] as const
 
 type Section = (typeof sections)[number]['label']
@@ -59,10 +63,12 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
   { label: 'Briefing', section: 'Briefing', icon: '◇' },
   { label: 'AI Copilot', section: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', section: 'Early Warning', icon: '◔' },
+  { label: 'Lokasi Evakuasi', section: 'Lokasi Evakuasi', icon: '⛑' },
   { label: 'Source Health', section: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', section: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', section: 'Sumber Resmi', icon: '⚙' },
   { label: 'Admin EWS', section: 'Admin EWS', icon: '⚙' },
+  { label: 'Admin Evakuasi', section: 'Admin Evakuasi', icon: '⚙' },
 ]
 
 function App() {
@@ -103,12 +109,16 @@ function App() {
             <SourceHealthPage />
           ) : activeSection === 'Early Warning' ? (
             <EwsPage />
+          ) : activeSection === 'Lokasi Evakuasi' ? (
+            <EvacuationPage />
           ) : activeSection === 'Riwayat Wilayah' ? (
             <RegionalHistoryPage />
           ) : activeSection === 'Sumber Resmi' ? (
             <OfficialSourcesSettingsPage />
           ) : activeSection === 'Admin EWS' ? (
             <EwsAdminSettingsPage />
+          ) : activeSection === 'Admin Evakuasi' ? (
+            <EvacuationAdminPage />
           ) : (
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-slate-950/40">
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>

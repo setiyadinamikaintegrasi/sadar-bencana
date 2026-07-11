@@ -12,10 +12,12 @@ const OVERFLOW_TABS = [
   { label: 'Briefing', icon: '◇' },
   { label: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', icon: '◔' },
+  { label: 'Lokasi Evakuasi', icon: '⛑' },
   { label: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', icon: '⚙' },
   { label: 'Admin EWS', icon: '⚙' },
+  { label: 'Admin Evakuasi', icon: '⚙' },
 ] as const
 
 interface TopNavProps {
