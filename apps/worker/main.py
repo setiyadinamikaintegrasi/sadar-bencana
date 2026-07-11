@@ -101,6 +101,7 @@ from news_alerts import process_news_alerts
 from observability import disaster_correlation_id, record_observation
 from schedulers.assets import AssetScheduler
 from schedulers.briefing import BriefingScheduler
+from schedulers.evacuation import EvacuationSyncScheduler
 from schedulers.ingest import IngestScheduler
 from schedulers.news import NewsScheduler
 from schedulers.official_alerts import OfficialAlertExpiryScheduler
@@ -301,6 +302,7 @@ _scheduler: IngestScheduler | None = None
 _briefing_scheduler: BriefingScheduler | None = None
 _asset_scheduler: AssetScheduler | None = None
 _news_scheduler: NewsScheduler | None = None
+_evacuation_scheduler: EvacuationSyncScheduler | None = None
 _official_alert_expiry_scheduler: OfficialAlertExpiryScheduler | None = None
 _lifecycle_delivery_scheduler: IngestScheduler | None = None
 _ais_connector: AISStreamConnector | None = None
@@ -654,6 +656,20 @@ async def _ingest_once() -> dict[str, int]:
     return await _ingest_cycle(pool)
 
 
+async def _evacuation_sync_once() -> dict:
+    """Sinkron fasilitas umum OSM ke evacuation_locations. Entry point scheduler."""
+    from connectors.evacuation_osm import EvacuationOSMConnector
+    from db.evacuation import upsert_osm_locations
+
+    connector = EvacuationOSMConnector()
+    try:
+        rows = await connector.fetch_recent()
+        upserted = await upsert_osm_locations(rows)
+        return {"fetched": len(rows), "upserted": upserted}
+    finally:
+        await connector.close()
+
+
 async def _briefing_cycle(pool: asyncpg.Pool) -> dict[str, Any]:
     """Run one fetch -> generate -> save briefing cycle against a pool.
 
@@ -832,6 +848,7 @@ async def startup_event() -> None:
     _validate_worker_auth_config()
 
     global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
+    global _evacuation_scheduler
     global _official_alert_expiry_scheduler, _lifecycle_delivery_scheduler
     global _ais_connector, _vf_connector, _opensky_connector, _opensky_poll_gate
 
@@ -891,6 +908,10 @@ async def startup_event() -> None:
     _news_scheduler = NewsScheduler(poll_fn=_news_poll_cycle)
     _news_scheduler.start()
 
+    if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
+        _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
+        _evacuation_scheduler.start()
+
     _official_alert_expiry_scheduler = OfficialAlertExpiryScheduler(
         expire_fn=_expire_official_alerts_once,
     )
@@ -915,6 +936,7 @@ async def shutdown_event() -> None:
     """Stop the schedulers and release the PostgreSQL connection pool."""
 
     global _scheduler, _briefing_scheduler, _asset_scheduler, _news_scheduler
+    global _evacuation_scheduler
     global _official_alert_expiry_scheduler, _lifecycle_delivery_scheduler
     global _ais_connector, _vf_connector
     if _scheduler is not None:
@@ -932,6 +954,10 @@ async def shutdown_event() -> None:
     if _news_scheduler is not None:
         await _news_scheduler.stop()
         _news_scheduler = None
+
+    if _evacuation_scheduler is not None:
+        await _evacuation_scheduler.stop()
+        _evacuation_scheduler = None
 
     if _official_alert_expiry_scheduler is not None:
         await _official_alert_expiry_scheduler.stop()
