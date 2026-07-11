@@ -152,17 +152,17 @@ func LearningModuleComplete(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unknown_module"})
 			return
 		}
-		if db == nil {
-			dbUnavailable(c)
-			return
-		}
 		var body learningCompletionBody
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": err.Error()})
 			return
 		}
-		if body.QuizScore < 0 || body.QuizMaxScore < 0 || body.QuizScore > body.QuizMaxScore {
+		if body.QuizMaxScore != 1 || body.QuizScore < 0 || body.QuizScore > 1 {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_quiz_score"})
+			return
+		}
+		if db == nil {
+			dbUnavailable(c)
 			return
 		}
 
@@ -255,6 +255,23 @@ func completeLearningModule(ctx context.Context, db *sql.DB, userID string, modu
 	}
 	defer tx.Rollback()
 
+	_, err = tx.ExecContext(ctx, `INSERT INTO learning_user_stats (user_id)
+VALUES ($1)
+ON CONFLICT (user_id) DO NOTHING`, userID)
+	if err != nil {
+		return err
+	}
+
+	var totalXP, currentStreak, longestStreak int
+	var lastActivity sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT total_xp, current_streak_days, longest_streak_days, last_activity_date
+FROM learning_user_stats
+WHERE user_id = $1
+FOR UPDATE`, userID).Scan(&totalXP, &currentStreak, &longestStreak, &lastActivity)
+	if err != nil {
+		return err
+	}
+
 	var existingXP int
 	err = tx.QueryRowContext(ctx, `SELECT xp_earned
 FROM learning_module_progress
@@ -263,6 +280,9 @@ WHERE user_id = $1 AND module_id = $2 AND status = 'completed'`, userID, moduleI
 		return err
 	}
 	if err == nil {
+		if err := unlockLearningBadges(ctx, tx, userID, moduleID, currentStreak); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 
@@ -278,27 +298,17 @@ ON CONFLICT (user_id, module_id) DO UPDATE SET
     checklist_completed = EXCLUDED.checklist_completed,
     xp_earned = learning_module_progress.xp_earned + EXCLUDED.xp_earned,
     completed_at = COALESCE(learning_module_progress.completed_at, now()),
-	    updated_at = now()
+    updated_at = now()
 WHERE learning_module_progress.status <> 'completed'
-RETURNING xp_earned`, userID, moduleID, body.QuizScore, body.QuizMaxScore, body.ChecklistCompleted, xpEarned).Scan(&storedXP)
+	RETURNING xp_earned`, userID, moduleID, body.QuizScore, body.QuizMaxScore, body.ChecklistCompleted, xpEarned).Scan(&storedXP)
 	if err == sql.ErrNoRows {
+		if err := unlockLearningBadges(ctx, tx, userID, moduleID, currentStreak); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	if err != nil {
 		return err
-	}
-
-	var totalXP, currentStreak, longestStreak int
-	var lastActivity sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT total_xp, current_streak_days, longest_streak_days, last_activity_date
-FROM learning_user_stats
-WHERE user_id = $1`, userID).Scan(&totalXP, &currentStreak, &longestStreak, &lastActivity)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if err == sql.ErrNoRows {
-		totalXP, currentStreak, longestStreak = 0, 0, 0
-		lastActivity = sql.NullTime{}
 	}
 
 	var lastPtr *time.Time
@@ -310,16 +320,14 @@ WHERE user_id = $1`, userID).Scan(&totalXP, &currentStreak, &longestStreak, &las
 	nextTotalXP := totalXP + xpEarned
 	nextLevel := computeLearningLevel(nextTotalXP)
 
-	_, err = tx.ExecContext(ctx, `INSERT INTO learning_user_stats
-    (user_id, total_xp, current_streak_days, longest_streak_days, last_activity_date, level)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (user_id) DO UPDATE SET
-    total_xp = EXCLUDED.total_xp,
-    current_streak_days = EXCLUDED.current_streak_days,
-    longest_streak_days = EXCLUDED.longest_streak_days,
-    last_activity_date = EXCLUDED.last_activity_date,
-    level = EXCLUDED.level,
-    updated_at = now()`, userID, nextTotalXP, nextCurrent, nextLongest, dateOnly(now), nextLevel)
+	_, err = tx.ExecContext(ctx, `UPDATE learning_user_stats
+SET total_xp = $2,
+    current_streak_days = $3,
+    longest_streak_days = $4,
+    last_activity_date = $5,
+    level = $6,
+    updated_at = now()
+WHERE user_id = $1`, userID, nextTotalXP, nextCurrent, nextLongest, dateOnly(now), nextLevel)
 	if err != nil {
 		return err
 	}

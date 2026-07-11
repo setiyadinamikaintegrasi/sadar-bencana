@@ -149,7 +149,22 @@ func TestLearningModuleCompleteRejectsUnknownModule(t *testing.T) {
 	}
 }
 
-func TestCompleteLearningModuleDoesNotAwardXPForExistingCompletion(t *testing.T) {
+func TestLearningModuleCompleteRejectsMultiQuestionQuiz(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	body := strings.NewReader(`{"quiz_score":1,"quiz_max_score":2,"checklist_completed":true}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/learning/modules/home-evacuation-plan/complete", body)
+	request.Header.Set("Content-Type", "application/json")
+	learningTestRouter(nil).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"error":"invalid_quiz_score"`) {
+		t.Fatalf("expected invalid_quiz_score, got %s", recorder.Body.String())
+	}
+}
+
+func TestCompleteLearningModuleEvaluatesBadgesForExistingCompletion(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -157,13 +172,42 @@ func TestCompleteLearningModuleDoesNotAwardXPForExistingCompletion(t *testing.T)
 	defer db.Close()
 
 	userID := "11111111-1111-1111-1111-111111111111"
-	moduleID := "home-evacuation-plan"
+	moduleID := "office-school-drill"
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO learning_user_stats (user_id)
+VALUES ($1)
+ON CONFLICT (user_id) DO NOTHING`)).
+		WithArgs(userID).
+		WillReturnResult(sqlmock.NewResult(1, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT total_xp, current_streak_days, longest_streak_days, last_activity_date
+FROM learning_user_stats
+WHERE user_id = $1
+FOR UPDATE`)).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"total_xp", "current_streak_days", "longest_streak_days", "last_activity_date"}).
+			AddRow(80, 1, 3, nil))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT xp_earned
 FROM learning_module_progress
 WHERE user_id = $1 AND module_id = $2 AND status = 'completed'`)).
 		WithArgs(userID, moduleID).
 		WillReturnRows(sqlmock.NewRows([]string{"xp_earned"}).AddRow(80))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*)
+FROM learning_module_progress
+WHERE user_id = $1
+  AND status = 'completed'
+  AND module_id IN ('home-evacuation-plan', 'office-school-drill', 'public-travel-safety')`)).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO learning_user_badges (user_id, badge_id)
+VALUES ($1, $2)
+ON CONFLICT (user_id, badge_id) DO NOTHING`)).
+		WithArgs(userID, "first_step").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO learning_user_badges (user_id, badge_id)
+VALUES ($1, $2)
+ON CONFLICT (user_id, badge_id) DO NOTHING`)).
+		WithArgs(userID, "three_contexts_ready").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	ctx := httptest.NewRequest(http.MethodPost, "/", nil).Context()
@@ -176,7 +220,7 @@ WHERE user_id = $1 AND module_id = $2 AND status = 'completed'`)).
 		t.Fatalf("complete existing module: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("completion should not issue XP mutations: %v", err)
+		t.Fatalf("existing completion should evaluate badges without issuing XP mutations: %v", err)
 	}
 }
 
@@ -190,6 +234,18 @@ func TestCompleteLearningModuleDoesNotAwardXPWhenCompletionWinsConflict(t *testi
 	userID := "11111111-1111-1111-1111-111111111111"
 	moduleID := "home-evacuation-plan"
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO learning_user_stats (user_id)
+VALUES ($1)
+ON CONFLICT (user_id) DO NOTHING`)).
+		WithArgs(userID).
+		WillReturnResult(sqlmock.NewResult(1, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT total_xp, current_streak_days, longest_streak_days, last_activity_date
+FROM learning_user_stats
+WHERE user_id = $1
+FOR UPDATE`)).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"total_xp", "current_streak_days", "longest_streak_days", "last_activity_date"}).
+			AddRow(0, 0, 0, nil))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT xp_earned
 FROM learning_module_progress
 WHERE user_id = $1 AND module_id = $2 AND status = 'completed'`)).
@@ -198,6 +254,23 @@ WHERE user_id = $1 AND module_id = $2 AND status = 'completed'`)).
 	mock.ExpectQuery("INSERT INTO learning_module_progress").
 		WithArgs(userID, moduleID, 1, 1, true, 80).
 		WillReturnRows(sqlmock.NewRows([]string{"xp_earned"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*)
+FROM learning_module_progress
+WHERE user_id = $1
+  AND status = 'completed'
+  AND module_id IN ('home-evacuation-plan', 'office-school-drill', 'public-travel-safety')`)).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO learning_user_badges (user_id, badge_id)
+VALUES ($1, $2)
+ON CONFLICT (user_id, badge_id) DO NOTHING`)).
+		WithArgs(userID, "first_step").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO learning_user_badges (user_id, badge_id)
+VALUES ($1, $2)
+ON CONFLICT (user_id, badge_id) DO NOTHING`)).
+		WithArgs(userID, "home_ready").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	ctx := httptest.NewRequest(http.MethodPost, "/", nil).Context()
