@@ -12,8 +12,14 @@ func TestComputeLearningXP(t *testing.T) {
 	if got := computeLearningXP(0, true); got != 70 {
 		t.Fatalf("expected 70 XP for completion + checklist, got %d", got)
 	}
+	if got := computeLearningXP(2, true); got != 70 {
+		t.Fatalf("expected 70 XP for completion + checklist when quiz score is not exactly 1, got %d", got)
+	}
 	if got := computeLearningXP(1, false); got != 60 {
 		t.Fatalf("expected 60 XP for completion + correct quiz, got %d", got)
+	}
+	if got := computeLearningXP(2, false); got != 50 {
+		t.Fatalf("expected 50 XP for completion only when quiz score is not exactly 1, got %d", got)
 	}
 }
 

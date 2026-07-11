@@ -63,7 +63,7 @@ func knownLearningModule(moduleID string) bool {
 
 func computeLearningXP(quizScore int, checklistCompleted bool) int {
 	xp := learningXPModuleComplete
-	if quizScore > 0 {
+	if quizScore == 1 {
 		xp += learningXPQuizCorrect
 	}
 	if checklistCompleted {
