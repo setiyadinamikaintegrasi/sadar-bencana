@@ -53,12 +53,17 @@ export default function EvacuationPage() {
       (pos) => {
         const at: [number, number] = [pos.coords.latitude, pos.coords.longitude]
         setUserPos(at)
+        setManualPinMode(false)
         void search(at[0], at[1], radiusKm)
       },
-      () => {
+      (err) => {
         setBusy(false)
         setManualPinMode(true)
-        setError('Izin lokasi ditolak — ketuk posisi Anda di peta untuk mencari tempat aman.')
+        setError(
+          err.code === GeolocationPositionError.PERMISSION_DENIED
+            ? 'Izin lokasi ditolak — ketuk posisi Anda di peta untuk mencari tempat aman.'
+            : 'Tidak bisa mendapatkan lokasi Anda — coba lagi atau ketuk posisi Anda di peta.',
+        )
       },
       { enableHighAccuracy: true, timeout: 10000 },
     )
