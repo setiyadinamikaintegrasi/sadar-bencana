@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   createEvacuationLocation,
   deleteEvacuationLocation,
-  fetchEvacuationLocations,
+  fetchAllEvacuationLocationsAdmin,
   importEvacuationCSV,
   updateEvacuationLocation,
   uploadEvacuationPhoto,
@@ -32,6 +32,17 @@ function fromTriState(raw: string): boolean | null {
   return raw === 'ya' ? true : raw === 'tidak' ? false : null
 }
 
+function toInput(loc: EvacuationLocation): EvacuationLocationInput {
+  return {
+    name: loc.name, location_type: loc.location_type,
+    latitude: loc.latitude, longitude: loc.longitude,
+    address: loc.address, photo_url: loc.photo_url,
+    capacity: loc.capacity, is_open: loc.is_open, is_full: loc.is_full,
+    phone: loc.phone, person_in_charge: loc.person_in_charge,
+    facilities: loc.facilities, operating_hours: loc.operating_hours,
+  }
+}
+
 export default function EvacuationAdminPage() {
   const { session, loading } = useAuth()
   const [locations, setLocations] = useState<EvacuationLocation[]>([])
@@ -43,7 +54,7 @@ export default function EvacuationAdminPage() {
 
   const load = useCallback(async () => {
     try {
-      setLocations(await fetchEvacuationLocations())
+      setLocations(await fetchAllEvacuationLocationsAdmin())
     } catch {
       setError('Gagal memuat daftar lokasi.')
     }
@@ -93,6 +104,15 @@ export default function EvacuationAdminPage() {
     if (!window.confirm('Nonaktifkan lokasi ini?')) return
     setBusy(true); setError(null)
     try { await deleteEvacuationLocation(id); await load() } catch (e) { fail(e) } finally { setBusy(false) }
+  }
+
+  const reactivate = async (loc: EvacuationLocation) => {
+    setBusy(true); setError(null); setMessage(null)
+    try {
+      await updateEvacuationLocation(loc.id, { ...toInput(loc), is_active: true })
+      setMessage('Lokasi diaktifkan kembali.')
+      await load()
+    } catch (e) { fail(e) } finally { setBusy(false) }
   }
 
   const onCSV = async (file: File) => {
@@ -218,26 +238,30 @@ export default function EvacuationAdminPage() {
                     <p className="truncate text-sm text-slate-100">{loc.name}</p>
                     <p className="text-xs text-slate-500">
                       {EVACUATION_TYPE_META[loc.location_type].label} · {loc.source_type}
+                      {!loc.is_active && (
+                        <span className="ml-2 rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-300 ring-1 ring-inset ring-rose-500/40">
+                          Nonaktif
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2 text-xs">
                     <button type="button" className="text-indigo-300 hover:underline"
                       onClick={() => {
                         setEditingId(loc.id)
-                        setForm({
-                          name: loc.name, location_type: loc.location_type,
-                          latitude: loc.latitude, longitude: loc.longitude,
-                          address: loc.address, photo_url: loc.photo_url,
-                          capacity: loc.capacity, is_open: loc.is_open, is_full: loc.is_full,
-                          phone: loc.phone, person_in_charge: loc.person_in_charge,
-                          facilities: loc.facilities, operating_hours: loc.operating_hours,
-                        })
+                        setForm(toInput(loc))
                       }}>
                       Edit
                     </button>
-                    <button type="button" className="text-rose-300 hover:underline" onClick={() => void remove(loc.id)}>
-                      Hapus
-                    </button>
+                    {loc.is_active ? (
+                      <button type="button" className="text-rose-300 hover:underline" onClick={() => void remove(loc.id)}>
+                        Hapus
+                      </button>
+                    ) : (
+                      <button type="button" className="text-emerald-300 hover:underline" onClick={() => void reactivate(loc)}>
+                        Aktifkan Kembali
+                      </button>
+                    )}
                   </div>
                 </li>
               ))}

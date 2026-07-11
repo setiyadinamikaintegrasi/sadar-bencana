@@ -156,6 +156,7 @@ func main() {
 		apihttp.RequireEWSAdmin(dbPool),
 	)
 	{
+		evacuationAdmin.GET("/all", apihttp.EvacuationLocationsListAdmin(dbPool))
 		evacuationAdmin.POST("", apihttp.EvacuationLocationCreate(dbPool))
 		evacuationAdmin.PATCH("/:id", apihttp.EvacuationLocationUpdate(dbPool))
 		evacuationAdmin.DELETE("/:id", apihttp.EvacuationLocationDelete(dbPool))

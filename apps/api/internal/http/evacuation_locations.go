@@ -105,6 +105,39 @@ func EvacuationLocationsList(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
+// EvacuationLocationsListAdmin mengembalikan SELURUH lokasi (aktif dan
+// nonaktif) untuk pengelolaan admin — beda dari EvacuationLocationsList
+// (publik) yang cuma tampilkan is_active=TRUE.
+func EvacuationLocationsListAdmin(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		rows, err := db.QueryContext(c.Request.Context(),
+			`SELECT `+evacuationLocationColumns+` FROM evacuation_locations
+			 ORDER BY is_active DESC, name LIMIT 5000`)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed"})
+			return
+		}
+		defer rows.Close()
+		locations := make([]EvacuationLocation, 0)
+		for rows.Next() {
+			loc, err := scanEvacuationLocation(rows)
+			if err != nil {
+				continue
+			}
+			locations = append(locations, loc)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"locations": locations, "count": len(locations)}})
+	}
+}
+
 type nearestResult struct {
 	EvacuationLocation
 	DistanceKM   float64 `json:"distance_km"`
@@ -161,44 +194,78 @@ func EvacuationLocationsNearest(db *sql.DB) gin.HandlerFunc {
 			}
 		}
 		recommended := recommendedLocationTypes(disaster)
-
 		minLat, maxLat, minLon, maxLon := boundingBox(lat, lon, radius)
-		args := []any{minLat, maxLat, minLon, maxLon}
-		typeFilter := ""
-		if recommended != nil {
-			typeFilter = " AND location_type = ANY($5::text[])"
-			args = append(args, toPGTextArray(recommended))
+
+		// runQuery mem-prefetch kandidat dalam bbox, diurutkan berdasarkan
+		// jarak-perkiraan ke origin sebelum LIMIT, supaya truncation tidak
+		// membuang kandidat yang sebenarnya paling dekat (lihat catatan
+		// review: ORDER BY wajib ada sebelum LIMIT pada query bbox).
+		runQuery := func(types []string) ([]nearestResult, error) {
+			args := []any{minLat, maxLat, minLon, maxLon, lat, lon}
+			typeFilter := ""
+			if types != nil {
+				typeFilter = " AND location_type = ANY($7::text[])"
+				args = append(args, toPGTextArray(types))
+			}
+			rows, err := db.QueryContext(c.Request.Context(),
+				`SELECT `+evacuationLocationColumns+` FROM evacuation_locations
+				 WHERE is_active = TRUE
+				   AND latitude BETWEEN $1 AND $2 AND longitude BETWEEN $3 AND $4`+
+					typeFilter+`
+				 ORDER BY (latitude - $5)^2 + (longitude - $6)^2
+				 LIMIT 2000`, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			out := make([]nearestResult, 0)
+			for rows.Next() {
+				loc, err := scanEvacuationLocation(rows)
+				if err != nil {
+					continue
+				}
+				d := haversineKm(lat, lon, loc.Latitude, loc.Longitude)
+				if d > radius {
+					continue
+				}
+				walk, drive := travelEstimates(d)
+				out = append(out, nearestResult{
+					EvacuationLocation: loc, DistanceKM: d,
+					WalkMinutes: walk, DriveMinutes: drive,
+				})
+			}
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+			sort.Slice(out, func(i, j int) bool { return out[i].DistanceKM < out[j].DistanceKM })
+			if len(out) > 10 {
+				out = out[:10]
+			}
+			return out, nil
 		}
-		rows, err := db.QueryContext(c.Request.Context(),
-			`SELECT `+evacuationLocationColumns+` FROM evacuation_locations
-			 WHERE is_active = TRUE
-			   AND latitude BETWEEN $1 AND $2 AND longitude BETWEEN $3 AND $4`+
-				typeFilter+` LIMIT 2000`, args...)
+
+		results, err := runQuery(recommended)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed"})
 			return
 		}
-		defer rows.Close()
-		results := make([]nearestResult, 0)
-		for rows.Next() {
-			loc, err := scanEvacuationLocation(rows)
+
+		// Jika filter tipe lokasi rekomendasi tidak menghasilkan apa pun,
+		// fallback ke semua tipe supaya fasilitas terdekat yang sebenarnya
+		// ada tidak "hilang" hanya karena bukan kategori ideal untuk jenis
+		// bencana yang terdeteksi.
+		typeFallback := false
+		if len(results) == 0 && recommended != nil {
+			results, err = runQuery(nil)
 			if err != nil {
-				continue
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed"})
+				return
 			}
-			d := haversineKm(lat, lon, loc.Latitude, loc.Longitude)
-			if d > radius {
-				continue
+			if len(results) > 0 {
+				typeFallback = true
 			}
-			walk, drive := travelEstimates(d)
-			results = append(results, nearestResult{
-				EvacuationLocation: loc, DistanceKM: d,
-				WalkMinutes: walk, DriveMinutes: drive,
-			})
 		}
-		sort.Slice(results, func(i, j int) bool { return results[i].DistanceKM < results[j].DistanceKM })
-		if len(results) > 10 {
-			results = results[:10]
-		}
+
 		var disasterOut any
 		if disaster != "" {
 			disasterOut = disaster
@@ -212,6 +279,7 @@ func EvacuationLocationsNearest(db *sql.DB) gin.HandlerFunc {
 			"disaster_type":     disasterOut,
 			"detection":         detection,
 			"recommended_types": recommendedOut,
+			"type_fallback":     typeFallback,
 			"results":           results,
 			"radius_km":         radius,
 			"assessed_at":       time.Now().UTC(),

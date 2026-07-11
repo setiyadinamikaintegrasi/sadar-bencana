@@ -37,6 +37,7 @@ export type EvacuationLocation = {
   operating_hours: string
   created_at: string
   updated_at: string
+  is_active: boolean
 }
 
 export type NearestSafePlace = EvacuationLocation & {
@@ -50,6 +51,7 @@ export type NearestResponse = {
   disaster_type: string | null
   detection: 'auto' | 'manual' | 'none'
   recommended_types: EvacuationLocationType[] | null
+  type_fallback: boolean
   results: NearestSafePlace[]
   radius_km: number
   status_note: string
@@ -62,6 +64,11 @@ export async function fetchEvacuationLocations(params?: {
   const res = await request<{ data: { locations: EvacuationLocation[] } }>(
     `/evacuation-locations${query}`,
   )
+  return res.data.locations
+}
+
+export async function fetchAllEvacuationLocationsAdmin(): Promise<EvacuationLocation[]> {
+  const res = await request<{ data: { locations: EvacuationLocation[] } }>('/evacuation-locations/all')
   return res.data.locations
 }
 

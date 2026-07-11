@@ -24,6 +24,7 @@ type EvacuationLocation struct {
 	OperatingHours string   `json:"operating_hours"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
+	IsActive       bool     `json:"is_active"`
 }
 
 const evacuationLocationColumns = `id, name, location_type, source_type,
@@ -31,7 +32,7 @@ const evacuationLocationColumns = `id, name, location_type, source_type,
 	capacity, is_open, is_full, phone, person_in_charge,
 	array_to_string(facilities, ','), operating_hours,
 	to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SSOF'),
-	to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SSOF')`
+	to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SSOF'), is_active`
 
 func scanEvacuationLocation(scanner interface{ Scan(...any) error }) (EvacuationLocation, error) {
 	var loc EvacuationLocation
@@ -39,7 +40,7 @@ func scanEvacuationLocation(scanner interface{ Scan(...any) error }) (Evacuation
 	err := scanner.Scan(&loc.ID, &loc.Name, &loc.LocationType, &loc.SourceType,
 		&loc.Latitude, &loc.Longitude, &loc.Address, &loc.PhotoURL,
 		&loc.Capacity, &loc.IsOpen, &loc.IsFull, &loc.Phone, &loc.PersonInCharge,
-		&facilities, &loc.OperatingHours, &loc.CreatedAt, &loc.UpdatedAt)
+		&facilities, &loc.OperatingHours, &loc.CreatedAt, &loc.UpdatedAt, &loc.IsActive)
 	loc.Facilities = parsePGTextArray(facilities)
 	return loc, err
 }

@@ -20,6 +20,15 @@ export default function NearestSafePlacePanel({ response, onSelect, onWidenRadiu
           sekitar Anda — hasil difilter ke lokasi prioritas untuk jenis bencana ini.
         </div>
       )}
+      {response.type_fallback && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          Tidak ada lokasi dengan kategori prioritas
+          {response.disaster_type && (
+            <> untuk <b>{DISASTER_LABELS[response.disaster_type] ?? response.disaster_type}</b></>
+          )}{' '}
+          dalam radius ini — menampilkan lokasi terdekat lainnya sebagai alternatif.
+        </div>
+      )}
       <p className="text-xs text-slate-500">{response.status_note}</p>
       {response.results.length === 0 ? (
         <div className="space-y-2 py-6 text-center">
