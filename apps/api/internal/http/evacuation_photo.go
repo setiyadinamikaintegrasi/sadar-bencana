@@ -40,12 +40,21 @@ func evacuationPhotoObjectName(contentType string) (string, error) {
 func EvacuationPhotoUpload(supabaseURL, serviceRoleKey string) gin.HandlerFunc {
 	client := &http.Client{Timeout: 30 * time.Second}
 	return func(c *gin.Context) {
+		// Cap the raw body read before Gin's ParseMultipartForm (triggered by
+		// FormFile) buffers the whole request; otherwise an oversized upload
+		// is fully spooled before the size checks below ever run.
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, evacuationPhotoMaxBytes)
 		if supabaseURL == "" || serviceRoleKey == "" {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "photo_storage_not_configured"})
 			return
 		}
 		fileHeader, err := c.FormFile("file")
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "file_too_large", "message": "maksimum 5 MB"})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing_file"})
 			return
 		}
