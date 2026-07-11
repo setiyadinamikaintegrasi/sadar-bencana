@@ -1,8 +1,12 @@
 package http
 
 import (
+	"context"
 	"database/sql"
+	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -124,4 +128,241 @@ func scanLearningStats(userID string, totalXP int, currentStreak int, longestStr
 		LastActivityDate:  last,
 		Level:             level,
 	}
+}
+
+func LearningMe(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		state, err := loadLearningState(c.Request.Context(), db, AuthUserID(c))
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": state})
+	}
+}
+
+func LearningModuleComplete(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		moduleID := c.Param("module_id")
+		if !knownLearningModule(moduleID) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unknown_module"})
+			return
+		}
+		if db == nil {
+			dbUnavailable(c)
+			return
+		}
+		var body learningCompletionBody
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": err.Error()})
+			return
+		}
+		if body.QuizScore < 0 || body.QuizMaxScore < 0 || body.QuizScore > body.QuizMaxScore {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_quiz_score"})
+			return
+		}
+
+		userID := AuthUserID(c)
+		if err := completeLearningModule(c.Request.Context(), db, userID, moduleID, body, time.Now().UTC()); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+			return
+		}
+		state, err := loadLearningState(c.Request.Context(), db, userID)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": state})
+	}
+}
+
+func loadLearningState(ctx context.Context, db *sql.DB, userID string) (LearningState, error) {
+	stats := LearningStats{UserID: userID, Level: 1}
+	var totalXP, currentStreak, longestStreak, level int
+	var lastActivity sql.NullTime
+	err := db.QueryRowContext(ctx, `SELECT total_xp, current_streak_days, longest_streak_days, last_activity_date, level
+FROM learning_user_stats
+WHERE user_id = $1`, userID).Scan(&totalXP, &currentStreak, &longestStreak, &lastActivity, &level)
+	if err == nil {
+		stats = scanLearningStats(userID, totalXP, currentStreak, longestStreak, lastActivity, level)
+	} else if err != sql.ErrNoRows {
+		return LearningState{}, err
+	}
+
+	progressRows, err := db.QueryContext(ctx, `SELECT module_id, status, quiz_score, quiz_max_score, checklist_completed, xp_earned, completed_at
+FROM learning_module_progress
+WHERE user_id = $1
+ORDER BY created_at ASC`, userID)
+	if err != nil {
+		return LearningState{}, err
+	}
+	defer progressRows.Close()
+
+	progress := []LearningModuleProgress{}
+	for progressRows.Next() {
+		var item LearningModuleProgress
+		var completedAt sql.NullTime
+		if err := progressRows.Scan(&item.ModuleID, &item.Status, &item.QuizScore, &item.QuizMaxScore, &item.ChecklistCompleted, &item.XPEarned, &completedAt); err != nil {
+			return LearningState{}, err
+		}
+		if completedAt.Valid {
+			value := completedAt.Time
+			item.CompletedAt = &value
+		}
+		progress = append(progress, item)
+	}
+	if err := progressRows.Err(); err != nil {
+		return LearningState{}, err
+	}
+
+	badgeRows, err := db.QueryContext(ctx, `SELECT b.id, b.name, b.description, b.criteria, ub.unlocked_at
+FROM learning_badges b
+LEFT JOIN learning_user_badges ub ON ub.badge_id = b.id AND ub.user_id = $1
+ORDER BY b.created_at ASC, b.id ASC`, userID)
+	if err != nil {
+		return LearningState{}, err
+	}
+	defer badgeRows.Close()
+
+	badges := []LearningBadge{}
+	for badgeRows.Next() {
+		var badge LearningBadge
+		var unlockedAt sql.NullTime
+		if err := badgeRows.Scan(&badge.ID, &badge.Name, &badge.Description, &badge.Criteria, &unlockedAt); err != nil {
+			return LearningState{}, err
+		}
+		if unlockedAt.Valid {
+			value := unlockedAt.Time
+			badge.UnlockedAt = &value
+		}
+		badges = append(badges, badge)
+	}
+	if err := badgeRows.Err(); err != nil {
+		return LearningState{}, err
+	}
+
+	return LearningState{Stats: stats, Progress: progress, Badges: badges}, nil
+}
+
+func completeLearningModule(ctx context.Context, db *sql.DB, userID string, moduleID string, body learningCompletionBody, now time.Time) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var existingXP int
+	err = tx.QueryRowContext(ctx, `SELECT xp_earned
+FROM learning_module_progress
+WHERE user_id = $1 AND module_id = $2 AND status = 'completed'`, userID, moduleID).Scan(&existingXP)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		return tx.Commit()
+	}
+
+	xpEarned := computeLearningXP(body.QuizScore, body.ChecklistCompleted)
+	var storedXP int
+	err = tx.QueryRowContext(ctx, `INSERT INTO learning_module_progress
+    (user_id, module_id, status, quiz_score, quiz_max_score, checklist_completed, xp_earned, completed_at)
+VALUES ($1, $2, 'completed', $3, $4, $5, $6, now())
+ON CONFLICT (user_id, module_id) DO UPDATE SET
+    status = 'completed',
+    quiz_score = EXCLUDED.quiz_score,
+    quiz_max_score = EXCLUDED.quiz_max_score,
+    checklist_completed = EXCLUDED.checklist_completed,
+    xp_earned = learning_module_progress.xp_earned + EXCLUDED.xp_earned,
+    completed_at = COALESCE(learning_module_progress.completed_at, now()),
+	    updated_at = now()
+WHERE learning_module_progress.status <> 'completed'
+RETURNING xp_earned`, userID, moduleID, body.QuizScore, body.QuizMaxScore, body.ChecklistCompleted, xpEarned).Scan(&storedXP)
+	if err == sql.ErrNoRows {
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
+
+	var totalXP, currentStreak, longestStreak int
+	var lastActivity sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT total_xp, current_streak_days, longest_streak_days, last_activity_date
+FROM learning_user_stats
+WHERE user_id = $1`, userID).Scan(&totalXP, &currentStreak, &longestStreak, &lastActivity)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == sql.ErrNoRows {
+		totalXP, currentStreak, longestStreak = 0, 0, 0
+		lastActivity = sql.NullTime{}
+	}
+
+	var lastPtr *time.Time
+	if lastActivity.Valid {
+		value := lastActivity.Time
+		lastPtr = &value
+	}
+	nextCurrent, nextLongest := nextLearningStreak(lastPtr, now, currentStreak, longestStreak)
+	nextTotalXP := totalXP + xpEarned
+	nextLevel := computeLearningLevel(nextTotalXP)
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO learning_user_stats
+    (user_id, total_xp, current_streak_days, longest_streak_days, last_activity_date, level)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (user_id) DO UPDATE SET
+    total_xp = EXCLUDED.total_xp,
+    current_streak_days = EXCLUDED.current_streak_days,
+    longest_streak_days = EXCLUDED.longest_streak_days,
+    last_activity_date = EXCLUDED.last_activity_date,
+    level = EXCLUDED.level,
+    updated_at = now()`, userID, nextTotalXP, nextCurrent, nextLongest, dateOnly(now), nextLevel)
+	if err != nil {
+		return err
+	}
+
+	if err := unlockLearningBadges(ctx, tx, userID, moduleID, nextCurrent); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type learningTx interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func unlockLearningBadges(ctx context.Context, tx learningTx, userID string, moduleID string, currentStreak int) error {
+	badgeIDs := []string{"first_step"}
+	if moduleID == "home-evacuation-plan" {
+		badgeIDs = append(badgeIDs, "home_ready")
+	}
+	if currentStreak >= 3 {
+		badgeIDs = append(badgeIDs, "streak_3")
+	}
+
+	var completedInitial int
+	err := tx.QueryRowContext(ctx, `SELECT count(*)
+FROM learning_module_progress
+WHERE user_id = $1
+  AND status = 'completed'
+  AND module_id IN ('home-evacuation-plan', 'office-school-drill', 'public-travel-safety')`, userID).Scan(&completedInitial)
+	if err != nil {
+		return err
+	}
+	if completedInitial == 3 {
+		badgeIDs = append(badgeIDs, "three_contexts_ready")
+	}
+
+	for _, badgeID := range badgeIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO learning_user_badges (user_id, badge_id)
+VALUES ($1, $2)
+ON CONFLICT (user_id, badge_id) DO NOTHING`, userID, badgeID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
