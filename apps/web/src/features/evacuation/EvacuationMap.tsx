@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import {
   EVACUATION_TYPE_META,
+  type EvacuationBBox,
   type EvacuationLocation,
 } from '../../lib/api/evacuation'
 
@@ -41,6 +42,27 @@ function MapClickCapture({ enabled, onMapClick }: { enabled: boolean; onMapClick
   return null
 }
 
+// ViewportWatcher melaporkan bbox + zoom peta ke parent — sekali saat siap dan
+// setiap kali peta digeser/di-zoom — supaya marker dimuat per-viewport (bukan
+// seluruh Indonesia sekaligus, yang bisa ribuan titik dan kena LIMIT server).
+function ViewportWatcher({ onChange }: { onChange: (bbox: EvacuationBBox, zoom: number) => void }) {
+  const cb = useRef(onChange)
+  cb.current = onChange
+  const emit = (map: L.Map) => {
+    const b = map.getBounds()
+    cb.current(
+      { minLat: b.getSouth(), maxLat: b.getNorth(), minLon: b.getWest(), maxLon: b.getEast() },
+      map.getZoom(),
+    )
+  }
+  const map = useMapEvents({ moveend: () => emit(map) })
+  useEffect(() => {
+    emit(map)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map])
+  return null
+}
+
 function FitRoute({ routeTo, userPos }: { routeTo: [number, number] | null; userPos: [number, number] | null }) {
   const map = useMap()
   useEffect(() => {
@@ -57,10 +79,11 @@ type EvacuationMapProps = {
   manualPinMode: boolean
   onMapClick: (lat: number, lon: number) => void
   onSelect: (loc: EvacuationLocation) => void
+  onViewportChange: (bbox: EvacuationBBox, zoom: number) => void
 }
 
 export default function EvacuationMap({
-  locations, userPos, routeTo, manualPinMode, onMapClick, onSelect,
+  locations, userPos, routeTo, manualPinMode, onMapClick, onSelect, onViewportChange,
 }: EvacuationMapProps) {
   const markers = useMemo(
     () =>
@@ -93,6 +116,7 @@ export default function EvacuationMap({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <MapClickCapture enabled={manualPinMode} onMapClick={onMapClick} />
+      <ViewportWatcher onChange={onViewportChange} />
       <FitRoute routeTo={routeTo} userPos={userPos} />
       {markers}
       {userPos && <Marker position={userPos} icon={userIcon} />}

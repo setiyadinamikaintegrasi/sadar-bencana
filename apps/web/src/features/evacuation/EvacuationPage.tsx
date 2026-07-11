@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import EvacuationMap from './EvacuationMap'
 import NearestSafePlacePanel from './NearestSafePlacePanel'
 import EvacuationLocationDetail from './EvacuationLocationDetail'
@@ -6,10 +6,15 @@ import {
   fetchEvacuationLocations,
   fetchNearestSafePlaces,
   EVACUATION_TYPE_META,
+  type EvacuationBBox,
   type EvacuationLocation,
   type EvacuationLocationType,
   type NearestResponse,
 } from '../../lib/api/evacuation'
+
+// Di bawah zoom ini, viewport masih mencakup area terlalu luas (ribuan titik
+// se-provinsi/nasional) untuk dimuat/dirender berguna — minta pengguna zoom.
+const MIN_ZOOM_FOR_MARKERS = 11
 
 export default function EvacuationPage() {
   const [locations, setLocations] = useState<EvacuationLocation[]>([])
@@ -22,11 +27,27 @@ export default function EvacuationPage() {
   const [radiusKm, setRadiusKm] = useState(25)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [zoomHint, setZoomHint] = useState(false)
 
-  useEffect(() => {
-    fetchEvacuationLocations()
-      .then(setLocations)
-      .catch(() => setError('Gagal memuat lokasi evakuasi.'))
+  // Guard respons basi (pan cepat) + debounce agar tak membanjiri API.
+  const reqIdRef = useRef(0)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current) }, [])
+
+  const onViewportChange = useCallback((bbox: EvacuationBBox, zoom: number) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (zoom < MIN_ZOOM_FOR_MARKERS) {
+      setZoomHint(true)
+      setLocations([])
+      return
+    }
+    setZoomHint(false)
+    debounceRef.current = setTimeout(() => {
+      const reqId = ++reqIdRef.current
+      fetchEvacuationLocations({ bbox })
+        .then((locs) => { if (reqId === reqIdRef.current) setLocations(locs) })
+        .catch(() => { if (reqId === reqIdRef.current) setError('Gagal memuat lokasi evakuasi.') })
+    }, 250)
   }, [])
 
   const search = useCallback(async (lat: number, lon: number, radius: number) => {
@@ -132,17 +153,26 @@ export default function EvacuationPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
-        <EvacuationMap
-          locations={filtered}
-          userPos={userPos}
-          routeTo={routeTo}
-          manualPinMode={manualPinMode}
-          onMapClick={onMapClick}
-          onSelect={(loc) => {
-            setSelected(loc)
-            setRouteTo(null)
-          }}
-        />
+        <div className="relative">
+          <EvacuationMap
+            locations={filtered}
+            userPos={userPos}
+            routeTo={routeTo}
+            manualPinMode={manualPinMode}
+            onMapClick={onMapClick}
+            onSelect={(loc) => {
+              setSelected(loc)
+              setRouteTo(null)
+            }}
+            onViewportChange={onViewportChange}
+          />
+          {zoomHint && (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-[1000] mx-auto w-fit max-w-[90%] rounded-full border border-slate-700 bg-slate-900/90 px-4 py-1.5 text-center text-xs text-slate-300 shadow-lg">
+              Perbesar peta untuk memuat lokasi evakuasi di area ini, atau tekan
+              <b className="text-emerald-300"> Cari Tempat Aman</b>.
+            </div>
+          )}
+        </div>
         <div className="space-y-4">
           {selected && (
             <EvacuationLocationDetail

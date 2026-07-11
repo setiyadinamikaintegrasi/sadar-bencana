@@ -57,12 +57,28 @@ export type NearestResponse = {
   status_note: string
 }
 
+export type EvacuationBBox = {
+  minLat: number
+  maxLat: number
+  minLon: number
+  maxLon: number
+}
+
 export async function fetchEvacuationLocations(params?: {
   locationType?: EvacuationLocationType
+  bbox?: EvacuationBBox
 }): Promise<EvacuationLocation[]> {
-  const query = params?.locationType ? `?location_type=${params.locationType}` : ''
+  const qs = new URLSearchParams()
+  if (params?.locationType) qs.set('location_type', params.locationType)
+  if (params?.bbox) {
+    qs.set('min_lat', String(params.bbox.minLat))
+    qs.set('max_lat', String(params.bbox.maxLat))
+    qs.set('min_lon', String(params.bbox.minLon))
+    qs.set('max_lon', String(params.bbox.maxLon))
+  }
+  const query = qs.toString()
   const res = await request<{ data: { locations: EvacuationLocation[] } }>(
-    `/evacuation-locations${query}`,
+    `/evacuation-locations${query ? `?${query}` : ''}`,
   )
   return res.data.locations
 }
