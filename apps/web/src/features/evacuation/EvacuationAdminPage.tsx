@@ -40,6 +40,7 @@ function toInput(loc: EvacuationLocation): EvacuationLocationInput {
     capacity: loc.capacity, is_open: loc.is_open, is_full: loc.is_full,
     phone: loc.phone, person_in_charge: loc.person_in_charge,
     facilities: loc.facilities, operating_hours: loc.operating_hours,
+    is_active: loc.is_active,
   }
 }
 

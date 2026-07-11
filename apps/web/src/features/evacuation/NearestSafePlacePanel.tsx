@@ -14,7 +14,7 @@ type PanelProps = {
 export default function NearestSafePlacePanel({ response, onSelect, onWidenRadius }: PanelProps) {
   return (
     <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
-      {response.detection === 'auto' && response.disaster_type && (
+      {response.detection === 'auto' && response.disaster_type && !response.type_fallback && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           Terdeteksi kejadian <b>{DISASTER_LABELS[response.disaster_type] ?? response.disaster_type}</b> di
           sekitar Anda — hasil difilter ke lokasi prioritas untuk jenis bencana ini.
