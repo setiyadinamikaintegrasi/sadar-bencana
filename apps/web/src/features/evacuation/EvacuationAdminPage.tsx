@@ -138,9 +138,9 @@ export default function EvacuationAdminPage() {
             ))}
           </select>
           <div className="grid grid-cols-2 gap-2">
-            <input className={inputCls} type="number" step="any" placeholder="Latitude" value={form.latitude || ''}
+            <input className={inputCls} type="number" step="any" placeholder="Latitude" value={form.latitude}
               onChange={(e) => setForm({ ...form, latitude: Number(e.target.value) })} />
-            <input className={inputCls} type="number" step="any" placeholder="Longitude" value={form.longitude || ''}
+            <input className={inputCls} type="number" step="any" placeholder="Longitude" value={form.longitude}
               onChange={(e) => setForm({ ...form, longitude: Number(e.target.value) })} />
           </div>
           <input className={inputCls} placeholder="Alamat" value={form.address ?? ''}
