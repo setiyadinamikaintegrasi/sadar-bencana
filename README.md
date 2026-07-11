@@ -39,7 +39,10 @@ executive dashboard yang dapat diaudit.
 - preview XLSX historis BMKG Data Online dengan checksum dan staging aman untuk
   record yang belum memiliki administrative boundary;
 - daftar risiko privat per-user, aset personal dengan pin peta, serta
-  accumulation analysis untuk portofolio perusahaan.
+  accumulation analysis untuk portofolio perusahaan;
+- lokasi evakuasi: peta shelter/TES/TEA/posko/fasilitas umum, pencarian tempat
+  aman terdekat dengan rekomendasi rule-based per jenis bencana, dan navigasi
+  Google Maps/Waze/peta internal.
 
 ## Community dan Hosted
 
@@ -58,10 +61,12 @@ Satu codebase Apache 2.0 mendukung dua mode deployment:
 | **Daftar Risiko** | ✅ | Aset personal di-scope ke user; portofolio hosted di-scope ke organisasi |
 | **EWS** (Early Warning System) | ✅ | Monitoring alert dan early warning |
 | **Sumber Resmi** | ✅ Admin | Konfigurasi feed, token, preview, dry-run, rollback, dan audit |
+| **Admin Evakuasi** | ✅ Admin | Kelola lokasi, import CSV, upload foto |
 | Executive Overview | ❌ | Public dashboard |
 | Events, Alerts, Briefing, Riwayat Wilayah | ❌ | Public |
 | AI Copilot | ✅ | Generative AI berbayar; wajib sesi Supabase dan rate limit |
 | Source Health | ❌ | Public |
+| Lokasi Evakuasi | ❌ | Publik — informasi keselamatan |
 
 ### Petunjuk untuk pengguna
 
@@ -215,11 +220,13 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 - `CONNECTOR_PVMBG_ENABLED`, `PVMBG_FEED_URL` — advisory PVMBG/MAGMA yang telah diizinkan
 - `CONNECTOR_BNPB_ENABLED`, `BNPB_FEED_URL` — situation report BNPB yang telah diizinkan
 - `CONNECTOR_INARISK_ENABLED`, `INARISK_FEED_URL` — enrichment InaRISK yang telah diizinkan
+- `CONNECTOR_EVACUATION_OSM_ENABLED` — sinkron mingguan fasilitas umum OSM untuk lokasi evakuasi; default nonaktif
 - `OFFICIAL_SOURCE_SETTINGS_KEY` — kunci enkripsi token sumber resmi di database
 - `EVIDENCE_CORRELATION_ENABLED` — shadow-mode correlation; aktifkan setelah migration 022
 - `AISSTREAM_API_KEY`, `VESSELFINDER_API_KEY`, `OPENSKY_*` — tracking maritim & penerbangan (opsional)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` — email SMTP (opsional)
 - `EWS_DELIVERY_ENABLED`, `EWS_LIFECYCLE_DELIVERY_ENABLED` — queue delivery dan lifecycle EWS
+- `SUPABASE_SERVICE_ROLE_KEY` — proxy upload foto lokasi evakuasi (opsional)
 
 Panduan hardening deployment tersedia di
 [`docs/production-security-deployment.md`](docs/production-security-deployment.md).

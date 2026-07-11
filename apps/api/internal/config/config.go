@@ -42,6 +42,8 @@ type Config struct {
 	SMTPPassword              string
 	SMTPFrom                  string
 	TrustedProxies            []string
+	SupabaseURL               string
+	SupabaseServiceRoleKey    string
 }
 
 func Load() Config {
@@ -79,6 +81,8 @@ func Load() Config {
 		SMTPPassword:              getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                  getEnv("SMTP_FROM", "noreply@sadarbencana.id"),
 		TrustedProxies:            getEnvList("TRUSTED_PROXIES"),
+		SupabaseURL:               getEnv("SUPABASE_URL", ""),
+		SupabaseServiceRoleKey:    getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
 	}
 }
 

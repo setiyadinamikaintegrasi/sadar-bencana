@@ -13,6 +13,8 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   serta audit konfigurasi.
 - Historical disaster intelligence, regional analytics, dan AI regional
   analyst berbasis snapshot terstruktur.
+- Lokasi Evakuasi: peta lokasi evakuasi (sinkron OSM + kurasi admin),
+  pencarian tempat aman terdekat berbasis bencana aktif, dan navigasi.
 
 ### Security
 

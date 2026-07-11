@@ -70,6 +70,11 @@ func main() {
 	router.GET("/api/v1/official-alerts", apihttp.OfficialAlerts(dbPool))
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())
+	router.GET("/api/v1/evacuation-locations/import/template", apihttp.EvacuationImportTemplate())
+
+	// Lokasi evakuasi: informasi keselamatan, publik tanpa login.
+	router.GET("/api/v1/evacuation-locations", apihttp.EvacuationLocationsList(dbPool))
+	router.GET("/api/v1/evacuation-locations/nearest", apihttp.EvacuationLocationsNearest(dbPool))
 
 	// Akun privat — aset personal, entitlement, dan undangan wajib login.
 	account := router.Group("", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
@@ -144,6 +149,19 @@ func main() {
 	)
 	{
 		correlationAdmin.GET("/review-queue", apihttp.CorrelationReviewQueue(dbPool))
+	}
+	evacuationAdmin := router.Group(
+		"/api/v1/evacuation-locations",
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+		apihttp.RequireEWSAdmin(dbPool),
+	)
+	{
+		evacuationAdmin.GET("/all", apihttp.EvacuationLocationsListAdmin(dbPool))
+		evacuationAdmin.POST("", apihttp.EvacuationLocationCreate(dbPool))
+		evacuationAdmin.PATCH("/:id", apihttp.EvacuationLocationUpdate(dbPool))
+		evacuationAdmin.DELETE("/:id", apihttp.EvacuationLocationDelete(dbPool))
+		evacuationAdmin.POST("/import", apihttp.EvacuationImport(dbPool))
+		evacuationAdmin.POST("/photo", apihttp.EvacuationPhotoUpload(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
 	}
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
