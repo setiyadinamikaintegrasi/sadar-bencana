@@ -35,7 +35,9 @@ apps/api/sadar-api
 
 # Dev tools & internal
 .logs/
+.worktrees/
 .superpowers/
+docs/superpowers/
 .impeccable/
 .local-notes/
 # Local databases / state

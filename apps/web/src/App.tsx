@@ -13,6 +13,7 @@ import OfficialSourcesSettingsPage from './features/settings/OfficialSourcesSett
 import EwsAdminSettingsPage from './features/settings/EwsAdminSettingsPage'
 import EvacuationPage from './features/evacuation/EvacuationPage'
 import EvacuationAdminPage from './features/evacuation/EvacuationAdminPage'
+import LearningPage from './features/learning/LearningPage'
 import LoginGate from './features/ews/LoginGate'
 import TopNav from './components/TopNav'
 import { useAuth } from './lib/auth/AuthProvider'
@@ -26,6 +27,7 @@ const sections = [
   { label: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', icon: '◔' },
   { label: 'Lokasi Evakuasi', icon: '⛑' },
+  { label: 'Belajar Siaga', icon: '◉' },
   { label: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', icon: '⚙' },
@@ -64,6 +66,7 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
   { label: 'AI Copilot', section: 'AI Copilot', icon: '✦' },
   { label: 'Early Warning', section: 'Early Warning', icon: '◔' },
   { label: 'Lokasi Evakuasi', section: 'Lokasi Evakuasi', icon: '⛑' },
+  { label: 'Belajar Siaga', section: 'Belajar Siaga', icon: '◉' },
   { label: 'Source Health', section: 'Source Health', icon: '◈' },
   { label: 'Riwayat Wilayah', section: 'Riwayat Wilayah', icon: '▦' },
   { label: 'Sumber Resmi', section: 'Sumber Resmi', icon: '⚙' },
@@ -111,6 +114,8 @@ function App() {
             <EwsPage />
           ) : activeSection === 'Lokasi Evakuasi' ? (
             <EvacuationPage />
+          ) : activeSection === 'Belajar Siaga' ? (
+            <LearningPage />
           ) : activeSection === 'Riwayat Wilayah' ? (
             <RegionalHistoryPage />
           ) : activeSection === 'Sumber Resmi' ? (

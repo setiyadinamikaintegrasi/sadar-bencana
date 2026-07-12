@@ -89,6 +89,8 @@ func main() {
 		account.GET("/api/v1/personal-assets/:id/risk", apihttp.PersonalAssetRisk(dbPool))
 		account.GET("/api/v1/geocoding/search", apihttp.GeocodingSearch(cfg.GeocoderBaseURL, cfg.GeocoderUserAgent))
 		account.PATCH("/api/v1/alerts/:id/acknowledge", apihttp.AcknowledgeAlert(dbPool))
+		account.GET("/api/v1/learning/me", apihttp.LearningMe(dbPool))
+		account.POST("/api/v1/learning/modules/:module_id/complete", apihttp.LearningModuleComplete(dbPool))
 	}
 
 	// Generative AI consumes a paid upstream service. Require a verified
