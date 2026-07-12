@@ -1,5 +1,6 @@
 // apps/web/src/components/TopNav.tsx
 import { useState } from 'react'
+import BrandLogo from './BrandLogo'
 
 const PRIMARY_TABS = [
   { label: 'Executive Overview', icon: '◼' },
@@ -33,9 +34,14 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
   return (
     <header className="fixed inset-x-0 top-0 z-10 hidden border-b border-slate-800 bg-slate-900 md:flex md:h-14 md:items-center md:gap-0 md:px-6">
       {/* Logo */}
-      <div className="flex flex-col border-r border-slate-800 py-3 pr-6 mr-2">
-        <p className="text-sm font-semibold text-slate-50">Risk Monitor</p>
-      </div>
+      <button
+        type="button"
+        onClick={() => onNavigate('Executive Overview')}
+        className="mr-2 flex h-14 shrink-0 items-center border-r border-slate-800 pr-5"
+        aria-label="Buka Executive Overview"
+      >
+        <BrandLogo className="h-8 w-auto" />
+      </button>
 
       {/* Primary tabs */}
       <nav className="flex flex-1 items-stretch h-14">
