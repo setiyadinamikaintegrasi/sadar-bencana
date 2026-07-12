@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Cincin Siaga SadarBencana</title>
+  <circle cx="32" cy="32" r="23" fill="#111C34" stroke="#7C8CFF" stroke-width="4"/>
+  <path d="M32 4v7M32 53v7M4 32h7M53 32h7" fill="none" stroke="#69B7FF" stroke-width="5" stroke-linecap="round"/>
+  <path d="M32 20a12 12 0 1 1-9 20" fill="none" stroke="#39D6B0" stroke-width="6" stroke-linecap="round"/>
+  <path d="m18 35 5 8 10-7" fill="none" stroke="#FFB44A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
