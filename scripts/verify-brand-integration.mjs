@@ -28,4 +28,18 @@ const app = await source(appPath)
 requireText(appPath, 'variant="mark"', app)
 requireText(appPath, 'decorative', app)
 
+const htmlPath = 'apps/web/index.html'
+const html = await source(htmlPath)
+for (const text of [
+  '<html lang="id">',
+  'content="#0B1222"',
+  'href="/favicon.ico"',
+  'href="/favicon.svg"',
+  'href="/apple-touch-icon.png"',
+  'href="/site.webmanifest"',
+  'property="og:image" content="/og-sadarbencana.png"',
+  'name="twitter:card" content="summary_large_image"',
+  '<title>SadarBencana</title>',
+]) requireText(htmlPath, text, html)
+
 console.log('Brand integration verified')
