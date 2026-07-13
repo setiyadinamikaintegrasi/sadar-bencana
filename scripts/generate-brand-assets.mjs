@@ -7,12 +7,17 @@ import { promisify } from 'node:util'
 const root = resolve(import.meta.dirname, '..')
 const execFile = promisify(execFileCallback)
 const iconSourcePath = 'apps/web/public/.icon-source-512.png'
+const fontPath = resolve(root, 'apps/web/public/brand/fonts/Inter-Variable.ttf')
 
 async function render(sourcePath, outputPath, width) {
   const source = await readFile(resolve(root, sourcePath), 'utf8')
   const rendered = new Resvg(source, {
     fitTo: { mode: 'width', value: width },
-    font: { loadSystemFonts: true },
+    font: {
+      fontFiles: [fontPath],
+      loadSystemFonts: false,
+      defaultFontFamily: 'Inter',
+    },
   }).render().asPng()
   const output = resolve(root, outputPath)
   await mkdir(dirname(output), { recursive: true })
@@ -22,6 +27,23 @@ async function render(sourcePath, outputPath, width) {
 async function magick(args) {
   await execFile('magick', args, { cwd: root })
 }
+
+async function assertImageMagick7() {
+  let stdout
+  try {
+    ;({ stdout } = await execFile('magick', ['-version'], { cwd: root }))
+  } catch (error) {
+    throw new Error('ImageMagick 7 is required to generate brand assets. Install ImageMagick 7 and ensure `magick` is on PATH.', { cause: error })
+  }
+
+  const version = stdout.match(/ImageMagick\s+(\d+)(?:\.\d+)*/)
+  if (!version || Number(version[1]) !== 7) {
+    const reported = stdout.split('\n', 1)[0] || 'unknown version'
+    throw new Error(`ImageMagick 7 is required to generate brand assets. Found: ${reported}`)
+  }
+}
+
+await assertImageMagick7()
 
 try {
   await render('apps/web/public/favicon.svg', 'apps/web/public/favicon-16x16.png', 16)

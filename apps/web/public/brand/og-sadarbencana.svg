@@ -9,7 +9,7 @@
   </symbol>
   <rect width="1200" height="630" fill="#0B1222"/>
   <use href="#cincin-siaga" x="96" y="155" width="160" height="160"/>
-  <text x="304" y="252" fill="#69B7FF" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="72" font-weight="700">SadarBencana</text>
-  <text x="308" y="310" fill="#39D6B0" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="700">Pantau. Pahami. Siaga.</text>
-  <text x="308" y="358" fill="#7C8CFF" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22">Monitoring dan kesiapsiagaan bencana</text>
+  <text x="304" y="252" fill="#69B7FF" font-family="Inter, system-ui, sans-serif" font-size="72" font-weight="700">SadarBencana</text>
+  <text x="308" y="310" fill="#39D6B0" font-family="Inter, system-ui, sans-serif" font-size="30" font-weight="700">Pantau. Pahami. Siaga.</text>
+  <text x="308" y="358" fill="#7C8CFF" font-family="Inter, system-ui, sans-serif" font-size="22">Monitoring dan kesiapsiagaan bencana</text>
 </svg>

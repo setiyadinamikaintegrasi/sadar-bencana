@@ -37,9 +37,22 @@ for (const text of [
   'href="/favicon.svg"',
   'href="/apple-touch-icon.png"',
   'href="/site.webmanifest"',
-  'property="og:image" content="/og-sadarbencana.png"',
+  'property="og:url" content="https://sadarbencana.id/"',
+  'property="og:image" content="https://sadarbencana.id/og-sadarbencana.png"',
+  'property="og:image:alt" content="SadarBencana - Pantau. Pahami. Siaga."',
   'name="twitter:card" content="summary_large_image"',
   '<title>SadarBencana</title>',
 ]) requireText(htmlPath, text, html)
+
+const generatorPath = 'scripts/generate-brand-assets.mjs'
+const generator = await source(generatorPath)
+for (const text of [
+  "const fontPath = resolve(root, 'apps/web/public/brand/fonts/Inter-Variable.ttf')",
+  'fontFiles: [fontPath]',
+  'loadSystemFonts: false',
+  "defaultFontFamily: 'Inter'",
+  "execFile('magick', ['-version']",
+  'ImageMagick 7 is required',
+]) requireText(generatorPath, text, generator)
 
 console.log('Brand integration verified')
