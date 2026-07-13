@@ -18,14 +18,15 @@ const expectedSvg = [
   'apps/web/public/brand/og-sadarbencana.svg',
   'apps/web/public/favicon.svg',
 ]
-const fullColorSvg = expectedSvg.filter((path) => !path.endsWith('logo-mark-mono.svg'))
 const approvedPalette = new Set(['#7C8CFF', '#69B7FF', '#39D6B0', '#FFB44A', '#0B1222'])
-const forbiddenRed = [
-  /#(?:f00|ff0000|ef4444)\b/i,
-  /\b(?:red|crimson|firebrick|darkred)\b/i,
-  /rgba?\(\s*255\s*[, ]\s*0\s*[, ]\s*0(?:\s*[,/]\s*[\d.]+)?\s*\)/i,
-  /hsla?\(\s*0(?:deg)?\s*[, ]\s*100%\s*[, ]\s*50%(?:\s*[,/]\s*[\d.]+)?\s*\)/i,
-]
+const expectedText = new Map([
+  ['apps/web/public/brand/logo-mark.svg', []],
+  ['apps/web/public/brand/logo-horizontal.svg', ['SadarBencana']],
+  ['apps/web/public/brand/logo-horizontal-tagline.svg', ['SadarBencana', 'Pantau. Pahami. Siaga.']],
+  ['apps/web/public/brand/logo-mark-mono.svg', []],
+  ['apps/web/public/brand/og-sadarbencana.svg', ['SadarBencana', 'Pantau. Pahami. Siaga.', 'Monitoring dan kesiapsiagaan bencana']],
+  ['apps/web/public/favicon.svg', []],
+])
 
 function pngSize(buffer) {
   const signature = buffer.subarray(0, 8).toString('hex')
@@ -33,36 +34,77 @@ function pngSize(buffer) {
   return [buffer.readUInt32BE(16), buffer.readUInt32BE(20)]
 }
 
-for (const path of expectedSvg) {
-  const source = await readFile(resolve(root, path), 'utf8')
-  if (!source.includes('<svg') || forbiddenRed.some((pattern) => pattern.test(source))) {
-    throw new Error(`${path}: invalid SVG or forbidden red`)
-  }
+function validatePaintAttributes(path, source) {
+  if (/<style\b/i.test(source)) throw new Error(`${path}: SVG style blocks are not allowed`)
+  if (/\sstyle\s*=/i.test(source)) throw new Error(`${path}: SVG inline style attributes are not allowed`)
 
-  if (source.includes('<text') && !/font-family="Inter,\s*system-ui,\s*sans-serif"/.test(source)) {
-    throw new Error(`${path}: SVG text must prefer the bundled Inter family`)
-  }
-}
-
-for (const path of fullColorSvg) {
-  const source = await readFile(resolve(root, path), 'utf8')
-  for (const color of source.match(/#[0-9a-f]{6}\b/gi) ?? []) {
-    if (!approvedPalette.has(color.toUpperCase())) {
-      throw new Error(`${path}: unapproved literal color ${color}`)
+  const paintAttribute = /\s(fill|stroke)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi
+  for (const match of source.matchAll(paintAttribute)) {
+    const paint = match[2] ?? match[3] ?? match[4]
+    const isApprovedHex = approvedPalette.has(paint.toUpperCase())
+    if (!isApprovedHex && paint !== 'none' && paint !== 'currentColor') {
+      throw new Error(`${path}: unapproved ${match[1]} paint ${paint}`)
     }
   }
 }
 
-const horizontal = await readFile(resolve(root, 'apps/web/public/brand/logo-horizontal.svg'), 'utf8')
-if (!horizontal.includes('>SadarBencana</text>')) throw new Error('logo-horizontal.svg: missing exact SadarBencana wordmark')
+function extractTextNodes(source) {
+  const textNodes = []
+  const textElement = /<text\b[^>]*(?:\/>|>([\s\S]*?)<\/text\s*>)/gi
 
-const tagline = await readFile(resolve(root, 'apps/web/public/brand/logo-horizontal-tagline.svg'), 'utf8')
-if (!tagline.includes('>SadarBencana</text>')) throw new Error('logo-horizontal-tagline.svg: missing exact SadarBencana wordmark')
-if (!tagline.includes('>Pantau. Pahami. Siaga.</text>')) throw new Error('logo-horizontal-tagline.svg: missing exact tagline')
+  for (const match of source.matchAll(textElement)) {
+    const value = match[1] ?? ''
+    if (/[<>]/.test(value)) throw new Error('SVG text nodes must contain plain text only')
+    textNodes.push(value.trim())
+  }
 
-const og = await readFile(resolve(root, 'apps/web/public/brand/og-sadarbencana.svg'), 'utf8')
-if (!og.includes('>SadarBencana</text>')) throw new Error('og-sadarbencana.svg: missing exact SadarBencana wordmark')
-if (!og.includes('>Pantau. Pahami. Siaga.</text>')) throw new Error('og-sadarbencana.svg: missing exact tagline')
+  return textNodes
+}
+
+function validateIco(ico) {
+  if (ico.length < 6 || ico.readUInt16LE(0) !== 0 || ico.readUInt16LE(2) !== 1) {
+    throw new Error('favicon.ico has an invalid ICO header')
+  }
+
+  const count = ico.readUInt16LE(4)
+  if (count !== 2) throw new Error(`favicon.ico must contain exactly two icon entries, got ${count}`)
+  if (ico.length < 6 + count * 16) throw new Error('favicon.ico directory is truncated')
+
+  const dimensions = []
+  for (let index = 0; index < count; index += 1) {
+    const offset = 6 + index * 16
+    const width = ico[offset] || 256
+    const height = ico[offset + 1] || 256
+    const imageSize = ico.readUInt32LE(offset + 8)
+    const imageOffset = ico.readUInt32LE(offset + 12)
+
+    if (imageOffset > ico.length || imageSize > ico.length - imageOffset) {
+      throw new Error(`favicon.ico frame ${index + 1} is outside the file`)
+    }
+    dimensions.push([width, height])
+  }
+
+  dimensions.sort(([leftWidth, leftHeight], [rightWidth, rightHeight]) => leftWidth - rightWidth || leftHeight - rightHeight)
+  if (dimensions.length !== 2 || dimensions[0][0] !== 16 || dimensions[0][1] !== 16 || dimensions[1][0] !== 32 || dimensions[1][1] !== 32) {
+    throw new Error(`favicon.ico frames must be 16x16 and 32x32, got ${dimensions.map((size) => size.join('x')).join(', ')}`)
+  }
+}
+
+for (const path of expectedSvg) {
+  const source = await readFile(resolve(root, path), 'utf8')
+  if (!source.includes('<svg')) throw new Error(`${path}: invalid SVG`)
+
+  validatePaintAttributes(path, source)
+
+  if (source.includes('<text') && !/font-family="Inter,\s*system-ui,\s*sans-serif"/.test(source)) {
+    throw new Error(`${path}: SVG text must prefer the bundled Inter family`)
+  }
+  const actualText = extractTextNodes(source)
+  const requiredText = expectedText.get(path)
+  if (JSON.stringify(actualText) !== JSON.stringify(requiredText)) {
+    throw new Error(`${path}: expected text nodes ${JSON.stringify(requiredText)}, got ${JSON.stringify(actualText)}`)
+  }
+}
 
 for (const path of [
   'apps/web/public/brand/fonts/Inter-Variable.ttf',
@@ -77,9 +119,7 @@ for (const [path, expected] of expectedPng) {
 }
 
 const ico = await readFile(resolve(root, 'apps/web/public/favicon.ico'))
-if (ico.readUInt16LE(0) !== 0 || ico.readUInt16LE(2) !== 1 || ico.readUInt16LE(4) < 2) {
-  throw new Error('favicon.ico must contain at least two icon entries')
-}
+validateIco(ico)
 
 const manifest = JSON.parse(await readFile(resolve(root, 'apps/web/public/site.webmanifest'), 'utf8'))
 if (manifest.name !== 'SadarBencana' || manifest.theme_color !== '#0B1222') {
