@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -254,7 +255,17 @@ type invitationBody struct {
 func OrganizationInviteCreate(db *sql.DB, smtpHost, smtpPort, smtpUser, smtpPassword, smtpFrom string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body invitationBody
-		if err := c.ShouldBindJSON(&body); err != nil || !strings.Contains(body.Email, "@") {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		body.Email = strings.TrimSpace(body.Email)
+		if body.Email == "" || strings.ContainsAny(body.Email, "\r\n") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		parsedEmail, err := mail.ParseAddress(body.Email)
+		if err != nil || parsedEmail.Address != body.Email {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
 			return
 		}
