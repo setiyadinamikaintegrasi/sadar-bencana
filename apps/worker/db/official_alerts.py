@@ -59,17 +59,14 @@ VALUES (
 RETURNING {_RETURNING_COLUMNS}
 """
 
-_EXPIRE_SQL = """
+_EXPIRE_SQL = f"""
 UPDATE official_alerts
 SET status = 'expired'
 WHERE is_current = TRUE
   AND status = 'active'
   AND expires_at IS NOT NULL
   AND expires_at <= $1
-RETURNING source, source_alert_id, revision, message_type, status, sent_at,
-          effective_at, expires_at, headline, description, area_geojson,
-          raw_payload, payload_checksum, previous_alert_id, is_current,
-          ingested_at, id
+RETURNING {_RETURNING_COLUMNS}
 """
 
 

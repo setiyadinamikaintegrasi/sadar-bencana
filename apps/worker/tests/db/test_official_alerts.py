@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from db.official_alerts import (
     expire_official_alerts,
+    expire_official_alert_revisions,
     payload_checksum,
     upsert_official_alert,
 )
@@ -226,3 +227,36 @@ async def test_expire_returns_updated_row_count():
 
     assert count == 2
     assert conn.fetch.await_args.args[1] == NOW
+
+
+@pytest.mark.asyncio
+async def test_expire_revisions_returns_structured_metadata():
+    conn = AsyncMock()
+    expired = {
+        "id": "expired-id",
+        "source": "bmkg_cap",
+        "peril_type": "weather",
+        "severity": "Critical",
+        "category": "Extreme rain",
+        "area_name": "Jawa Barat",
+        "latitude": -6.9,
+        "longitude": 107.6,
+        "source_url": "https://www.bmkg.go.id/alerts/alert-1",
+    }
+    conn.fetch.return_value = [expired]
+    pool = _pool_with_conn(conn)
+
+    revisions = await expire_official_alert_revisions(pool, now=NOW)
+
+    assert revisions == [expired]
+    expire_sql = conn.fetch.await_args.args[0]
+    for field in (
+        "peril_type",
+        "severity",
+        "category",
+        "area_name",
+        "latitude",
+        "longitude",
+        "source_url",
+    ):
+        assert field in expire_sql

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class OfficialAlertInput(BaseModel):
@@ -53,6 +53,21 @@ class OfficialAlertInput(BaseModel):
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("source_url must use HTTPS")
         return value
+
+    @model_validator(mode="after")
+    def bmkg_source_url_must_use_bmkg_host(self) -> OfficialAlertInput:
+        if self.source not in {"bmkg_cap", "bmkg_air_quality"} or self.source_url is None:
+            return self
+        hostname = urlparse(self.source_url).hostname
+        if hostname != "bmkg.go.id" and not hostname.endswith(".bmkg.go.id"):
+            raise ValueError("BMKG source_url must use hostname bmkg.go.id or a subdomain")
+        return self
+
+    @model_validator(mode="after")
+    def coordinates_must_be_set_together(self) -> OfficialAlertInput:
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must both be set or both be null")
+        return self
 
     @field_validator("area_geojson")
     @classmethod
