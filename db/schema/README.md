@@ -54,3 +54,5 @@ The alert-classification safety migration is:
 - `037_ews_delivery_hardening.sql` — adds subscriber timezones, provider-safe
   channel settings, idempotent delivery, and test audit metadata.
 - `038_evacuation_locations.sql` — tabel lokasi evakuasi (OSM + manual) untuk fitur Lokasi Evakuasi.
+- `040_bmkg_warning_and_air_quality.sql` — persists structured BMKG weather
+  warning metadata and air-quality observations, guidance, and source settings.

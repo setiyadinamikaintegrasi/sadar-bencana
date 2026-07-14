@@ -14,7 +14,8 @@ from models.official_alert import OfficialAlertInput
 _RETURNING_COLUMNS = """
 id, source, source_alert_id, revision, message_type, status, sent_at,
 effective_at, expires_at, headline, description, area_geojson, raw_payload,
-payload_checksum, previous_alert_id, is_current, ingested_at
+payload_checksum, previous_alert_id, is_current, ingested_at, peril_type,
+severity, category, area_name, latitude, longitude, source_url
 """
 
 _FIND_PAYLOAD_SQL = f"""
@@ -48,11 +49,12 @@ _INSERT_SQL = f"""
 INSERT INTO official_alerts (
     source, source_alert_id, revision, message_type, status, sent_at,
     effective_at, expires_at, headline, description, area_geojson, raw_payload,
-    payload_checksum, previous_alert_id, is_current
+    payload_checksum, previous_alert_id, is_current,
+    peril_type, severity, category, area_name, latitude, longitude, source_url
 )
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
-    $13, $14, $15
+    $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
 )
 RETURNING {_RETURNING_COLUMNS}
 """
@@ -170,6 +172,13 @@ async def upsert_official_alert(
                 checksum,
                 previous_id,
                 is_current,
+                alert.peril_type,
+                alert.severity,
+                alert.category,
+                alert.area_name,
+                alert.latitude,
+                alert.longitude,
+                alert.source_url,
             )
 
     return (dict(row), True) if row is not None else ({}, False)
