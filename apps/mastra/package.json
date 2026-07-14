@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.80",
+    "@ai-sdk/openai": "^4.0.13",
     "@mastra/ai-sdk": "^1.6.1",
     "@mastra/core": "^1.49.0",
     "@mastra/libsql": "^1.15.0",
@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "mastra": "^1.18.0",
+    "mastra": "^1.18.2",
     "typescript": "^6.0.3"
   }
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,8 @@ var adapterContracts = map[string]map[string][]string{
 	"bnpb":     {"v1": {"report_id", "observed_at"}},
 	"inarisk":  {"v1": {"layer_id", "context_type", "data_vintage", "attribution"}},
 }
+
+const maxCAPPreviewLinks = 50
 
 func validateAdapterConfiguration(source, version string, mapping map[string]string) error {
 	versions, ok := adapterContracts[source]
@@ -135,6 +138,65 @@ func sanitizePreview(value any) any {
 	default:
 		return value
 	}
+}
+
+func likelyXMLResponse(contentType string, body []byte) bool {
+	lowerContentType := strings.ToLower(contentType)
+	if strings.Contains(lowerContentType, "xml") || strings.Contains(lowerContentType, "rss") {
+		return true
+	}
+	prefixLimit := min(len(body), 256)
+	prefix := strings.ToLower(strings.TrimSpace(string(body[:prefixLimit])))
+	return strings.HasPrefix(prefix, "<?xml") || strings.HasPrefix(prefix, "<rss")
+}
+
+func allowedCAPLink(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https" && approvedSourceHost("bmkg_cap", parsed.Hostname())
+}
+
+func previewCapIndex(body []byte, base sourcePreviewResult) (sourcePreviewResult, bool) {
+	var rss struct {
+		XMLName xml.Name `xml:"rss"`
+		Items   []struct {
+			Link string `xml:"link"`
+		} `xml:"channel>item"`
+	}
+	if err := xml.Unmarshal(body, &rss); err != nil || rss.XMLName.Local != "rss" {
+		return base, false
+	}
+
+	links := make([]string, 0, len(rss.Items))
+	seen := map[string]struct{}{}
+	for _, item := range rss.Items {
+		link := strings.TrimSpace(item.Link)
+		if link == "" || !allowedCAPLink(link) {
+			continue
+		}
+		if _, exists := seen[link]; exists {
+			continue
+		}
+		links = append(links, link)
+		seen[link] = struct{}{}
+		if len(links) >= maxCAPPreviewLinks {
+			break
+		}
+	}
+
+	base.Errors = []string{}
+	base.MappedSample = []map[string]any{}
+	base.RawSample = links
+	base.RecordCount = len(links)
+	base.ValidCount = len(links)
+	base.InvalidCount = 0
+	base.ContractValid = base.Reachable && len(links) > 0
+	if len(links) == 0 {
+		base.Errors = append(base.Errors, "RSS CAP index does not contain approved BMKG CAP links")
+	}
+	return base, true
 }
 
 type sourcePreviewDraft struct {
@@ -260,6 +322,11 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 	}
 	var payload any
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&payload); err != nil {
+		if config.Source == "bmkg_cap" && likelyXMLResponse(result.ContentType, body) {
+			if capResult, ok := previewCapIndex(body, result); ok {
+				return capResult, nil
+			}
+		}
 		result.Errors = append(result.Errors, "response is not valid JSON")
 		result.RawSample = string(body[:min(len(body), 2000)])
 		return result, nil
