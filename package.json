@@ -2,11 +2,18 @@
   "name": "sadar-bencana",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev:web": "npm run dev --workspace apps/web",
     "dev:api": "cd apps/api && go run ./cmd/server",
     "dev:mastra": "npm run dev --workspace apps/mastra",
-    "verify": "bash scripts/verify-structure.sh"
+    "verify": "bash scripts/verify-structure.sh",
+    "verify:brand": "node --test scripts/verify-brand-assets.test.mjs && node scripts/verify-brand-assets.mjs && node scripts/verify-brand-integration.mjs",
+    "generate:brand": "node scripts/generate-brand-assets.mjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2"
   }
 }

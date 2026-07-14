@@ -15,6 +15,7 @@ import EvacuationPage from './features/evacuation/EvacuationPage'
 import EvacuationAdminPage from './features/evacuation/EvacuationAdminPage'
 import LearningPage from './features/learning/LearningPage'
 import LoginGate from './features/ews/LoginGate'
+import BrandLogo from './components/BrandLogo'
 import TopNav from './components/TopNav'
 import { useAuth } from './lib/auth/AuthProvider'
 
@@ -91,8 +92,9 @@ function App() {
       {/* Main content */}
       <div className="flex min-h-screen flex-col md:pt-14">
         {/* Mobile-only header */}
-        <header className="border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:hidden">
-          <h2 className="text-xl font-semibold text-slate-50">{activeSection}</h2>
+        <header className="flex min-h-14 items-center gap-3 border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:hidden">
+          <BrandLogo variant="mark" decorative className="h-7 w-7 shrink-0" />
+          <h2 className="min-w-0 text-lg font-semibold text-slate-50">{activeSection}</h2>
         </header>
 
         <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
