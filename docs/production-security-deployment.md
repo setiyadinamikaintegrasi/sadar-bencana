@@ -110,7 +110,7 @@ At the TLS reverse proxy, set:
 
 ```text
 Strict-Transport-Security: max-age=31536000; includeSubDomains
-Permissions-Policy: camera=(), microphone=(), geolocation=()
+Permissions-Policy: camera=(), microphone=(), geolocation=(self)
 ```
 
 Only add the HSTS `preload` directive after every subdomain is permanently
