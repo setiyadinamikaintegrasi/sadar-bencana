@@ -11,6 +11,7 @@
     "dev:mastra": "npm run dev --workspace apps/mastra",
     "verify": "bash scripts/verify-structure.sh",
     "verify:brand": "node --test scripts/verify-brand-assets.test.mjs && node scripts/verify-brand-assets.mjs && node scripts/verify-brand-integration.mjs",
+    "verify:web-runtime": "node --test scripts/verify-web-react-runtime.test.mjs && node scripts/verify-web-react-runtime.mjs",
     "generate:brand": "node scripts/generate-brand-assets.mjs"
   },
   "devDependencies": {
