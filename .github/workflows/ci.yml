@@ -39,6 +39,7 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - run: npm run verify:brand
       - run: npm run build --workspace apps/web
         env:
           VITE_API_BASE_URL: /api/v1

@@ -40,11 +40,14 @@ function pngSize(buffer) {
 function validatePaintAttributes(path, source) {
   if (/<style\b/i.test(source)) throw new Error(`${path}: SVG style blocks are not allowed`)
   if (/\sstyle\s*=/i.test(source)) throw new Error(`${path}: SVG inline style attributes are not allowed`)
-  if (/<\/?\s*[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*/.test(source)) {
+  if (/<\/?\s*[^<>\s/]+:/u.test(source)) {
     throw new Error(`${path}: namespace-prefixed SVG element tags are not allowed`)
   }
+  if (path !== monoLogoPath && /\bcurrentColor\b/i.test(source)) {
+    throw new Error(`${path}: currentColor is only allowed in the monochrome logo`)
+  }
 
-  const paintAttribute = /\s(fill|stroke)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi
+  const paintAttribute = /\s(fill|stroke|color|flood-color|lighting-color|stop-color)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi
   for (const match of source.matchAll(paintAttribute)) {
     const paint = match[2] ?? match[3] ?? match[4]
     const isApprovedHex = approvedPalette.has(paint.toUpperCase())

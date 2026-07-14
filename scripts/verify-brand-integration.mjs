@@ -55,4 +55,17 @@ for (const text of [
   'ImageMagick 7 is required',
 ]) requireText(generatorPath, text, generator)
 
+const packagePath = 'package.json'
+const packageJson = JSON.parse(await source(packagePath))
+const verifyBrand = packageJson.scripts?.['verify:brand'] ?? ''
+for (const command of [
+  'node --test scripts/verify-brand-assets.test.mjs',
+  'node scripts/verify-brand-assets.mjs',
+  'node scripts/verify-brand-integration.mjs',
+]) requireText(packagePath, command, verifyBrand)
+
+const ciPath = '.github/workflows/ci.yml'
+const ci = await source(ciPath)
+requireText(ciPath, '- run: npm run verify:brand', ci)
+
 console.log('Brand integration verified')

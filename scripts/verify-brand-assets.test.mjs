@@ -162,6 +162,16 @@ test('rejects currentColor in a full-color SVG master', async () => {
   expectRejected(result, 'currentColor in a full-color SVG master')
 })
 
+test('rejects currentColor in full-color SVG filter paint', async () => {
+  const result = await withFixture((root) => replaceInFixture(
+    root,
+    'brand/logo-mark.svg',
+    '</svg>',
+    '<filter id="alert"><feFlood flood-color="currentColor"/></filter></svg>',
+  ))
+  expectRejected(result, 'currentColor in a full-color SVG filter paint')
+})
+
 test('rejects visible SVG shapes without explicit paint', async () => {
   const result = await withFixture((root) => replaceInFixture(
     root,
@@ -180,6 +190,16 @@ test('rejects namespace-prefixed SVG text elements', async () => {
     '<svg:text x="0" y="0">Unexpected</svg:text></svg>',
   ))
   expectRejected(result, 'a namespace-prefixed SVG text element')
+})
+
+test('rejects namespace-prefixed SVG elements with Unicode names', async () => {
+  const result = await withFixture((root) => replaceInFixture(
+    root,
+    'brand/logo-mark.svg',
+    '</svg>',
+    '<é:path xmlns:é="http://www.w3.org/2000/svg" fill="#0B1222"/></svg>',
+  ))
+  expectRejected(result, 'a namespace-prefixed SVG element with a Unicode name')
 })
 
 test('rejects incorrect ICO frame dimensions', async () => {

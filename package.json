@@ -10,7 +10,7 @@
     "dev:api": "cd apps/api && go run ./cmd/server",
     "dev:mastra": "npm run dev --workspace apps/mastra",
     "verify": "bash scripts/verify-structure.sh",
-    "verify:brand": "node scripts/verify-brand-assets.mjs",
+    "verify:brand": "node --test scripts/verify-brand-assets.test.mjs && node scripts/verify-brand-assets.mjs && node scripts/verify-brand-integration.mjs",
     "generate:brand": "node scripts/generate-brand-assets.mjs"
   },
   "devDependencies": {
