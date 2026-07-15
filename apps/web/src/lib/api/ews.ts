@@ -36,6 +36,8 @@ export interface EWSPerilThresholds {
 
 export type EWSChannel = 'telegram' | 'email'
 export type EWSSeverity = 'Moderate' | 'High' | 'Critical'
+export type EWSPerilType = 'weather' | 'air_quality'
+export type EWSLifecycleAction = 'alert' | 'update' | 'cancellation' | 'expiry'
 
 export interface EWSNotificationPref {
   channel: EWSChannel
@@ -56,6 +58,40 @@ export interface EWSNotificationLogEntry {
   error_message?: string | null
   sent_at?: string | null
   created_at: string
+  headline?: string | null
+  peril_type?: EWSPerilType | null
+  lifecycle_action?: EWSLifecycleAction | null
+  matched_watch_zone_label?: string | null
+}
+
+export interface EWSSafetyGuidance {
+  before: string[]
+  during: string[]
+  after: string[]
+}
+
+export interface EWSActiveWarning {
+  id: string
+  source: 'bmkg_cap' | 'bmkg_air_quality'
+  message_type: 'alert' | 'update' | 'cancel'
+  status: 'active' | 'updated' | 'expired' | 'cancelled'
+  sent_at: string
+  peril_type: EWSPerilType
+  severity: EWSSeverity
+  category?: string | null
+  headline?: string | null
+  description?: string | null
+  area_name?: string | null
+  effective_at?: string | null
+  expires_at?: string | null
+  source_url?: string | null
+  area_geojson?: unknown
+  latitude?: number | null
+  longitude?: number | null
+  matched_watch_zone_ids: string[]
+  matched_watch_zone_labels: string[]
+  guidance?: EWSSafetyGuidance | null
+  guidance_source?: string | null
 }
 
 type ListResponse<T> = { data: T[]; meta: { count: number } }
@@ -252,6 +288,11 @@ export async function updateMyPref(
 // ── My notifications (read-only) ──
 export async function fetchMyNotifications(): Promise<EWSNotificationLogEntry[]> {
   const res = await request<ListResponse<EWSNotificationLogEntry>>('/ews/me/notifications')
+  return res.data
+}
+
+export async function fetchMyActiveWarnings(): Promise<EWSActiveWarning[]> {
+  const res = await request<ListResponse<EWSActiveWarning>>('/ews/me/active-warnings')
   return res.data
 }
 

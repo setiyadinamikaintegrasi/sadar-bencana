@@ -138,7 +138,11 @@ function connectorStatusClass(status: ConnectorHealth['status']): string {
   return 'bg-rose-500/15 text-rose-300 ring-rose-400/30'
 }
 
-export default function ExecutiveOverview() {
+export default function ExecutiveOverview({
+  initialOfficialAlertFocus = null,
+}: {
+  initialOfficialAlertFocus?: OverlayFocusRequest | null
+}) {
   const [events, setEvents] = useState<Event[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [news, setNews] = useState<NewsItem[]>([])
@@ -148,7 +152,9 @@ export default function ExecutiveOverview() {
   const [mapOverlays, setMapOverlays] = useState<MapOverlay[]>([])
   const bmkg = useBmkgWarnings()
   const reloadBmkg = bmkg.reload
-  const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(null)
+  const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(
+    initialOfficialAlertFocus,
+  )
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [newsLoading, setNewsLoading] = useState(true)
@@ -202,6 +208,10 @@ export default function ExecutiveOverview() {
     void load('initial')
     void loadNews()
   }, [load, loadNews])
+
+  useEffect(() => {
+    if (initialOfficialAlertFocus) setOfficialAlertFocus(initialOfficialAlertFocus)
+  }, [initialOfficialAlertFocus?.id, initialOfficialAlertFocus?.nonce])
 
   useEffect(() => {
     const monitoringDesk = monitoringDeskRef.current
@@ -269,10 +279,25 @@ export default function ExecutiveOverview() {
 
   useEffect(() => {
     if (!officialAlertFocus) return
+    const warningStateConfirmed = !bmkg.loading
+      && bmkg.status.weather.loaded
+      && !bmkg.status.weather.uncertain
+      && bmkg.status.air_quality.loaded
+      && !bmkg.status.air_quality.uncertain
+    if (!warningStateConfirmed) return
     const remainsActive = [...bmkg.weatherAlerts, ...bmkg.airQualityAlerts]
       .some((alert) => alert.id === officialAlertFocus.id)
     if (!remainsActive) setOfficialAlertFocus(null)
-  }, [bmkg.airQualityAlerts, bmkg.weatherAlerts, officialAlertFocus])
+  }, [
+    bmkg.airQualityAlerts,
+    bmkg.loading,
+    bmkg.status.air_quality.loaded,
+    bmkg.status.air_quality.uncertain,
+    bmkg.status.weather.loaded,
+    bmkg.status.weather.uncertain,
+    bmkg.weatherAlerts,
+    officialAlertFocus,
+  ])
 
   const combinedMapOverlays = useMemo(() => {
     const overlaysById = new Map(mapOverlays.map((overlay) => [overlay.id, overlay]))

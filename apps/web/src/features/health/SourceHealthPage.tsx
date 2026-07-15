@@ -2,11 +2,22 @@ import { useCallback, useEffect, useState } from 'react'
 import { getConnectorHealth, type ConnectorHealth } from '../../lib/api/client'
 
 const REFRESH_INTERVAL_MS = 30_000
+const INACTIVE_OFFICIAL_CONNECTORS = new Set(['bmkg_cap', 'bmkg_air_quality'])
+
+export const HAZARD_CONNECTORS = [
+  'bmkg',
+  'bmkg_cap',
+  'bmkg_air_quality',
+  'usgs',
+  'gdacs_fl',
+  'gdacs_vo',
+  'nasa_firms',
+] as const
 
 const CATEGORIES = [
   {
     label: 'Hazard',
-    names: ['bmkg', 'usgs', 'gdacs_fl', 'gdacs_vo', 'nasa_firms'],
+    names: HAZARD_CONNECTORS,
   },
   {
     label: 'News',
@@ -17,6 +28,25 @@ const CATEGORIES = [
     names: ['aisstream', 'vesselfinder', 'opensky'],
   },
 ] as const
+
+export function connectorRowsForCategory(
+  names: readonly string[],
+  byName: Map<string, ConnectorHealth>,
+): ConnectorHealth[] {
+  return names.map((name) => byName.get(name) ?? (
+    INACTIVE_OFFICIAL_CONNECTORS.has(name)
+      ? {
+          name,
+          status: 'stale',
+          last_polled_at: null,
+          items_fetched: 0,
+          error_message: 'Belum aktif',
+          threshold_seconds: 0,
+          updated_at: null,
+        }
+      : undefined
+  )).filter((connector): connector is ConnectorHealth => connector !== undefined)
+}
 
 const statusConfig = {
   ok: { dot: '●', label: 'OK', dotClass: 'text-emerald-400', textClass: 'text-emerald-300' },
@@ -74,7 +104,7 @@ function CategoryCard({
   names: readonly string[]
   byName: Map<string, ConnectorHealth>
 }) {
-  const connectors = names.map((n) => byName.get(n)).filter(Boolean) as ConnectorHealth[]
+  const connectors = connectorRowsForCategory(names, byName)
   const errorCount = connectors.filter((c) => c.status === 'error').length
   const staleCount = connectors.filter((c) => c.status === 'stale').length
 

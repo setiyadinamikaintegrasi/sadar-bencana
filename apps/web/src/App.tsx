@@ -17,6 +17,10 @@ import LearningPage from './features/learning/LearningPage'
 import LoginGate from './features/ews/LoginGate'
 import BrandLogo from './components/BrandLogo'
 import TopNav from './components/TopNav'
+import {
+  nextOverlayFocusRequest,
+  type OverlayFocusRequest,
+} from './components/RiskMap'
 import { useAuth } from './lib/auth/AuthProvider'
 
 const sections = [
@@ -78,10 +82,16 @@ const moreSections: { label: string; section: Section; icon: string }[] = [
 function App() {
   const [activeSection, setActiveSection] = useState<Section>('Executive Overview')
   const [moreOpen, setMoreOpen] = useState(false)
+  const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(null)
 
   const navigate = (section: string) => {
     setActiveSection(section as Section)
     setMoreOpen(false)
+  }
+
+  const showOfficialAlertOnMap = (id: string) => {
+    setOfficialAlertFocus((current) => nextOverlayFocusRequest(current, id))
+    navigate('Executive Overview')
   }
 
   return (
@@ -99,7 +109,7 @@ function App() {
 
         <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
           {activeSection === 'Executive Overview' ? (
-            <ExecutiveOverview />
+            <ExecutiveOverview initialOfficialAlertFocus={officialAlertFocus} />
           ) : activeSection === 'Events' ? (
             <EventsPage />
           ) : activeSection === 'Daftar Risiko' ? (
@@ -113,7 +123,7 @@ function App() {
           ) : activeSection === 'Source Health' ? (
             <SourceHealthPage />
           ) : activeSection === 'Early Warning' ? (
-            <EwsPage />
+            <EwsPage onViewOnMap={showOfficialAlertOnMap} />
           ) : activeSection === 'Lokasi Evakuasi' ? (
             <EvacuationPage />
           ) : activeSection === 'Belajar Siaga' ? (
