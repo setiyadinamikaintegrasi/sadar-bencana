@@ -17,20 +17,45 @@ _ENQUEUE_ACTIVE_SQL = """
 INSERT INTO ews_notification_log (
     subscriber_id, official_alert_id, channel, status, source, source_alert_id,
     alert_revision, lifecycle_action, next_attempt_at, correlation_id,
-    delivery_kind
+    delivery_kind, matched_watch_zone_id
 )
-SELECT s.id, $1, p.channel, 'pending', $2, $3, $4, $5, now(), $6,
-       'official_lifecycle'
-FROM ews_subscribers s
-JOIN ews_notification_prefs p ON p.subscriber_id = s.id
-JOIN ews_channel_settings cs ON cs.channel = p.channel
-WHERE s.is_active = TRUE
-  AND p.is_enabled = TRUE
-  AND cs.is_enabled = TRUE
-  AND EXISTS (
-      SELECT 1 FROM ews_watch_zones z
-      WHERE z.subscriber_id = s.id AND z.is_active = TRUE
-  )
+SELECT s.id, oa.id, p.channel, 'pending', oa.source, oa.source_alert_id,
+       oa.revision, $2, now(), $3, 'official_lifecycle', matched.id
+FROM official_alerts oa
+JOIN ews_subscribers s ON s.is_active = TRUE
+JOIN ews_notification_prefs p
+  ON p.subscriber_id = s.id AND p.is_enabled = TRUE
+JOIN ews_channel_settings cs
+  ON cs.channel = p.channel AND cs.is_enabled = TRUE
+JOIN LATERAL (
+    SELECT z.id
+    FROM ews_watch_zones z
+    WHERE z.subscriber_id = s.id
+      AND z.is_active = TRUE
+      AND (cardinality(z.peril_types) = 0 OR oa.peril_type = ANY(z.peril_types))
+      AND (
+        (oa.area_geojson IS NOT NULL AND ST_Intersects(
+            ST_SetSRID(ST_GeomFromGeoJSON(oa.area_geojson::text), 4326)::geography,
+            ST_Buffer(
+                ST_SetSRID(ST_MakePoint(z.longitude, z.latitude), 4326)::geography,
+                z.radius_km * 1000
+            )
+        ))
+        OR
+        (oa.latitude IS NOT NULL AND oa.longitude IS NOT NULL AND ST_DWithin(
+            ST_SetSRID(ST_MakePoint(oa.longitude, oa.latitude), 4326)::geography,
+            ST_SetSRID(ST_MakePoint(z.longitude, z.latitude), 4326)::geography,
+            z.radius_km * 1000
+        ))
+      )
+    ORDER BY z.created_at, z.id
+    LIMIT 1
+) matched ON TRUE
+WHERE oa.id = $1
+  AND oa.severity IS NOT NULL
+  AND CASE oa.severity WHEN 'Critical' THEN 3 WHEN 'High' THEN 2 ELSE 1 END
+      >= CASE p.min_severity WHEN 'Critical' THEN 3 WHEN 'High' THEN 2 ELSE 1 END
+  AND (cardinality(p.alert_types) = 0 OR oa.peril_type = ANY(p.alert_types))
 ON CONFLICT DO NOTHING
 RETURNING id
 """
@@ -39,14 +64,16 @@ _ENQUEUE_PRIOR_RECIPIENTS_SQL = """
 INSERT INTO ews_notification_log (
     subscriber_id, official_alert_id, channel, status, source, source_alert_id,
     alert_revision, lifecycle_action, next_attempt_at, correlation_id,
-    delivery_kind
+    delivery_kind, matched_watch_zone_id
 )
-SELECT DISTINCT l.subscriber_id, $1, l.channel, 'pending', $2, $3, $4, $5, now(), $6,
-       'official_lifecycle'
+SELECT DISTINCT ON (l.subscriber_id, l.channel)
+       l.subscriber_id, $1, l.channel, 'pending', $2, $3, $4, $5, now(), $6,
+       'official_lifecycle', l.matched_watch_zone_id
 FROM ews_notification_log l
 JOIN ews_channel_settings cs ON cs.channel = l.channel AND cs.is_enabled = TRUE
 WHERE l.source = $2 AND l.source_alert_id = $3
   AND l.status IN ('sent', 'acknowledged')
+ORDER BY l.subscriber_id, l.channel, l.alert_revision DESC, l.created_at DESC
 ON CONFLICT DO NOTHING
 RETURNING id
 """
@@ -75,8 +102,8 @@ SELECT c.*, s.email, s.telegram_chat_id,
        COALESCE(oa.headline, a.message, 'Peringatan SadarBencana') AS headline,
        COALESCE(oa.description, '') AS description,
        COALESCE(oa.sent_at, a.created_at, c.created_at) AS source_sent_at,
-       COALESCE(a.severity, '') AS severity,
-       COALESCE(a.alert_type, c.lifecycle_action, 'alert') AS alert_type
+       COALESCE(oa.severity, a.severity, '') AS severity,
+       COALESCE(oa.peril_type, a.alert_type, c.lifecycle_action, 'alert') AS alert_type
 FROM claimed c
 JOIN ews_subscribers s ON s.id = c.subscriber_id
 LEFT JOIN official_alerts oa ON oa.id = c.official_alert_id
@@ -140,19 +167,22 @@ async def enqueue_official_alert_revision(
     )
     sql = (
         _ENQUEUE_PRIOR_RECIPIENTS_SQL
-        if action in {"cancellation", "expiry"}
+        if action in {"update", "cancellation", "expiry"}
         else _ENQUEUE_ACTIVE_SQL
     )
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            sql,
-            alert["id"],
-            alert["source"],
-            alert["source_alert_id"],
-            alert["revision"],
-            action,
-            correlation_id,
-        )
+        if action == "alert":
+            rows = await conn.fetch(sql, alert["id"], action, correlation_id)
+        else:
+            rows = await conn.fetch(
+                sql,
+                alert["id"],
+                alert["source"],
+                alert["source_alert_id"],
+                alert["revision"],
+                action,
+                correlation_id,
+            )
     return len(rows)
 
 
