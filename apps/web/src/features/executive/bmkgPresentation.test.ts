@@ -392,13 +392,20 @@ describe('BmkgWarningsPanel', () => {
     expect(within(panel).getByText('Tidak ada peringatan aktif.')).not.toBeNull()
   })
 
-  it('uses unique persistent tab panels and roving keyboard focus', () => {
+  it('uses unique persistent shared-grid tab panels and roving keyboard focus', () => {
     const first = renderPanel()
     const firstTabs = Array.from(first.container.querySelectorAll<HTMLElement>('[role="tab"]'))
     const firstPanels = Array.from(first.container.querySelectorAll<HTMLElement>('[role="tabpanel"]'))
     expect(firstPanels).toHaveLength(2)
     expect(firstPanels[0].hidden).toBe(false)
-    expect(firstPanels[1].hidden).toBe(true)
+    expect(firstPanels[1].hidden).toBe(false)
+    expect(firstPanels[0].parentElement?.classList.contains('grid')).toBe(true)
+    for (const panel of firstPanels) {
+      expect(panel.classList.contains('col-start-1')).toBe(true)
+      expect(panel.classList.contains('row-start-1')).toBe(true)
+    }
+    expect(firstPanels[1].getAttribute('aria-hidden')).toBe('true')
+    expect(firstPanels[1].hasAttribute('inert')).toBe(true)
     expect(firstTabs[0].tabIndex).toBe(0)
     expect(firstTabs[1].tabIndex).toBe(-1)
     expect(firstTabs[0].getAttribute('aria-controls')).toBe(firstPanels[0].id)
@@ -438,7 +445,7 @@ describe('BmkgWarningsPanel', () => {
     const loadingView = renderPanel({ loading: true })
     const status = screen.getByRole('status', { name: 'Memuat peringatan BMKG' })
     expect(status.style.minHeight).toBe('18rem')
-    expect(loadingView.container.querySelectorAll('[data-skeleton-row="true"]')).toHaveLength(3)
+    expect(loadingView.container.querySelectorAll('[data-skeleton-row="true"]')).toHaveLength(6)
 
     loadingView.unmount()
     renderPanel()

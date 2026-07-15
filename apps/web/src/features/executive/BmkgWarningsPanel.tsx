@@ -74,11 +74,13 @@ function OfficialAlertRow({
   onFocusAlert,
   uncertain,
   now,
+  isActive,
 }: {
   alert: OfficialAlert
   onFocusAlert: (id: string) => void
   uncertain: boolean
   now: number
+  isActive: boolean
 }) {
   const sourceUrl = safeBmkgSourceUrl(alert.source_url)
   const headline = alert.headline ?? 'Peringatan resmi BMKG'
@@ -123,6 +125,7 @@ function OfficialAlertRow({
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Sumber BMKG"
+            tabIndex={isActive ? undefined : -1}
             className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
           >
             Sumber BMKG
@@ -134,6 +137,7 @@ function OfficialAlertRow({
             type="button"
             onClick={() => onFocusAlert(alert.id)}
             aria-label={`Fokuskan ${headline} di peta`}
+            disabled={!isActive}
             className="inline-flex h-8 items-center gap-1.5 rounded-md border border-indigo-400/40 bg-indigo-500/15 px-2.5 text-xs font-semibold text-indigo-100 transition hover:bg-indigo-500/25 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
           >
             <MapPin aria-hidden="true" className="h-3.5 w-3.5" />
@@ -148,9 +152,11 @@ function OfficialAlertRow({
 function ObservationRow({
   observation,
   uncertain,
+  isActive,
 }: {
   observation: AirQualityObservation
   uncertain: boolean
+  isActive: boolean
 }) {
   const sourceUrl = safeBmkgSourceUrl(observation.source_url)
   return (
@@ -189,6 +195,7 @@ function ObservationRow({
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`Sumber BMKG ${observation.station_name}`}
+          tabIndex={isActive ? undefined : -1}
           className="inline-flex h-8 w-fit items-center gap-1.5 rounded-md border border-slate-700 px-2.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
         >
           Sumber BMKG
@@ -199,7 +206,15 @@ function ObservationRow({
   )
 }
 
-function ErrorRow({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorRow({
+  message,
+  onRetry,
+  isActive,
+}: {
+  message: string
+  onRetry: () => void
+  isActive: boolean
+}) {
   return (
     <div className="flex flex-col gap-2 border-t border-rose-400/25 bg-rose-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-5">
       <p className="inline-flex items-center gap-2 text-xs font-medium text-rose-200">
@@ -209,6 +224,7 @@ function ErrorRow({ message, onRetry }: { message: string; onRetry: () => void }
       <button
         type="button"
         onClick={onRetry}
+        disabled={!isActive}
         className="inline-flex h-8 w-fit items-center gap-1.5 rounded-md border border-rose-300/40 px-2.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/15 focus:outline-none focus:ring-2 focus:ring-rose-300/60"
       >
         <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
@@ -299,6 +315,19 @@ export default function BmkgWarningsPanel({
     && !status.observations.uncertain
     && sortedAirAlerts.length === 0
     && sortedObservations.length === 0
+  const weatherIsActive = activeTab === 'weather'
+  const airIsActive = activeTab === 'air_quality'
+  const panelClassName = (isActive: boolean) => (
+    `col-start-1 row-start-1 ${isActive ? '' : 'invisible pointer-events-none'}`
+  )
+  const setPanelInert = (element: HTMLDivElement | null, isActive: boolean) => {
+    if (!element) return
+    if (isActive) {
+      element.removeAttribute('inert')
+    } else {
+      element.setAttribute('inert', '')
+    }
+  }
 
   const selectTab = (tab: PanelTab) => {
     setActiveTab(tab)
@@ -385,16 +414,19 @@ export default function BmkgWarningsPanel({
         </div>
       </div>
 
-      <div
-        id={weatherPanelId}
-        role="tabpanel"
-        aria-labelledby={weatherTabId}
-        hidden={activeTab !== 'weather'}
-      >
-        {loading ? (activeTab === 'weather' ? <LoadingRows /> : null) : (
+      <div className="grid">
+        <div
+          id={weatherPanelId}
+          role="tabpanel"
+          aria-labelledby={weatherTabId}
+          aria-hidden={!weatherIsActive}
+          ref={(element) => setPanelInert(element, weatherIsActive)}
+          className={panelClassName(weatherIsActive)}
+        >
+          {loading ? <LoadingRows /> : (
           <>
           {errors.weather && (
-            <ErrorRow message="Gagal memuat sebagian data cuaca BMKG." onRetry={onRetry} />
+            <ErrorRow message="Gagal memuat sebagian data cuaca BMKG." onRetry={onRetry} isActive={weatherIsActive} />
           )}
           {sortedWeather.map((alert) => (
             <OfficialAlertRow
@@ -403,20 +435,23 @@ export default function BmkgWarningsPanel({
               onFocusAlert={onFocusAlert}
               uncertain={status.weather.uncertain}
               now={now}
+              isActive={weatherIsActive}
             />
           ))}
           {weatherConfirmedEmpty && <EmptyRow />}
           </>
-        )}
-      </div>
+          )}
+        </div>
 
-      <div
-        id={airPanelId}
-        role="tabpanel"
-        aria-labelledby={airTabId}
-        hidden={activeTab !== 'air_quality'}
-      >
-        {loading ? (activeTab === 'air_quality' ? <LoadingRows /> : null) : (
+        <div
+          id={airPanelId}
+          role="tabpanel"
+          aria-labelledby={airTabId}
+          aria-hidden={!airIsActive}
+          ref={(element) => setPanelInert(element, airIsActive)}
+          className={panelClassName(airIsActive)}
+        >
+          {loading ? <LoadingRows /> : (
           <>
           {sourceActive === false && status.observations.uncertain && (
             <SourceStateRow>
@@ -433,6 +468,7 @@ export default function BmkgWarningsPanel({
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="Lihat informasi PM2.5 BMKG"
+                tabIndex={airIsActive ? undefined : -1}
                 className="inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-amber-200 hover:text-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-300/60"
               >
                 Informasi PM2.5 BMKG
@@ -444,7 +480,7 @@ export default function BmkgWarningsPanel({
             <SourceStateRow>Status integrasi kualitas udara BMKG belum diketahui</SourceStateRow>
           )}
           {airHasError && (
-            <ErrorRow message="Gagal memuat sebagian data kualitas udara BMKG." onRetry={onRetry} />
+            <ErrorRow message="Gagal memuat sebagian data kualitas udara BMKG." onRetry={onRetry} isActive={airIsActive} />
           )}
           {sortedAirAlerts.map((alert) => (
             <OfficialAlertRow
@@ -453,6 +489,7 @@ export default function BmkgWarningsPanel({
               onFocusAlert={onFocusAlert}
               uncertain={status.air_quality.uncertain}
               now={now}
+              isActive={airIsActive}
             />
           ))}
           {sortedObservations.map((observation) => (
@@ -460,11 +497,13 @@ export default function BmkgWarningsPanel({
               key={observation.id}
               observation={observation}
               uncertain={status.observations.uncertain}
+              isActive={airIsActive}
             />
           ))}
           {airConfirmedEmpty && <EmptyRow />}
           </>
-        )}
+          )}
+        </div>
       </div>
     </section>
   )
