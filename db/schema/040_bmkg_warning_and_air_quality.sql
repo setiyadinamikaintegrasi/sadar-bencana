@@ -15,7 +15,6 @@ ALTER TABLE official_alerts
     DROP CONSTRAINT IF EXISTS official_alerts_peril_type_check,
     DROP CONSTRAINT IF EXISTS official_alerts_severity_check,
     DROP CONSTRAINT IF EXISTS official_alerts_coordinates_check,
-    DROP CONSTRAINT IF EXISTS official_alerts_area_geojson_valid_check,
     ADD CONSTRAINT official_alerts_peril_type_check
       CHECK (peril_type IS NULL OR peril_type IN ('weather', 'air_quality')),
     ADD CONSTRAINT official_alerts_severity_check
@@ -24,14 +23,56 @@ ALTER TABLE official_alerts
       CHECK (
         (latitude IS NULL AND longitude IS NULL)
         OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)
-      ),
-    ADD CONSTRAINT official_alerts_area_geojson_valid_check
-      CHECK (
-        area_geojson IS NULL
-        OR ST_IsValid(
-          ST_SetSRID(ST_GeomFromGeoJSON(area_geojson::text), 4326)
-        )
-      ) NOT VALID;
+      );
+
+-- Scope validation to writes that supply geometry so legacy rows remain mutable.
+ALTER TABLE official_alerts
+    DROP CONSTRAINT IF EXISTS official_alerts_area_geojson_valid_check;
+
+CREATE OR REPLACE FUNCTION validate_official_alert_area_geojson()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  parsed_geometry geometry;
+BEGIN
+  IF NEW.area_geojson IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  BEGIN
+    parsed_geometry := ST_SetSRID(
+      ST_GeomFromGeoJSON(NEW.area_geojson::text),
+      4326
+    );
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION USING
+        ERRCODE = '23514',
+        CONSTRAINT = 'official_alerts_area_geojson_validation',
+        MESSAGE = 'official_alerts.area_geojson must be valid Polygon or MultiPolygon GeoJSON';
+  END;
+
+  IF parsed_geometry IS NULL
+     OR GeometryType(parsed_geometry) NOT IN ('POLYGON', 'MULTIPOLYGON')
+     OR NOT ST_IsValid(parsed_geometry) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      CONSTRAINT = 'official_alerts_area_geojson_validation',
+      MESSAGE = 'official_alerts.area_geojson must be valid Polygon or MultiPolygon GeoJSON';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS official_alerts_area_geojson_validation
+  ON official_alerts;
+
+CREATE TRIGGER official_alerts_area_geojson_validation
+BEFORE INSERT OR UPDATE OF area_geojson ON official_alerts
+FOR EACH ROW
+EXECUTE FUNCTION validate_official_alert_area_geojson();
 
 ALTER TABLE ews_notification_log
     ADD COLUMN IF NOT EXISTS matched_watch_zone_id UUID

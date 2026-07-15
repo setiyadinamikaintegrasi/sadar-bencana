@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -13,6 +13,8 @@ import asyncpg
 import pytest
 
 from alerts.lifecycle_delivery import enqueue_official_alert_revision
+from db.official_alerts import expire_official_alert_revisions, upsert_official_alert
+from models.official_alert import OfficialAlertInput
 
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -62,20 +64,47 @@ SELF_INTERSECTING_POLYGON = {
         ]
     ],
 }
+SELF_INTERSECTING_MULTIPOLYGON = {
+    "type": "MultiPolygon",
+    "coordinates": [SELF_INTERSECTING_POLYGON["coordinates"]],
+}
+MALFORMED_POLYGON = {
+    "type": "Polygon",
+    "coordinates": "not-an-array",
+}
+POINT_GEOJSON = {
+    "type": "Point",
+    "coordinates": [106.85, -6.15],
+}
 
 SCHEMA_SQL = """
 CREATE TABLE official_alerts (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source VARCHAR(64) NOT NULL,
     source_alert_id VARCHAR(255) NOT NULL,
     revision INT NOT NULL,
     message_type VARCHAR(16) NOT NULL,
     status VARCHAR(16) NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    effective_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    headline TEXT,
+    description TEXT,
+    raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    payload_checksum CHAR(64) NOT NULL,
+    previous_alert_id UUID REFERENCES official_alerts(id) ON DELETE SET NULL,
+    is_current BOOLEAN NOT NULL DEFAULT TRUE,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     peril_type VARCHAR(32),
     severity VARCHAR(16),
+    category TEXT,
+    area_name TEXT,
     area_geojson JSONB,
     latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION
+    longitude DOUBLE PRECISION,
+    source_url TEXT,
+    UNIQUE (source, source_alert_id, revision),
+    UNIQUE (source, source_alert_id, payload_checksum)
 );
 
 CREATE TABLE ews_subscribers (
@@ -191,20 +220,30 @@ async def insert_alert(
     area_geojson: dict[str, object] | None = None,
     latitude: float | None = None,
     longitude: float | None = None,
+    sent_at: datetime | None = None,
+    expires_at: datetime | None = None,
 ) -> dict[str, object]:
     alert_id = uuid4()
     await conn.execute(
         """
         INSERT INTO official_alerts (
             id, source, source_alert_id, revision, message_type, status,
-            peril_type, severity, area_geojson, latitude, longitude
-        ) VALUES ($1, 'bmkg_cap', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+            sent_at, expires_at, raw_payload, payload_checksum, peril_type,
+            severity, area_geojson, latitude, longitude
+        ) VALUES (
+            $1, 'bmkg_cap', $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+            $10, $11, $12::jsonb, $13, $14
+        )
         """,
         alert_id,
         source_alert_id,
         revision,
         message_type,
         status,
+        sent_at or datetime.now(timezone.utc),
+        expires_at,
+        json.dumps({"source_alert_id": source_alert_id, "revision": revision}),
+        alert_id.hex * 2,
         peril_type,
         severity,
         json.dumps(area_geojson) if area_geojson is not None else None,
@@ -217,6 +256,31 @@ async def insert_alert(
         revision=revision,
         message_type=message_type,
         status=status,
+    )
+
+
+def official_alert_input(
+    *,
+    source_alert_id: str,
+    sent_at: datetime,
+) -> OfficialAlertInput:
+    return OfficialAlertInput(
+        source="bmkg_cap",
+        source_alert_id=source_alert_id,
+        message_type="update",
+        status="active",
+        sent_at=sent_at,
+        effective_at=sent_at,
+        expires_at=sent_at + timedelta(hours=1),
+        headline="Updated warning",
+        description="Updated official warning",
+        area_geojson=JAKARTA_POLYGON,
+        raw_payload={
+            "source_alert_id": source_alert_id,
+            "sent_at": sent_at.isoformat(),
+        },
+        peril_type="weather",
+        severity="High",
     )
 
 
@@ -266,16 +330,80 @@ async def insert_recipient(
     return subscriber_id, zone_id
 
 
-def migration_geometry_constraint_sql() -> str:
+def migration_geometry_validation_sql() -> str:
     migration = MIGRATION_040.read_text(encoding="utf-8")
-    marker = "official_alerts_area_geojson_valid_check"
-    marker_at = migration.index(marker)
-    statement_start = migration.rfind("ALTER TABLE official_alerts", 0, marker_at)
-    statement_end = migration.index(";", marker_at) + 1
-    statement = migration[statement_start:statement_end]
-    assert "ST_IsValid" in statement
-    assert "NOT VALID" in statement
-    return statement
+    block_start = migration.index(
+        "ALTER TABLE official_alerts\n"
+        "    DROP CONSTRAINT IF EXISTS official_alerts_area_geojson_valid_check;"
+    )
+    trigger_start = migration.index(
+        "CREATE TRIGGER official_alerts_area_geojson_validation",
+        block_start,
+    )
+    block_end = migration.index(";", trigger_start) + 1
+    block = migration[block_start:block_end]
+    assert "BEFORE INSERT OR UPDATE OF area_geojson" in block
+    assert "ST_IsValid" in block
+    assert "NOT VALID" not in block
+    return block
+
+
+@pytest.mark.asyncio
+async def test_geometry_validation_does_not_block_historical_alert_lifecycle():
+    now = datetime(2026, 7, 15, 4, 0, tzinfo=timezone.utc)
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            superseded = await insert_alert(
+                conn,
+                source_alert_id="historical-superseded",
+                area_geojson=SELF_INTERSECTING_POLYGON,
+                sent_at=now - timedelta(minutes=10),
+                expires_at=now + timedelta(hours=1),
+            )
+            expiring = await insert_alert(
+                conn,
+                source_alert_id="historical-expiring",
+                area_geojson=SELF_INTERSECTING_POLYGON,
+                sent_at=now - timedelta(hours=1),
+                expires_at=now - timedelta(minutes=1),
+            )
+            validation_sql = migration_geometry_validation_sql()
+            await conn.execute(validation_sql)
+            await conn.execute(validation_sql)
+            trigger_definitions = await conn.fetch(
+                """
+                SELECT pg_get_triggerdef(oid) AS definition
+                FROM pg_trigger
+                WHERE tgrelid = 'official_alerts'::regclass
+                  AND tgname = 'official_alerts_area_geojson_validation'
+                  AND NOT tgisinternal
+                """
+            )
+
+        replacement, created = await upsert_official_alert(
+            pool,
+            official_alert_input(
+                source_alert_id="historical-superseded",
+                sent_at=now,
+            ),
+            now=now,
+        )
+        expired = await expire_official_alert_revisions(pool, now=now)
+
+        async with pool.acquire() as conn:
+            historical = await conn.fetchrow(
+                "SELECT status, is_current FROM official_alerts WHERE id = $1",
+                superseded["id"],
+            )
+
+        assert created is True
+        assert replacement["revision"] == 2
+        assert dict(historical) == {"status": "updated", "is_current": False}
+        assert [row["id"] for row in expired] == [expiring["id"]]
+        assert len(trigger_definitions) == 1
+        assert "BEFORE INSERT OR UPDATE OF area_geojson" in trigger_definitions[0][
+            "definition"
+        ]
 
 
 @pytest.mark.asyncio
@@ -436,7 +564,7 @@ async def test_lifecycle_changes_retain_prior_recipient_zone(
 
 
 @pytest.mark.asyncio
-async def test_historical_invalid_polygon_is_quarantined_without_aborting_batch():
+async def test_historical_invalid_polygon_is_quarantined_and_bad_writes_are_rejected():
     async with isolated_lifecycle_database() as pool:
         async with pool.acquire() as conn:
             await insert_recipient(conn)
@@ -445,20 +573,32 @@ async def test_historical_invalid_polygon_is_quarantined_without_aborting_batch(
                 source_alert_id="historical-invalid",
                 area_geojson=SELF_INTERSECTING_POLYGON,
             )
-            await conn.execute(migration_geometry_constraint_sql())
+            await conn.execute(migration_geometry_validation_sql())
 
-            with pytest.raises(asyncpg.CheckViolationError):
-                await insert_alert(
-                    conn,
-                    source_alert_id="new-invalid",
-                    area_geojson=SELF_INTERSECTING_POLYGON,
-                )
+            for source_alert_id, area_geojson in (
+                ("new-invalid-polygon", SELF_INTERSECTING_POLYGON),
+                ("new-invalid-multipolygon", SELF_INTERSECTING_MULTIPOLYGON),
+                ("new-malformed-polygon", MALFORMED_POLYGON),
+                ("new-point", POINT_GEOJSON),
+            ):
+                with pytest.raises(asyncpg.CheckViolationError):
+                    await insert_alert(
+                        conn,
+                        source_alert_id=source_alert_id,
+                        area_geojson=area_geojson,
+                    )
 
             valid = await insert_alert(
                 conn,
                 source_alert_id="valid-after-invalid",
                 area_geojson=JAKARTA_POLYGON,
             )
+            with pytest.raises(asyncpg.CheckViolationError):
+                await conn.execute(
+                    "UPDATE official_alerts SET area_geojson = $1::jsonb WHERE id = $2",
+                    json.dumps(SELF_INTERSECTING_POLYGON),
+                    valid["id"],
+                )
 
         assert await enqueue_official_alert_revision(pool, historical_invalid) == 0
         assert await enqueue_official_alert_revision(pool, valid) == 1
