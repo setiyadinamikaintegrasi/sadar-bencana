@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 from datetime import datetime
+from math import isfinite
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _is_json_compatible(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, int, str)):
+        return True
+    if isinstance(value, float):
+        return isfinite(value)
+    if isinstance(value, list):
+        return all(_is_json_compatible(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_json_compatible(item)
+            for key, item in value.items()
+        )
+    return False
 
 
 class AirQualityObservationInput(BaseModel):
@@ -50,6 +66,13 @@ class AirQualityObservationInput(BaseModel):
             host == "bmkg.go.id" or host.endswith(".bmkg.go.id")
         ):
             raise ValueError("source_url must use an official BMKG HTTPS host")
+        return value
+
+    @field_validator("raw_payload", mode="before")
+    @classmethod
+    def raw_payload_must_be_json_compatible(cls, value: Any) -> Any:
+        if not _is_json_compatible(value):
+            raise ValueError("raw_payload must be JSON-compatible")
         return value
 
     @model_validator(mode="after")

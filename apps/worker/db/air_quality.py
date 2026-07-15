@@ -27,7 +27,13 @@ WHERE observed_at < $1 - interval '30 days'
 
 
 def _json_value(value: dict[str, Any]) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 async def upsert_air_quality_observation(
@@ -60,6 +66,8 @@ async def delete_old_air_quality_observations(
     now: datetime | None = None,
 ) -> str:
     """Delete observations older than the database's 30-day retention period."""
+    if now is not None and (now.tzinfo is None or now.utcoffset() is None):
+        raise ValueError("now must include a timezone")
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     async with pool.acquire() as conn:
         return await conn.execute(_DELETE_OLD_SQL, current_time)

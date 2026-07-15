@@ -87,6 +87,19 @@ async def test_upsert_serializes_raw_payload_as_sorted_compact_json():
 
 
 @pytest.mark.asyncio
+async def test_upsert_defensively_rejects_non_finite_json_payloads():
+    pool, conn = fake_pool(fetchrow={"id": "obs-1"})
+    unsafe_values = observation().model_dump()
+    unsafe_values["raw_payload"] = {"reading": float("nan")}
+    unsafe_observation = AirQualityObservationInput.model_construct(**unsafe_values)
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        await upsert_air_quality_observation(pool, unsafe_observation)
+
+    conn.fetchrow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_returns_not_created():
     pool, _ = fake_pool(fetchrow=None)
 
@@ -108,3 +121,13 @@ async def test_retention_deletes_observations_before_30_day_cutoff():
     args = conn.execute.await_args.args
     assert args[1] == NOW
     assert "observed_at < $1 - interval '30 days'" in args[0]
+
+
+@pytest.mark.asyncio
+async def test_retention_rejects_naive_now():
+    pool, conn = fake_pool(fetchrow=None)
+
+    with pytest.raises(ValueError, match="now must include a timezone"):
+        await delete_old_air_quality_observations(pool, now=NOW.replace(tzinfo=None))
+
+    conn.execute.assert_not_awaited()
