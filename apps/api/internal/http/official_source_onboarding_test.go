@@ -49,6 +49,42 @@ func validAirQualityPreviewPayload() map[string]any {
 	}
 }
 
+func executeAirQualityPreviewBody(t *testing.T, body []byte) (sourcePreviewResult, error) {
+	t.Helper()
+	server := httptest.NewTLSServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	originalLookup := lookupOfficialSourceIPs
+	originalDial := dialOfficialSourceContext
+	originalTLSConfig := officialSourceTLSConfig
+	t.Cleanup(func() {
+		lookupOfficialSourceIPs = originalLookup
+		dialOfficialSourceContext = originalDial
+		officialSourceTLSConfig = originalTLSConfig
+	})
+	lookupOfficialSourceIPs = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	dialer := &net.Dialer{}
+	dialOfficialSourceContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	officialSourceTLSConfig = func(host string) *tls.Config {
+		return &tls.Config{ServerName: host, InsecureSkipVerify: true} // test server certificate is self-signed.
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(stdhttp.MethodPost, "/preview", nil)
+	return executeSourcePreview(ctx, sourceRuntimeConfig{
+		Source: "bmkg_air_quality", Endpoint: "https://iklim.bmkg.go.id/api/air-quality",
+		AdapterVersion: "v1", FieldMapping: map[string]string{},
+	})
+}
+
 func TestPreviewCapIndexAcceptsBMKGLinks(t *testing.T) {
 	body := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -144,6 +180,195 @@ func TestAirQualityPreviewSeparatesWarningsAndObservations(t *testing.T) {
 	}
 }
 
+func TestExecuteAirQualityPreviewRequiresExactlyOneJSONValue(t *testing.T) {
+	encoded, err := json.Marshal(validAirQualityPreviewPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		tail  string
+		valid bool
+	}{
+		{name: "one value with trailing whitespace", tail: "\n\t ", valid: true},
+		{name: "trailing garbage", tail: "not-json"},
+		{name: "second JSON value", tail: ` {"warnings":[],"observations":[]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := append(append([]byte{}, encoded...), test.tail...)
+			result, err := executeAirQualityPreviewBody(t, body)
+			if err != nil {
+				t.Fatalf("preview failed: %v", err)
+			}
+			if result.ContractValid != test.valid {
+				t.Fatalf("contract_valid=%t, want %t: %#v", result.ContractValid, test.valid, result)
+			}
+			if !test.valid && (len(result.Errors) != 1 || result.Errors[0] != "response is not valid JSON") {
+				t.Fatalf("invalid JSON did not return the bounded error: %#v", result)
+			}
+		})
+	}
+}
+
+func TestSensitivePreviewKeyRecognizesNormalizedCredentialPatterns(t *testing.T) {
+	for _, key := range []string{
+		"backup_secret_key_material",
+		"private-key",
+		"basicAuth",
+		"requestAuthorizationHeaderValue",
+		"client_secret_value",
+		"x-api-key-header",
+		"service_credentials_blob",
+		"browser_cookies_copy",
+		"refresh_tokens_list",
+		"database_passwords_hash",
+		"legacy_passwd_digest",
+	} {
+		t.Run(key, func(t *testing.T) {
+			if !sensitivePreviewKey(key) {
+				t.Fatalf("sensitive key %q was not recognized", key)
+			}
+		})
+	}
+	for _, key := range []string{
+		"secretary_name",
+		"tokenizer_version",
+		"cookieless_mode",
+		"passwordless_enabled",
+		"public_key",
+		"authorization_status",
+	} {
+		t.Run(key, func(t *testing.T) {
+			if sensitivePreviewKey(key) {
+				t.Fatalf("ordinary key %q was treated as a credential", key)
+			}
+		})
+	}
+}
+
+func TestAirQualityPreviewRedactsNestedRawAndMappedSamples(t *testing.T) {
+	payload := validAirQualityPreviewPayload()
+	warning := payload["warnings"].([]any)[0].(map[string]any)
+	warning["security_metadata"] = []any{
+		map[string]any{
+			"backup_secret_key_material": "leak-secret-key",
+			"secretary_name":             "visible-secretary",
+		},
+		map[string]any{
+			"wrapper": map[string]any{
+				"client_secret_value": "leak-client-secret",
+				"public_key":          "visible-public-key",
+			},
+		},
+	}
+	observation := payload["observations"].([]any)[0].(map[string]any)
+	observation["service_credentials_blob"] = map[string]any{
+		"browser_cookies_copy": "leak-cookie",
+		"refresh_tokens_list":  []any{"leak-token"},
+	}
+	observation["ordinary_metadata"] = map[string]any{"status": "visible-ordinary"}
+
+	result := previewAirQualityPayload(payload, map[string]string{}, sourcePreviewResult{
+		Reachable: true, StatusCode: 200, AdapterVersion: "v1",
+	})
+	if !result.ContractValid {
+		t.Fatalf("credential metadata changed contract validity: %#v", result)
+	}
+	for name, sample := range map[string]any{
+		"raw": result.RawSample, "mapped": result.MappedSample,
+	} {
+		encoded, err := json.Marshal(sample)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, leaked := range []string{
+			"leak-secret-key", "leak-client-secret", "leak-cookie", "leak-token",
+		} {
+			if strings.Contains(string(encoded), leaked) {
+				t.Fatalf("%s sample leaked %q: %s", name, leaked, encoded)
+			}
+		}
+		for _, visible := range []string{
+			"visible-secretary", "visible-public-key", "visible-ordinary",
+		} {
+			if !strings.Contains(string(encoded), visible) {
+				t.Fatalf("%s sample removed ordinary value %q: %s", name, visible, encoded)
+			}
+		}
+	}
+}
+
+func TestAirQualityPreviewAcceptsWorkerNumericStringCoercions(t *testing.T) {
+	payload := validAirQualityPreviewPayload()
+	warning := payload["warnings"].([]any)[0].(map[string]any)
+	warning["latitude"], warning["longitude"] = " -6.2 ", " 106.8 "
+	observation := payload["observations"].([]any)[0].(map[string]any)
+	observation["latitude"], observation["longitude"] = " -6.155 ", " 106.84 "
+	observation["value"] = " 66.2 "
+
+	result := previewAirQualityPayload(payload, map[string]string{}, sourcePreviewResult{
+		Reachable: true, StatusCode: 200, AdapterVersion: "v1",
+	})
+	if !result.ContractValid || result.ValidCount != 2 || result.InvalidCount != 0 {
+		t.Fatalf("Pydantic-compatible numeric strings were rejected: %#v", result)
+	}
+}
+
+func TestAirQualityPreviewAcceptsDatetimeFromISOFormatVariants(t *testing.T) {
+	for _, timestamp := range []string{
+		"2026-07-15T04:00:00+0700",
+		"2026-07-15 04:00:00+07:00",
+		"20260715T040000+0700",
+		"2026-W29-3T04:00:00+07:00",
+		"2026W293T040000+0700",
+		"2026-07-15T04:00:00+07",
+		"2026-07-15T04:00:00+07:00:30.5",
+	} {
+		t.Run(timestamp, func(t *testing.T) {
+			payload := validAirQualityPreviewPayload()
+			warning := payload["warnings"].([]any)[0].(map[string]any)
+			for _, field := range []string{"sent_at", "effective_at", "expires_at"} {
+				warning[field] = timestamp
+			}
+			payload["observations"].([]any)[0].(map[string]any)["observed_at"] = timestamp
+
+			result := previewAirQualityPayload(payload, map[string]string{}, sourcePreviewResult{
+				Reachable: true, StatusCode: 200, AdapterVersion: "v1",
+			})
+			if !result.ContractValid {
+				t.Fatalf("datetime.fromisoformat-compatible timestamp was rejected: %#v", result)
+			}
+		})
+	}
+}
+
+func TestAirQualityPreviewRejectsUnsafeNumericAndTimestampStrings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "naive timestamp", mutate: func(record map[string]any) { record["observed_at"] = "2026-07-15T04:00:00" }},
+		{name: "malformed offset", mutate: func(record map[string]any) { record["observed_at"] = "2026-07-15T04:00:00+-1" }},
+		{name: "infinite value", mutate: func(record map[string]any) { record["value"] = "Infinity" }},
+		{name: "not a number coordinate", mutate: func(record map[string]any) { record["latitude"] = "NaN" }},
+		{name: "negative value", mutate: func(record map[string]any) { record["value"] = "-0.1" }},
+		{name: "out of range coordinate", mutate: func(record map[string]any) { record["longitude"] = "181" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := validAirQualityPreviewPayload()
+			test.mutate(payload["observations"].([]any)[0].(map[string]any))
+			result := previewAirQualityPayload(payload, map[string]string{}, sourcePreviewResult{
+				Reachable: true, StatusCode: 200, AdapterVersion: "v1",
+			})
+			if result.ContractValid || result.ValidCount != 1 || result.InvalidCount != 1 {
+				t.Fatalf("unsafe value was accepted: %#v", result)
+			}
+		})
+	}
+}
+
 func TestAirQualityPreviewRejectsCollectionSchemaDrift(t *testing.T) {
 	result := previewAirQualityPayload(
 		map[string]any{"warnings": map[string]any{}, "observations": []any{}},
@@ -179,7 +404,6 @@ func TestAirQualityPreviewRejectsMalformedRecordsWithoutDiscardingValidSiblingCo
 		}},
 		{name: "observation required station", collection: "observations", mutate: func(record map[string]any) { delete(record, "station_name") }},
 		{name: "observation identifier length", collection: "observations", mutate: func(record map[string]any) { record["station_id"] = strings.Repeat("s", 256) }},
-		{name: "observation numeric value", collection: "observations", mutate: func(record map[string]any) { record["value"] = "66.2" }},
 		{name: "observation category", collection: "observations", mutate: func(record map[string]any) { record["category"] = "Unknown" }},
 		{name: "observation unit", collection: "observations", mutate: func(record map[string]any) { record["unit"] = "ppm" }},
 		{name: "observation timezone", collection: "observations", mutate: func(record map[string]any) { record["observed_at"] = "2026-07-15T04:00:00" }},
@@ -275,6 +499,41 @@ func TestSourcePreviewRejectsPrivateDNSResolutionBeforeDial(t *testing.T) {
 	}
 	if dialed {
 		t.Fatal("private DNS result reached the dialer")
+	}
+}
+
+func TestSourcePreviewRejectsMixedPublicAndBlockedDNSAnswersBeforeDial(t *testing.T) {
+	originalLookup := lookupOfficialSourceIPs
+	originalDial := dialOfficialSourceContext
+	t.Cleanup(func() {
+		lookupOfficialSourceIPs = originalLookup
+		dialOfficialSourceContext = originalDial
+	})
+	lookupOfficialSourceIPs = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{
+			{IP: net.ParseIP("8.8.8.8")},
+			{IP: net.ParseIP("169.254.169.254")},
+		}, nil
+	}
+	dialed := false
+	dialOfficialSourceContext = func(context.Context, string, string) (net.Conn, error) {
+		dialed = true
+		return nil, nil
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(stdhttp.MethodPost, "/preview", nil)
+	_, err := executeSourcePreview(ctx, sourceRuntimeConfig{
+		Source: "bmkg_air_quality", Endpoint: "https://iklim.bmkg.go.id/api/air-quality",
+		AdapterVersion: "v1", FieldMapping: map[string]string{},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "blocked IP 169.254.169.254") {
+		t.Fatalf("mixed DNS answers did not fail closed: %v", err)
+	}
+	if dialed {
+		t.Fatal("mixed DNS answers reached the dialer")
 	}
 }
 

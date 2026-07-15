@@ -1,7 +1,6 @@
 package http
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -16,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -231,6 +231,26 @@ func sensitivePreviewKey(key string) bool {
 		}
 		return -1
 	}, key)
+	for _, pattern := range []string{
+		"secretkey",
+		"privatekey",
+		"basicauth",
+		"authorizationheader",
+		"clientsecret",
+		"apikey",
+		"apitoken",
+		"accesstoken",
+		"refreshtoken",
+		"credentials",
+		"cookies",
+		"tokens",
+		"passwords",
+		"passwd",
+	} {
+		if strings.Contains(normalized, pattern) {
+			return true
+		}
+	}
 	if normalized == "auth" || normalized == "cookie" || normalized == "cookies" || normalized == "setcookie" {
 		return true
 	}
@@ -463,6 +483,12 @@ func airQualityNumber(value any) (float64, bool) {
 		number = float64(typed)
 	case uint64:
 		number = float64(typed)
+	case string:
+		var err error
+		number, err = strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -491,12 +517,199 @@ func validateAirQualityCoordinates(record map[string]any) error {
 	return nil
 }
 
-func validateAirQualityTime(record map[string]any, field string) error {
-	value, err := requiredAirQualityString(record, field)
-	if err != nil {
-		return err
+func decimalComponent(value string, maximum int) (int, bool) {
+	if len(value) != 2 {
+		return 0, false
 	}
-	if _, err := time.Parse(time.RFC3339, value); err != nil {
+	number, err := strconv.Atoi(value)
+	return number, err == nil && number >= 0 && number <= maximum
+}
+
+func validISOWeekDate(value string) bool {
+	var yearText, weekText, dayText string
+	switch len(value) {
+	case len("2006-W01-1"):
+		if value[4:6] != "-W" || value[8] != '-' {
+			return false
+		}
+		yearText, weekText, dayText = value[:4], value[6:8], value[9:]
+	case len("2006W011"):
+		if value[4] != 'W' {
+			return false
+		}
+		yearText, weekText, dayText = value[:4], value[5:7], value[7:]
+	default:
+		return false
+	}
+	year, yearErr := strconv.Atoi(yearText)
+	week, weekErr := strconv.Atoi(weekText)
+	day, dayErr := strconv.Atoi(dayText)
+	if yearErr != nil || weekErr != nil || dayErr != nil || week < 1 || week > 53 || day < 1 || day > 7 {
+		return false
+	}
+	jan4 := time.Date(year, time.January, 4, 0, 0, 0, 0, time.UTC)
+	daysSinceMonday := (int(jan4.Weekday()) + 6) % 7
+	date := jan4.AddDate(0, 0, -daysSinceMonday+(week-1)*7+(day-1))
+	isoYear, isoWeek := date.ISOWeek()
+	return isoYear == year && isoWeek == week
+}
+
+func isoDatePrefixLength(value string) (int, bool) {
+	if len(value) >= len("2006-W01-1") && value[4:6] == "-W" {
+		date := value[:len("2006-W01-1")]
+		return len(date), validISOWeekDate(date)
+	}
+	if len(value) >= len("2006W011") && value[4] == 'W' {
+		date := value[:len("2006W011")]
+		return len(date), validISOWeekDate(date)
+	}
+	if len(value) >= len("2006-01-02") && value[4] == '-' {
+		date := value[:len("2006-01-02")]
+		_, err := time.Parse("2006-01-02", date)
+		return len(date), err == nil
+	}
+	if len(value) >= len("20060102") {
+		date := value[:len("20060102")]
+		_, err := time.Parse("20060102", date)
+		return len(date), err == nil
+	}
+	return 0, false
+}
+
+func splitISOFraction(value string) (string, string, bool) {
+	index := strings.IndexAny(value, ".,")
+	if index < 0 {
+		return value, "", true
+	}
+	if index == len(value)-1 || strings.IndexAny(value[index+1:], ".,") >= 0 {
+		return "", "", false
+	}
+	for _, character := range value[index+1:] {
+		if character < '0' || character > '9' {
+			return "", "", false
+		}
+	}
+	return value[:index], value[index+1:], true
+}
+
+func validISOClock(value string) bool {
+	clock, fraction, ok := splitISOFraction(value)
+	if !ok {
+		return false
+	}
+	var parts []string
+	if strings.Contains(clock, ":") {
+		parts = strings.Split(clock, ":")
+		if len(parts) < 1 || len(parts) > 3 {
+			return false
+		}
+	} else {
+		if len(clock) != 2 && len(clock) != 4 && len(clock) != 6 {
+			return false
+		}
+		for index := 0; index < len(clock); index += 2 {
+			parts = append(parts, clock[index:index+2])
+		}
+	}
+	if fraction != "" && len(parts) != 3 {
+		return false
+	}
+	hour, hourOK := decimalComponent(parts[0], 24)
+	if !hourOK {
+		return false
+	}
+	minute, second := 0, 0
+	if len(parts) > 1 {
+		var minuteOK bool
+		minute, minuteOK = decimalComponent(parts[1], 59)
+		if !minuteOK {
+			return false
+		}
+	}
+	if len(parts) > 2 {
+		var secondOK bool
+		second, secondOK = decimalComponent(parts[2], 59)
+		if !secondOK {
+			return false
+		}
+	}
+	if hour == 24 {
+		return minute == 0 && second == 0 && (fraction == "" || strings.Trim(fraction, "0") == "")
+	}
+	return true
+}
+
+func validISOOffset(value string) bool {
+	if value == "Z" {
+		return true
+	}
+	if len(value) < 3 || (value[0] != '+' && value[0] != '-') {
+		return false
+	}
+	offset, fraction, ok := splitISOFraction(value[1:])
+	if !ok {
+		return false
+	}
+	var parts []string
+	if strings.Contains(offset, ":") {
+		parts = strings.Split(offset, ":")
+		if len(parts) < 1 || len(parts) > 3 {
+			return false
+		}
+	} else {
+		if len(offset) != 2 && len(offset) != 4 && len(offset) != 6 {
+			return false
+		}
+		for index := 0; index < len(offset); index += 2 {
+			parts = append(parts, offset[index:index+2])
+		}
+	}
+	if fraction != "" && len(parts) != 3 {
+		return false
+	}
+	if _, ok := decimalComponent(parts[0], 23); !ok {
+		return false
+	}
+	if len(parts) > 1 {
+		if _, ok := decimalComponent(parts[1], 59); !ok {
+			return false
+		}
+	}
+	if len(parts) > 2 {
+		if _, ok := decimalComponent(parts[2], 59); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func pythonISOAwareTimestamp(value string) bool {
+	dateLength, ok := isoDatePrefixLength(value)
+	if !ok || len(value) <= dateLength {
+		return false
+	}
+	_, separatorLength := utf8.DecodeRuneInString(value[dateLength:])
+	if separatorLength == 0 || len(value) <= dateLength+separatorLength {
+		return false
+	}
+	timeAndZone := value[dateLength+separatorLength:]
+	zoneIndex := strings.IndexAny(timeAndZone, "+-")
+	if zoneIndex < 0 && strings.HasSuffix(timeAndZone, "Z") {
+		zoneIndex = len(timeAndZone) - 1
+	}
+	if zoneIndex <= 0 {
+		return false
+	}
+	return validISOClock(timeAndZone[:zoneIndex]) && validISOOffset(timeAndZone[zoneIndex:])
+}
+
+func validateAirQualityTime(record map[string]any, field string) error {
+	value, exists := record[field]
+	text, ok := value.(string)
+	if !exists {
+		return fmt.Errorf("%s is required", field)
+	}
+	if !ok || text == "" || !pythonISOAwareTimestamp(text) {
 		return fmt.Errorf("%s must be a timezone-aware ISO timestamp", field)
 	}
 	return nil
@@ -786,7 +999,7 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 		return result, err
 	}
 	var payload any
-	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		if config.Source == "bmkg_cap" && likelyXMLResponse(result.ContentType, body) {
 			if capResult, ok := previewCapIndex(body, result); ok {
 				return capResult, nil

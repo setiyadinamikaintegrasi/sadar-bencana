@@ -378,6 +378,49 @@ def test_observation_without_coordinates_remains_displayable():
     assert observations[0].longitude is None
 
 
+def test_parser_coerces_numeric_strings_like_pydantic_models():
+    payload = deepcopy(PAYLOAD)
+    payload["warnings"][0]["latitude"] = " -6.2 "
+    payload["warnings"][0]["longitude"] = " 106.8 "
+    payload["observations"][0]["latitude"] = " -6.155 "
+    payload["observations"][0]["longitude"] = " 106.84 "
+    payload["observations"][0]["value"] = " 66.2 "
+
+    warnings, observations, errors = parse_air_quality_payload(payload, {})
+
+    assert errors == []
+    assert warnings[0].latitude == -6.2
+    assert warnings[0].longitude == 106.8
+    assert observations[0].latitude == -6.155
+    assert observations[0].longitude == 106.84
+    assert observations[0].value == 66.2
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "2026-07-15T04:00:00+0700",
+        "2026-07-15 04:00:00+07:00",
+        "20260715T040000+0700",
+        "2026-W29-3T04:00:00+07:00",
+        "2026W293T040000+0700",
+        "2026-07-15T04:00:00+07",
+        "2026-07-15T04:00:00+07:00:30.5",
+    ],
+)
+def test_parser_accepts_datetime_fromisoformat_variants(timestamp):
+    payload = deepcopy(PAYLOAD)
+    for field in ("sent_at", "effective_at", "expires_at"):
+        payload["warnings"][0][field] = timestamp
+    payload["observations"][0]["observed_at"] = timestamp
+
+    warnings, observations, errors = parse_air_quality_payload(payload, {})
+
+    assert errors == []
+    assert warnings[0].sent_at.utcoffset() is not None
+    assert observations[0].observed_at.utcoffset() is not None
+
+
 def test_schema_drift_is_rejected_before_record_processing():
     with pytest.raises(ValueError, match="warnings and observations must be arrays"):
         parse_air_quality_payload({"warnings": {}, "observations": []}, {})
