@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import smtplib
 import threading
 import unittest
 from email import message_from_string
@@ -59,6 +60,23 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
                 return
             await asyncio.sleep(0.01)
         self.fail("SMTP thread did not start")
+
+    async def test_missing_smtp_configuration_is_definite_and_not_retryable(self):
+        channel = EmailChannel()
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = await channel.send("recipient@example.com", "Test")
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "provider_id": None,
+                "error": "SMTP not configured",
+                "ambiguous": False,
+                "retryable": False,
+            },
+        )
 
     async def test_send_builds_plain_and_html_alternatives(self):
         channel = EmailChannel()
@@ -174,6 +192,44 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
                 "retryable": False,
             },
         )
+
+    async def test_smtp_disconnect_or_socket_failure_is_ambiguous_and_not_retryable(self):
+        channel = EmailChannel()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+        }
+
+        for error in (
+            smtplib.SMTPServerDisconnected("connection lost after DATA"),
+            ConnectionResetError("connection reset after DATA"),
+            BrokenPipeError("connection closed while finishing DATA"),
+            OSError("socket state unknown after DATA"),
+        ):
+            with self.subTest(error_type=type(error).__name__):
+                with (
+                    patch.dict("os.environ", environment, clear=True),
+                    patch.object(channel, "_smtp_send", side_effect=error),
+                ):
+                    result = await channel.send(
+                        "recipient@example.com",
+                        "Test",
+                        idempotency_key="delivery-disconnected",
+                    )
+
+                self.assertEqual(
+                    result,
+                    {
+                        "success": False,
+                        "provider_id": None,
+                        "error": "email_delivery_ambiguous",
+                        "ambiguous": True,
+                        "retryable": False,
+                    },
+                )
 
     async def test_cancellation_waits_for_smtp_completion_and_returns_success(self):
         channel = EmailChannel()

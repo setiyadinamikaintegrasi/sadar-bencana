@@ -401,6 +401,21 @@ class AmbiguousAdapter:
         }
 
 
+class WrapperTimeoutAdapter:
+    def __init__(self):
+        self.cancelled = asyncio.Event()
+        self.finished = asyncio.Event()
+
+    async def send(self, *_args, **_kwargs):
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            await asyncio.sleep(0.01)
+            self.finished.set()
+            raise
+
+
 class FirstSendBlockingAdapter:
     def __init__(self):
         self.started = asyncio.Event()
@@ -783,6 +798,54 @@ async def test_ambiguous_email_outcome_is_not_automatically_retried(monkeypatch)
             "attempt_count": 1,
             "next_attempt_at": None,
             "error_message": "email_delivery_ambiguous",
+        }
+
+
+@pytest.mark.asyncio
+async def test_channel_wrapper_timeout_is_ambiguous_and_dead_lettered(monkeypatch):
+    adapter = WrapperTimeoutAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "telegram", adapter)
+    monkeypatch.setitem(
+        lifecycle_delivery.CHANNEL_SEND_TIMEOUT_SECONDS,
+        "telegram",
+        0.01,
+    )
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            subscriber_id, _ = await insert_recipient(conn)
+            await conn.execute(
+                "UPDATE ews_notification_prefs SET channel = 'telegram'"
+            )
+            await conn.execute(
+                "UPDATE ews_subscribers SET telegram_chat_id = 12345 WHERE id = $1",
+                subscriber_id,
+            )
+            alert = await insert_alert(
+                conn,
+                source_alert_id="wrapper-timeout",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, alert) == 1
+
+        assert await process_due_deliveries(pool) == {
+            "sent": 0,
+            "failed": 0,
+            "dead_letter": 1,
+        }
+        assert adapter.cancelled.is_set()
+        assert adapter.finished.is_set()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, attempt_count, next_attempt_at, error_message "
+                "FROM ews_notification_log"
+            )
+
+        assert dict(row) == {
+            "status": "dead_letter",
+            "attempt_count": 1,
+            "next_attempt_at": None,
+            "error_message": "delivery_timeout_ambiguous",
         }
 
 

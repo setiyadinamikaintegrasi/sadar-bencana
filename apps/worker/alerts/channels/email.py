@@ -57,8 +57,13 @@ class EmailChannel(BaseChannel):
         from_addr = os.getenv("SMTP_FROM", "ews@example.com")
 
         if not host or not user or not password or not from_addr:
-            return {"success": False, "provider_id": None,
-                    "error": "SMTP not configured"}
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "SMTP not configured",
+                "ambiguous": False,
+                "retryable": False,
+            }
 
         try:
             subject = str(
@@ -109,8 +114,19 @@ class EmailChannel(BaseChannel):
             )
             await _await_bounded_smtp(smtp_task)
             return {"success": True, "provider_id": None}
-        except (TimeoutError, socket.timeout):
-            logger.warning("Email delivery timed out with an ambiguous provider result")
+        except (
+            TimeoutError,
+            socket.timeout,
+            smtplib.SMTPServerDisconnected,
+            ConnectionResetError,
+            BrokenPipeError,
+            OSError,
+        ) as exc:
+            logger.warning(
+                "Email delivery ended with an ambiguous provider result "
+                "(error_type=%s)",
+                type(exc).__name__,
+            )
             return {
                 "success": False,
                 "provider_id": None,

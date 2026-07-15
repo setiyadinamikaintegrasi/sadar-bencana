@@ -459,7 +459,16 @@ async def _send_with_channel_timeout(
         # SMTP runs in a thread with a bounded socket timeout. Cancelling that
         # future would leave the SMTP operation running with an ambiguous result.
         return await send
-    return await asyncio.wait_for(send, timeout=timeout_seconds)
+    try:
+        return await asyncio.wait_for(send, timeout=timeout_seconds)
+    except TimeoutError:
+        return {
+            "success": False,
+            "provider_id": None,
+            "error": "delivery_timeout_ambiguous",
+            "ambiguous": True,
+            "retryable": False,
+        }
 
 
 async def process_due_deliveries(
