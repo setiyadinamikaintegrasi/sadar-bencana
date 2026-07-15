@@ -41,8 +41,8 @@ SELECT oa.id, oa.source, oa.message_type, oa.status, oa.sent_at, oa.peril_type, 
        oa.category, oa.headline, oa.description, oa.area_name,
        oa.effective_at, oa.expires_at, oa.source_url, oa.area_geojson,
        oa.latitude, oa.longitude,
-       array_to_json(array_agg(DISTINCT z.id::text)),
-       array_to_json(array_agg(DISTINCT z.label)),
+       array_to_json(array_agg(z.id::text ORDER BY z.created_at, z.id)),
+       array_to_json(array_agg(z.label ORDER BY z.created_at, z.id)),
        guidance.content, guidance.source_url
 FROM official_alerts oa
 JOIN ews_watch_zones z
@@ -50,13 +50,18 @@ JOIN ews_watch_zones z
  AND z.is_active = TRUE
  AND (cardinality(z.peril_types) = 0 OR oa.peril_type = ANY(z.peril_types))
  AND (
-   (oa.area_geojson IS NOT NULL AND ST_Intersects(
-     ST_SetSRID(ST_GeomFromGeoJSON(oa.area_geojson::text), 4326)::geography,
-     ST_Buffer(
-       ST_SetSRID(ST_MakePoint(z.longitude, z.latitude), 4326)::geography,
-       z.radius_km * 1000
+   CASE
+     WHEN oa.area_geojson IS NOT NULL AND ST_IsValid(
+       ST_SetSRID(ST_GeomFromGeoJSON(oa.area_geojson::text), 4326)
+     ) THEN ST_Intersects(
+       ST_SetSRID(ST_GeomFromGeoJSON(oa.area_geojson::text), 4326)::geography,
+       ST_Buffer(
+         ST_SetSRID(ST_MakePoint(z.longitude, z.latitude), 4326)::geography,
+         z.radius_km * 1000
+       )
      )
-   ))
+     ELSE FALSE
+   END
    OR
    (oa.latitude IS NOT NULL AND oa.longitude IS NOT NULL AND ST_DWithin(
      ST_SetSRID(ST_MakePoint(oa.longitude, oa.latitude), 4326)::geography,
@@ -70,6 +75,8 @@ LEFT JOIN ews_safety_guidance guidance
  AND guidance.is_active = TRUE
 WHERE oa.is_current = TRUE
   AND oa.status = 'active'
+  AND oa.peril_type IS NOT NULL
+  AND oa.severity IS NOT NULL
   AND (oa.effective_at IS NULL OR oa.effective_at <= now())
   AND (oa.expires_at IS NULL OR oa.expires_at > now())
 GROUP BY oa.id, guidance.content, guidance.source_url

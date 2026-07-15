@@ -5,11 +5,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
+)
+
+var activeWarningsQueryPattern = regexp.QuoteMeta(
+	"array_to_json(array_agg(z.id::text ORDER BY z.created_at, z.id)),",
+) + `\s+` + regexp.QuoteMeta(
+	"array_to_json(array_agg(z.label ORDER BY z.created_at, z.id)),",
+) + `(?s).*` + regexp.QuoteMeta(
+	"JOIN ews_watch_zones z ON z.subscriber_id = $1",
+) + `(?s).*` + regexp.QuoteMeta(
+	"CASE WHEN oa.area_geojson IS NOT NULL AND ST_IsValid(",
+) + `(?s).*` + regexp.QuoteMeta(
+	"ELSE FALSE END",
+) + `(?s).*` + regexp.QuoteMeta(
+	"WHERE oa.is_current = TRUE AND oa.status = 'active'",
+) + `(?s).*` + regexp.QuoteMeta(
+	"AND oa.peril_type IS NOT NULL AND oa.severity IS NOT NULL",
+)
+
+var notificationHistoryQueryPattern = regexp.QuoteMeta(
+	"FROM ews_notification_log l LEFT JOIN official_alerts oa ON oa.id = l.official_alert_id",
+) + `\s+` + regexp.QuoteMeta(
+	"LEFT JOIN ews_watch_zones z ON z.id = l.matched_watch_zone_id WHERE l.subscriber_id = $1",
+) + `\s+` + regexp.QuoteMeta(
+	"ORDER BY l.created_at DESC LIMIT $2",
 )
 
 func TestEWSMeActiveWarningsIsScopedToAuthenticatedSubscriber(t *testing.T) {
@@ -38,7 +63,7 @@ func TestEWSMeActiveWarningsIsScopedToAuthenticatedSubscriber(t *testing.T) {
 		[]byte(`{"before":[],"during":["Hindari area terbuka."],"after":[]}`),
 		"https://www.bmkg.go.id/cuaca/peringatan-dini-cuaca",
 	)
-	mock.ExpectQuery("FROM official_alerts oa").
+	mock.ExpectQuery(activeWarningsQueryPattern).
 		WithArgs("subscriber-1", 100).
 		WillReturnRows(rows)
 
@@ -90,11 +115,11 @@ func TestEWSMeActiveWarningsPreservesNullableFieldsAndRequestLimit(t *testing.T)
 		"area_geojson", "latitude", "longitude",
 		"matched_watch_zone_ids", "matched_watch_zone_labels", "guidance", "guidance_source",
 	}).AddRow(
-		"alert-2", "bmkg_cap", "alert", "active", time.Now(), "air_quality", "Medium", nil, nil,
+		"alert-2", "bmkg_cap", "alert", "active", time.Now(), "air_quality", "Moderate", nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil,
 		[]byte(`[]`), []byte(`[]`), nil, nil,
 	)
-	mock.ExpectQuery("FROM official_alerts oa").
+	mock.ExpectQuery(activeWarningsQueryPattern).
 		WithArgs("subscriber-2", 25).
 		WillReturnRows(rows)
 
@@ -161,7 +186,7 @@ func TestEWSMeNotificationsIncludesLifecycleMetadata(t *testing.T) {
 		"created_at", "headline", "peril_type", "lifecycle_action", "matched_watch_zone_label",
 	}).AddRow("notification-1", nil, "email", "sent", nil, now, now,
 		"Peringatan Dini Cuaca", "weather", "update", "Rumah")
-	mock.ExpectQuery("FROM ews_notification_log l").
+	mock.ExpectQuery(notificationHistoryQueryPattern).
 		WithArgs("subscriber-1", 100).
 		WillReturnRows(rows)
 
@@ -208,7 +233,7 @@ func TestEWSMeNotificationsReturnsNullableLifecycleMetadata(t *testing.T) {
 		"created_at", "headline", "peril_type", "lifecycle_action", "matched_watch_zone_label",
 	}).AddRow("notification-2", nil, "telegram", "failed", "unreachable", nil, now,
 		nil, nil, nil, nil)
-	mock.ExpectQuery("FROM ews_notification_log l").
+	mock.ExpectQuery(notificationHistoryQueryPattern).
 		WithArgs("subscriber-3", 100).
 		WillReturnRows(rows)
 
