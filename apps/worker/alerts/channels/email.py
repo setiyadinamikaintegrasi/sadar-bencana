@@ -51,7 +51,7 @@ class EmailChannel(BaseChannel):
         self, recipient: str, message: str, **kwargs: Any
     ) -> dict[str, Any]:
         host = os.getenv("SMTP_HOST")
-        port = int(os.getenv("SMTP_PORT", "587"))
+        port_value = os.getenv("SMTP_PORT", "587")
         user = os.getenv("SMTP_USER")
         password = os.getenv("SMTP_PASSWORD")
         from_addr = os.getenv("SMTP_FROM", "ews@example.com")
@@ -61,6 +61,19 @@ class EmailChannel(BaseChannel):
                 "success": False,
                 "provider_id": None,
                 "error": "SMTP not configured",
+                "ambiguous": False,
+                "retryable": False,
+            }
+
+        try:
+            port = int(port_value)
+            if not 1 <= port <= 65535:
+                raise ValueError("SMTP port is out of range")
+        except ValueError:
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "SMTP port is invalid",
                 "ambiguous": False,
                 "retryable": False,
             }

@@ -78,6 +78,30 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_invalid_smtp_port_is_definite_and_not_retryable(self):
+        channel = EmailChannel()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "not-a-number",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+        }
+
+        with patch.dict("os.environ", environment, clear=True):
+            result = await channel.send("recipient@example.com", "Test")
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "provider_id": None,
+                "error": "SMTP port is invalid",
+                "ambiguous": False,
+                "retryable": False,
+            },
+        )
+
     async def test_send_builds_plain_and_html_alternatives(self):
         channel = EmailChannel()
         environment = {
