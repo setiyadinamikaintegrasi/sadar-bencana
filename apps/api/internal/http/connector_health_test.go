@@ -20,6 +20,9 @@ func TestConnectorHealthIncludesBMKGAirQualityExpectedIntervalThreshold(t *testi
 		WillReturnRows(sqlmock.NewRows([]string{
 			"name", "last_polled_at", "items_fetched", "error_message", "updated_at",
 		}))
+	mock.ExpectQuery("SELECT source_name, expected_interval_seconds").
+		WillReturnRows(sqlmock.NewRows([]string{"source_name", "expected_interval_seconds"}).
+			AddRow("bmkg_air_quality", 1800))
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -39,7 +42,7 @@ func TestConnectorHealthIncludesBMKGAirQualityExpectedIntervalThreshold(t *testi
 	}
 	for _, connector := range response.Data {
 		if connector.Name == "bmkg_air_quality" {
-			if connector.ThresholdSeconds != 7200 || connector.Status != "stale" {
+			if connector.ThresholdSeconds != 3600 || connector.Status != "stale" {
 				t.Fatalf("unexpected BMKG air-quality health: %#v", connector)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {

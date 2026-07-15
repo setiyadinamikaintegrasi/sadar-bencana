@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -32,6 +32,8 @@ def cap_xml(
     identifier: str = "BMKG-001",
     message_type: str = "Alert",
     references: str = "",
+    status: str = "Actual",
+    scope: str = "Public",
 ) -> str:
     reference_element = (
         f"<references>{references}</references>" if references else ""
@@ -41,8 +43,9 @@ def cap_xml(
   <identifier>{identifier}</identifier>
   <sender>nowcast@bmkg.go.id</sender>
   <sent>2026-06-30T10:00:00+07:00</sent>
-  <status>Actual</status>
+  <status>{status}</status>
   <msgType>{message_type}</msgType>
+  <scope>{scope}</scope>
   {reference_element}
   <info>
     <language>en-US</language>
@@ -311,6 +314,23 @@ class BMKGCAPParserTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "include a timezone"):
             parse_bmkg_cap(cap_xml().replace("+07:00</sent>", "</sent>"))
 
+    def test_rejects_non_production_status_and_scope(self) -> None:
+        for status in ("Test", "Exercise", "Draft"):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(ValueError, "status must be Actual"):
+                    parse_bmkg_cap(cap_xml(status=status))
+
+        for scope in ("Restricted", "Private"):
+            with self.subTest(scope=scope):
+                with self.assertRaisesRegex(ValueError, "scope must be Public"):
+                    parse_bmkg_cap(cap_xml(scope=scope))
+
+    def test_rejects_missing_status_or_scope(self) -> None:
+        with self.assertRaisesRegex(ValueError, "status must be Actual"):
+            parse_bmkg_cap(cap_xml().replace("<status>Actual</status>", ""))
+        with self.assertRaisesRegex(ValueError, "scope must be Public"):
+            parse_bmkg_cap(cap_xml().replace("<scope>Public</scope>", ""))
+
     def test_area_name_deduplicates_in_first_seen_order(self) -> None:
         alert = parse_bmkg_cap(
             cap_xml().replace(
@@ -358,16 +378,15 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
         final_detail_url = "https://alerts.bmkg.go.id/cap/alert-1.xml"
 
         def handler(request: httpx.Request) -> httpx.Response:
-            if str(request.url) == BMKG_CAP_RSS_URL:
+            host = request.headers["Host"]
+            if host == "www.bmkg.go.id" and request.url.path == "/alerts/nowcast/id":
                 return httpx.Response(302, headers={"location": final_rss_url})
-            if str(request.url) == final_rss_url:
+            if host == "alerts.bmkg.go.id" and request.url.path == "/alerts/nowcast/id":
                 return httpx.Response(200, text=RSS_XML)
             if request.url.path.endswith("alert-1.xml"):
-                if str(request.url) == final_detail_url:
+                if host == "alerts.bmkg.go.id":
                     return httpx.Response(200, text=cap_xml())
                 return httpx.Response(302, headers={"location": final_detail_url})
-            if request.url.host == "evil.example":
-                return httpx.Response(200, text="<not-alert />")
             return httpx.Response(
                 302,
                 headers={"location": "https://evil.example/cap/stolen.xml"},
@@ -376,7 +395,11 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         connector = BMKGCAPConnector(http_client=client)
         try:
-            alerts, errors = await connector.fetch_active()
+            with patch(
+                "connectors.bmkg_cap.resolve_public_ips",
+                return_value=("8.8.8.8",),
+            ):
+                alerts, errors = await connector.fetch_active()
         finally:
             await connector.close()
             await client.aclose()
@@ -391,22 +414,27 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
         external_rss_url = "https://evil.example/alerts/nowcast/id"
 
         def handler(request: httpx.Request) -> httpx.Response:
-            if str(request.url) == BMKG_CAP_RSS_URL:
+            if request.headers["Host"] == "www.bmkg.go.id":
                 return httpx.Response(302, headers={"location": external_rss_url})
             return httpx.Response(200, text=RSS_XML)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         connector = BMKGCAPConnector(http_client=client)
         try:
-            with self.assertRaisesRegex(ValueError, "BMKG HTTPS"):
-                await connector.fetch_active()
+            with patch(
+                "connectors.bmkg_cap.resolve_public_ips",
+                return_value=("8.8.8.8",),
+            ) as resolver:
+                with self.assertRaisesRegex(ValueError, "BMKG HTTPS"):
+                    await connector.fetch_active()
+            resolver.assert_called_once_with("www.bmkg.go.id")
         finally:
             await connector.close()
             await client.aclose()
 
     async def test_partial_detail_failure_keeps_successful_alerts(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            if str(request.url) == BMKG_CAP_RSS_URL:
+            if request.url.path == "/alerts/nowcast/id":
                 return httpx.Response(200, text=RSS_XML)
             if request.url.path.endswith("alert-1.xml"):
                 return httpx.Response(200, text=cap_xml())
@@ -415,7 +443,11 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         connector = BMKGCAPConnector(http_client=client)
         try:
-            alerts, errors = await connector.fetch_active()
+            with patch(
+                "connectors.bmkg_cap.resolve_public_ips",
+                return_value=("8.8.8.8",),
+            ):
+                alerts, errors = await connector.fetch_active()
         finally:
             await connector.close()
             await client.aclose()
@@ -430,3 +462,126 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
             alerts[0].source_url,
             "https://www.bmkg.go.id/cap/alert-1.xml",
         )
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_unsafe_initial_dns_before_request(monkeypatch):
+    requests = []
+
+    def reject(_hostname):
+        raise ValueError("Hostname www.bmkg.go.id resolves to blocked IP 127.0.0.1")
+
+    monkeypatch.setattr("connectors.bmkg_cap.resolve_public_ips", reject)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: requests.append(request))
+    )
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        with pytest.raises(ValueError, match="blocked IP"):
+            await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_connector_validates_unapproved_redirect_before_dns_or_request(monkeypatch):
+    resolved_hosts = []
+    requests = []
+
+    def resolve(hostname):
+        resolved_hosts.append(hostname)
+        return ("8.8.8.8",)
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            302,
+            headers={"Location": "https://evil.example/cap.xml"},
+            request=request,
+        )
+
+    monkeypatch.setattr("connectors.bmkg_cap.resolve_public_ips", resolve)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        with pytest.raises(ValueError, match="BMKG HTTPS"):
+            await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert resolved_hosts == ["www.bmkg.go.id"]
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_private_redirect_dns_before_second_request(monkeypatch):
+    requests = []
+
+    def resolve(hostname):
+        if hostname == "private.bmkg.go.id":
+            raise ValueError(
+                "Hostname private.bmkg.go.id resolves to blocked IP 10.0.0.7"
+            )
+        return ("8.8.8.8",)
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            302,
+            headers={"Location": "https://private.bmkg.go.id/nowcast"},
+            request=request,
+        )
+
+    monkeypatch.setattr("connectors.bmkg_cap.resolve_public_ips", resolve)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        with pytest.raises(ValueError, match="blocked IP"):
+            await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_connector_pins_each_approved_redirect_hop(monkeypatch):
+    requests = []
+    resolved = {
+        "www.bmkg.go.id": ("8.8.8.8",),
+        "alerts.bmkg.go.id": ("1.1.1.1",),
+    }
+
+    def handler(request):
+        requests.append(request)
+        if request.headers["Host"] == "www.bmkg.go.id":
+            return httpx.Response(
+                302,
+                headers={"Location": "https://alerts.bmkg.go.id/nowcast"},
+                request=request,
+            )
+        return httpx.Response(200, text="<rss><channel /></rss>", request=request)
+
+    monkeypatch.setattr(
+        "connectors.bmkg_cap.resolve_public_ips", lambda host: resolved[host]
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        alerts, errors = await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert alerts == []
+    assert errors == []
+    assert [request.url.host for request in requests] == ["8.8.8.8", "1.1.1.1"]
+    assert [request.headers["Host"] for request in requests] == [
+        "www.bmkg.go.id",
+        "alerts.bmkg.go.id",
+    ]
+    assert [request.extensions["sni_hostname"] for request in requests] == [
+        "www.bmkg.go.id",
+        "alerts.bmkg.go.id",
+    ]

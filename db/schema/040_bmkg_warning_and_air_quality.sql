@@ -140,4 +140,28 @@ INSERT INTO official_source_settings (
   'Aktifkan hanya setelah endpoint machine-readable resmi dan izin integrasi dikonfirmasi.'
 ) ON CONFLICT (source_name) DO NOTHING;
 
+INSERT INTO official_source_setting_versions (
+  source_name, version, configuration, api_token_encrypted, changed_by, change_reason
+)
+SELECT
+  source_name,
+  config_version,
+  jsonb_build_object(
+    'enabled', enabled,
+    'run_mode', run_mode,
+    'mode', mode,
+    'adapter_version', adapter_version,
+    'field_mapping', field_mapping,
+    'custom_api_url', custom_api_url,
+    'poll_interval_seconds', poll_interval_seconds,
+    'expected_interval_seconds', expected_interval_seconds
+  ),
+  api_token_encrypted,
+  'migration',
+  'Initial BMKG air-quality disabled baseline'
+FROM official_source_settings
+WHERE source_name = 'bmkg_air_quality'
+  AND config_version = 1
+ON CONFLICT (source_name, version) DO NOTHING;
+
 COMMIT;

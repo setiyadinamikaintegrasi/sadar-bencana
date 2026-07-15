@@ -102,6 +102,7 @@ async def upsert_official_alert(
     alert: OfficialAlertInput,
     *,
     now: datetime | None = None,
+    connection: asyncpg.Connection | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Insert one immutable revision, returning ``(row, created)``.
 
@@ -112,73 +113,77 @@ async def upsert_official_alert(
     checksum = payload_checksum(alert.raw_payload)
     lock_key = f"{alert.source}:{alert.source_alert_id}"
 
+    async def execute(conn: asyncpg.Connection) -> tuple[dict[str, Any], bool]:
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            lock_key,
+        )
+
+        duplicate = await conn.fetchrow(
+            _FIND_PAYLOAD_SQL,
+            alert.source,
+            alert.source_alert_id,
+            checksum,
+        )
+        if duplicate is not None:
+            return dict(duplicate), False
+
+        previous = await conn.fetchrow(
+            _FIND_CURRENT_SQL,
+            alert.source,
+            alert.source_alert_id,
+        )
+        revision = int(
+            await conn.fetchval(
+                _NEXT_REVISION_SQL,
+                alert.source,
+                alert.source_alert_id,
+            )
+        )
+        previous_id = None
+        is_current = True
+        if previous is not None:
+            previous_id = previous["id"]
+            is_current = alert.sent_at > previous["sent_at"]
+            if is_current:
+                await conn.execute(_SUPERSEDE_SQL, previous_id)
+
+        status = _current_status(alert, current_time)
+        if not is_current and status == "active":
+            status = "updated"
+
+        row = await conn.fetchrow(
+            _INSERT_SQL,
+            alert.source,
+            alert.source_alert_id,
+            revision,
+            alert.message_type,
+            status,
+            alert.sent_at,
+            alert.effective_at,
+            alert.expires_at,
+            alert.headline,
+            alert.description,
+            _json_value(alert.area_geojson),
+            _json_value(alert.raw_payload),
+            checksum,
+            previous_id,
+            is_current,
+            alert.peril_type,
+            alert.severity,
+            alert.category,
+            alert.area_name,
+            alert.latitude,
+            alert.longitude,
+            alert.source_url,
+        )
+        return (dict(row), True) if row is not None else ({}, False)
+
+    if connection is not None:
+        return await execute(connection)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                lock_key,
-            )
-
-            duplicate = await conn.fetchrow(
-                _FIND_PAYLOAD_SQL,
-                alert.source,
-                alert.source_alert_id,
-                checksum,
-            )
-            if duplicate is not None:
-                return dict(duplicate), False
-
-            previous = await conn.fetchrow(
-                _FIND_CURRENT_SQL,
-                alert.source,
-                alert.source_alert_id,
-            )
-            revision = int(
-                await conn.fetchval(
-                    _NEXT_REVISION_SQL,
-                    alert.source,
-                    alert.source_alert_id,
-                )
-            )
-            previous_id = None
-            is_current = True
-            if previous is not None:
-                previous_id = previous["id"]
-                is_current = alert.sent_at > previous["sent_at"]
-                if is_current:
-                    await conn.execute(_SUPERSEDE_SQL, previous_id)
-
-            status = _current_status(alert, current_time)
-            if not is_current and status == "active":
-                status = "updated"
-
-            row = await conn.fetchrow(
-                _INSERT_SQL,
-                alert.source,
-                alert.source_alert_id,
-                revision,
-                alert.message_type,
-                status,
-                alert.sent_at,
-                alert.effective_at,
-                alert.expires_at,
-                alert.headline,
-                alert.description,
-                _json_value(alert.area_geojson),
-                _json_value(alert.raw_payload),
-                checksum,
-                previous_id,
-                is_current,
-                alert.peril_type,
-                alert.severity,
-                alert.category,
-                alert.area_name,
-                alert.latitude,
-                alert.longitude,
-                alert.source_url,
-            )
-
-    return (dict(row), True) if row is not None else ({}, False)
+            return await execute(conn)
 
 
 async def expire_official_alerts(
@@ -197,11 +202,15 @@ async def expire_official_alert_revisions(
     pool: asyncpg.Pool,
     *,
     now: datetime | None = None,
+    connection: asyncpg.Connection | None = None,
 ) -> list[dict[str, Any]]:
     """Expire due current revisions and return their lifecycle payloads."""
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(_EXPIRE_SQL, current_time)
+    if connection is not None:
+        rows = await connection.fetch(_EXPIRE_SQL, current_time)
+    else:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_EXPIRE_SQL, current_time)
     return [dict(row) for row in rows]
 
 

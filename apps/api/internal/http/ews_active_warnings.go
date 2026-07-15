@@ -45,6 +45,8 @@ SELECT oa.id, oa.source, oa.message_type, oa.status, oa.sent_at, oa.peril_type, 
        array_to_json(array_agg(z.label ORDER BY z.created_at, z.id)),
        guidance.content, guidance.source_url
 FROM official_alerts oa
+JOIN official_source_settings s
+  ON s.source_name = oa.source
 JOIN ews_watch_zones z
   ON z.subscriber_id = $1
  AND z.is_active = TRUE
@@ -76,6 +78,7 @@ LEFT JOIN ews_safety_guidance guidance
 WHERE oa.is_current = TRUE
   AND oa.status = 'active'
   AND oa.source IN ('bmkg_cap', 'bmkg_air_quality')
+  AND s.enabled = TRUE AND s.run_mode = 'active'
   AND oa.peril_type IS NOT NULL
   AND oa.severity IS NOT NULL
   AND (oa.effective_at IS NULL OR oa.effective_at <= now())

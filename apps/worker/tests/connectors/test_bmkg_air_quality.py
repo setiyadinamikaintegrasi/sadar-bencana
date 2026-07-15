@@ -58,6 +58,10 @@ def _setting(**overrides):
         "api_url": "https://iklim.bmkg.go.id/api/air-quality",
         "run_mode": "active",
         "field_mapping": {},
+        "api_token": None,
+        "config_version": 7,
+        "poll_interval_seconds": 3600,
+        "last_polled_at": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -87,7 +91,13 @@ def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
         "upsert_air_quality_observation": AsyncMock(return_value=({"id": "observation-1"}, True)),
         "delete_old_air_quality_observations": AsyncMock(return_value="DELETE 0"),
         "upsert_connector_health": AsyncMock(),
+        "record_worker_shadow_evidence": AsyncMock(),
+        "_official_alert_topology_errors": AsyncMock(return_value=[]),
         "enqueue_official_alert_revision": AsyncMock(),
+        "persist_official_alert_revision": AsyncMock(
+            return_value=({"id": "alert-1", "revision": 1}, True, True)
+        ),
+        "_persist_air_quality_observation": AsyncMock(return_value=True),
     }
     for name, value in dependencies.items():
         monkeypatch.setattr(worker_main, name, value, raising=False)
@@ -137,20 +147,19 @@ async def test_active_cycle_persists_both_collections_but_only_enqueues_warning(
     assert result == {"warnings": 1, "observations": 1}
     dependencies["BMKGAirQualityConnector"].assert_called_once_with(
         "https://iklim.bmkg.go.id/api/air-quality",
+        api_token=None,
     )
-    source_record = dependencies["create_source_record"].await_args.args[1]
+    persist_call = dependencies["persist_official_alert_revision"].await_args
+    source_record = persist_call.kwargs["source_record"]
     assert source_record.source_name == "bmkg_air_quality"
     assert source_record.source_record_id == "aq-jabar-20260715"
     assert source_record.attribution == (
         "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)"
     )
-    dependencies["upsert_official_alert"].assert_awaited_once()
-    observation = dependencies["upsert_air_quality_observation"].await_args.args[1]
+    assert persist_call.kwargs["expected_config_version"] == 7
+    assert persist_call.kwargs["delivery_enabled"] is True
+    observation = dependencies["_persist_air_quality_observation"].await_args.args[1]
     assert observation.station_id == "kmy3"
-    dependencies["enqueue_official_alert_revision"].assert_awaited_once_with(
-        pool,
-        {"id": "alert-1", "revision": 1},
-    )
     dependencies["delete_old_air_quality_observations"].assert_awaited_once()
     dependencies["upsert_connector_health"].assert_awaited_once_with(
         pool,
@@ -162,6 +171,40 @@ async def test_active_cycle_persists_both_collections_but_only_enqueues_warning(
 
 
 @pytest.mark.asyncio
+async def test_scheduled_cycle_passes_decrypted_api_token(monkeypatch):
+    connector = _PayloadConnector(deepcopy(PAYLOAD))
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(api_token="decrypted-secret", run_mode="dry_run"),
+        connector=connector,
+    )
+
+    await worker_main._bmkg_air_quality_cycle(object())
+
+    dependencies["BMKGAirQualityConnector"].assert_called_once_with(
+        "https://iklim.bmkg.go.id/api/air-quality",
+        api_token="decrypted-secret",
+    )
+
+
+@pytest.mark.asyncio
+async def test_scheduled_cycle_skips_fetch_until_poll_interval_is_due(monkeypatch):
+    now = worker_main.datetime.now(worker_main.timezone.utc)
+    connector = _PayloadConnector(deepcopy(PAYLOAD))
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(last_polled_at=now, poll_interval_seconds=3600),
+        connector=connector,
+    )
+
+    result = await worker_main._bmkg_air_quality_cycle(object(), now=now)
+
+    assert result == {"warnings": 0, "observations": 0}
+    dependencies["BMKGAirQualityConnector"].assert_not_called()
+    dependencies["upsert_connector_health"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_existing_warning_does_not_enqueue_a_duplicate_revision(monkeypatch):
     monkeypatch.setenv("EWS_LIFECYCLE_DELIVERY_ENABLED", "true")
     connector = _PayloadConnector(deepcopy(PAYLOAD))
@@ -170,16 +213,56 @@ async def test_existing_warning_does_not_enqueue_a_duplicate_revision(monkeypatc
         setting=_setting(),
         connector=connector,
     )
-    dependencies["upsert_official_alert"].return_value = (
-        {"id": "alert-1", "revision": 1},
-        False,
+    dependencies["persist_official_alert_revision"].return_value = (
+        {"id": "alert-1", "revision": 1}, False, True,
     )
     pool = object()
 
     result = await worker_main._bmkg_air_quality_cycle(pool)
 
     assert result == {"warnings": 0, "observations": 1}
-    dependencies["enqueue_official_alert_revision"].assert_not_awaited()
+    dependencies["persist_official_alert_revision"].assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_config_change_during_fetch_aborts_old_cycle_writes(monkeypatch):
+    connector = _PayloadConnector(deepcopy(PAYLOAD))
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(config_version=7),
+        connector=connector,
+    )
+    dependencies["persist_official_alert_revision"].return_value = ({}, False, False)
+
+    result = await worker_main._bmkg_air_quality_cycle(object())
+
+    assert result == {"warnings": 0, "observations": 0}
+    dependencies["_persist_air_quality_observation"].assert_not_awaited()
+    dependencies["delete_old_air_quality_observations"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bad_warning_persistence_does_not_abort_valid_sibling(monkeypatch):
+    payload = deepcopy(PAYLOAD)
+    second = deepcopy(payload["warnings"][0])
+    second["source_alert_id"] = "aq-jabar-valid-second"
+    payload["warnings"].insert(0, second)
+    connector = _PayloadConnector(payload)
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(),
+        connector=connector,
+    )
+    dependencies["persist_official_alert_revision"].side_effect = [
+        ValueError("invalid geometry"),
+        ({"id": "alert-2", "revision": 1}, True, True),
+    ]
+
+    result = await worker_main._bmkg_air_quality_cycle(object())
+
+    assert result == {"warnings": 1, "observations": 1}
+    assert dependencies["persist_official_alert_revision"].await_count == 2
+    dependencies["_persist_air_quality_observation"].assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -201,15 +284,43 @@ async def test_dry_run_updates_health_without_persisting_or_retaining(monkeypatc
         2,
         None,
     )
+    dependencies["record_worker_shadow_evidence"].assert_awaited_once_with(
+        pool,
+        dependencies["resolve_source_setting"].return_value,
+        success=True,
+        item_count=2,
+        errors=[],
+    )
     for name in (
         "create_source_record",
         "upsert_official_alert",
         "upsert_air_quality_observation",
         "delete_old_air_quality_observations",
         "enqueue_official_alert_revision",
+        "persist_official_alert_revision",
+        "_persist_air_quality_observation",
     ):
         dependencies[name].assert_not_awaited()
     assert connector.closed
+
+
+@pytest.mark.asyncio
+async def test_worker_shadow_fails_evidence_when_postgis_rejects_topology(monkeypatch):
+    connector = _PayloadConnector(deepcopy(PAYLOAD))
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(run_mode="dry_run"),
+        connector=connector,
+    )
+    dependencies["_official_alert_topology_errors"].return_value = [
+        "warning aq-jabar-20260715: area_geojson topology is invalid"
+    ]
+
+    await worker_main._bmkg_air_quality_cycle(object())
+
+    audit = dependencies["record_worker_shadow_evidence"].await_args
+    assert audit.kwargs["success"] is False
+    assert "topology is invalid" in audit.kwargs["errors"][0]
 
 
 @pytest.mark.asyncio
@@ -260,8 +371,8 @@ async def test_cycle_fetch_failure_updates_health_and_closes_connector(monkeypat
         0,
         "upstream unavailable",
     )
-    dependencies["upsert_official_alert"].assert_not_awaited()
-    dependencies["upsert_air_quality_observation"].assert_not_awaited()
+    dependencies["persist_official_alert_revision"].assert_not_awaited()
+    dependencies["_persist_air_quality_observation"].assert_not_awaited()
     assert connector.closed
 
 
@@ -289,8 +400,8 @@ async def test_cycle_connector_construction_failure_is_bounded_and_updates_healt
         0,
         "Hostname resolves to blocked IP 127.0.0.1",
     )
-    dependencies["upsert_official_alert"].assert_not_awaited()
-    dependencies["upsert_air_quality_observation"].assert_not_awaited()
+    dependencies["persist_official_alert_revision"].assert_not_awaited()
+    dependencies["_persist_air_quality_observation"].assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -311,9 +422,8 @@ async def test_observation_only_active_cycle_never_enqueues_official_alert_revis
     result = await worker_main._bmkg_air_quality_cycle(pool)
 
     assert result == {"warnings": 0, "observations": 1}
-    dependencies["upsert_air_quality_observation"].assert_awaited_once()
-    dependencies["upsert_official_alert"].assert_not_awaited()
-    dependencies["enqueue_official_alert_revision"].assert_not_awaited()
+    dependencies["_persist_air_quality_observation"].assert_awaited_once()
+    dependencies["persist_official_alert_revision"].assert_not_awaited()
 
 
 def test_parser_separates_official_warning_and_observation():
@@ -323,6 +433,30 @@ def test_parser_separates_official_warning_and_observation():
     assert warnings[0].peril_type == "air_quality"
     assert warnings[0].severity == "Moderate"
     assert observations[0].station_id == "kmy3"
+
+
+@pytest.mark.asyncio
+async def test_connector_sends_bearer_token_to_pinned_endpoint(monkeypatch):
+    client = AsyncMock(spec=httpx.AsyncClient)
+    request = object()
+    response = MagicMock()
+    response.json.return_value = {"warnings": [], "observations": []}
+    client.build_request.return_value = request
+    client.send.return_value = response
+    monkeypatch.setattr(
+        "connectors.bmkg_air_quality.resolve_public_ips",
+        lambda _host: ["203.0.113.10"],
+    )
+    connector = BMKGAirQualityConnector(
+        "https://iklim.bmkg.go.id/api/air-quality",
+        client=client,
+        api_token="decrypted-secret",
+    )
+
+    await connector.fetch_payload()
+
+    headers = client.build_request.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer decrypted-secret"
 
 
 def test_baik_is_observation_but_not_warning():

@@ -111,10 +111,48 @@ func ConnectorHealthHandler(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
+		const sourceIntervalsQuery = `
+			SELECT source_name, expected_interval_seconds
+			FROM official_source_settings
+		`
+		intervalRows, err := db.QueryContext(c.Request.Context(), sourceIntervalsQuery)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "database_query_failed",
+				"message": err.Error(),
+			})
+			return
+		}
+		defer intervalRows.Close()
+
+		dynamicThresholds := make(map[string]int)
+		for intervalRows.Next() {
+			var name string
+			var expectedInterval int
+			if err := intervalRows.Scan(&name, &expectedInterval); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "row_scan_failed",
+					"message": err.Error(),
+				})
+				return
+			}
+			dynamicThresholds[name] = 2 * expectedInterval
+		}
+		if err := intervalRows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "rows_iteration_failed",
+				"message": err.Error(),
+			})
+			return
+		}
+
 		now := time.Now().UTC()
 		result := make([]ConnectorHealth, 0, len(connectorThresholds))
 
 		for name, threshold := range connectorThresholds {
+			if configuredThreshold, ok := dynamicThresholds[name]; ok {
+				threshold = configuredThreshold
+			}
 			ch := ConnectorHealth{
 				Name:             name,
 				ThresholdSeconds: threshold,

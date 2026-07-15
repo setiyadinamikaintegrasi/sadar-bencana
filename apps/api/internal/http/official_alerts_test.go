@@ -4,12 +4,26 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 )
+
+func TestOfficialAlertsQueryHidesInactiveSourceAndFutureActiveWarnings(t *testing.T) {
+	for _, clause := range []string{
+		"s.source_name = official_alerts.source",
+		"s.enabled = TRUE",
+		"s.run_mode = 'active'",
+		"effective_at IS NULL OR effective_at <= now()",
+	} {
+		if !strings.Contains(officialAlertsQuery, clause) {
+			t.Fatalf("official alerts query missing active-warning guard %q", clause)
+		}
+	}
+}
 
 func TestOfficialAlertLimit(t *testing.T) {
 	tests := []struct {

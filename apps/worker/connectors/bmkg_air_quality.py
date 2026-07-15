@@ -203,11 +203,13 @@ class BMKGAirQualityConnector:
         self,
         url: str,
         client: httpx.AsyncClient | None = None,
+        api_token: str | None = None,
     ) -> None:
         validate_bmkg_air_quality_url(url)
         self.url = url
         self.client = client
         self.owns_client = client is None
+        self.api_token = api_token
 
     async def fetch_payload(self) -> dict[str, Any]:
         parsed = urlparse(self.url)
@@ -227,10 +229,13 @@ class BMKGAirQualityConnector:
                 follow_redirects=False,
                 headers={"User-Agent": USER_AGENT},
             )
+        headers = {"Host": host_header}
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
         request = self.client.build_request(
             "GET",
             pinned_url,
-            headers={"Host": host_header},
+            headers=headers,
             extensions={"sni_hostname": hostname},
         )
         response = await self.client.send(request, follow_redirects=False)

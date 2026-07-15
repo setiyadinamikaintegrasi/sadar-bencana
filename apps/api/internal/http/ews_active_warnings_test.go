@@ -28,6 +28,8 @@ var activeWarningsQueryPattern = regexp.QuoteMeta(
 ) + `(?s).*` + regexp.QuoteMeta(
 	"AND oa.source IN ('bmkg_cap', 'bmkg_air_quality')",
 ) + `(?s).*` + regexp.QuoteMeta(
+	"AND s.enabled = TRUE AND s.run_mode = 'active'",
+) + `(?s).*` + regexp.QuoteMeta(
 	"AND oa.peril_type IS NOT NULL AND oa.severity IS NOT NULL",
 )
 

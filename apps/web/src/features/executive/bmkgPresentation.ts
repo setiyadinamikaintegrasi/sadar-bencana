@@ -88,6 +88,8 @@ export function filterActiveOfficialAlerts(
 ): OfficialAlert[] {
   return items.filter((alert) => {
     if (alert.status !== 'active') return false
+    const effectiveAt = optionalTimestamp(alert.effective_at)
+    if (effectiveAt != null && effectiveAt > now) return false
     const expiresAt = optionalTimestamp(alert.expires_at)
     return expiresAt == null || expiresAt > now
   })

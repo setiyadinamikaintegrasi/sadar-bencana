@@ -148,6 +148,7 @@ CREATE TABLE ews_notification_log (
     alert_revision INT,
     lifecycle_action VARCHAR(16),
     next_attempt_at TIMESTAMPTZ,
+    error_message TEXT,
     correlation_id UUID,
     delivery_kind TEXT NOT NULL,
     matched_watch_zone_id UUID REFERENCES ews_watch_zones(id),
@@ -508,6 +509,58 @@ async def test_on_conflict_deduplicates_same_revision():
             assert await conn.fetchval(
                 "SELECT count(*) FROM ews_notification_log"
             ) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_type", "status", "expected_action"),
+    [
+        ("update", "active", "update"),
+        ("cancel", "cancelled", "cancellation"),
+    ],
+)
+async def test_lifecycle_change_before_first_send_supersedes_stale_queue(
+    message_type: str,
+    status: str,
+    expected_action: str,
+):
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            initial = await insert_alert(
+                conn,
+                source_alert_id="before-first-send",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, initial) == 1
+
+        async with pool.acquire() as conn:
+            changed = await insert_alert(
+                conn,
+                source_alert_id="before-first-send",
+                revision=2,
+                message_type=message_type,
+                status=status,
+                area_geojson=TOKYO_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, changed) == 1
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT alert_revision, lifecycle_action, status
+                FROM ews_notification_log
+                ORDER BY alert_revision
+                """
+            )
+        assert [dict(row) for row in rows] == [
+            {"alert_revision": 1, "lifecycle_action": "alert", "status": "skipped"},
+            {
+                "alert_revision": 2,
+                "lifecycle_action": expected_action,
+                "status": "pending",
+            },
+        ]
 
 
 @pytest.mark.asyncio

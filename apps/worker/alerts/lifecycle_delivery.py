@@ -8,6 +8,14 @@ from typing import Any
 import asyncpg
 
 from alerts.channels import CHANNELS
+from db.official_alerts import (
+    expire_official_alert_revisions,
+    upsert_official_alert,
+)
+from db.evidence import create_source_record
+from db.source_settings import source_write_is_allowed
+from models.evidence import SourceRecordInput
+from models.official_alert import OfficialAlertInput
 from observability import disaster_correlation_id, record_observation
 
 MAX_DELIVERY_ATTEMPTS = 5
@@ -78,10 +86,21 @@ SELECT DISTINCT ON (l.subscriber_id, l.channel)
 FROM ews_notification_log l
 JOIN ews_channel_settings cs ON cs.channel = l.channel AND cs.is_enabled = TRUE
 WHERE l.source = $2::varchar(64) AND l.source_alert_id = $3::varchar(255)
-  AND l.status IN ('sent', 'acknowledged')
+  AND l.status IN ('pending', 'failed', 'sent', 'acknowledged')
 ORDER BY l.subscriber_id, l.channel, l.alert_revision DESC, l.created_at DESC
 ON CONFLICT DO NOTHING
 RETURNING id
+"""
+
+_SUPERSEDE_STALE_SQL = """
+UPDATE ews_notification_log
+SET status = 'skipped',
+    error_message = 'superseded_by_official_alert_revision',
+    next_attempt_at = NULL
+WHERE source = $1
+  AND source_alert_id = $2
+  AND alert_revision < $3
+  AND status IN ('pending', 'failed')
 """
 
 _CLAIM_DUE_SQL = """
@@ -93,6 +112,15 @@ WITH due AS (
     WHERE l.status IN ('pending', 'failed')
       AND l.next_attempt_at <= now()
       AND l.attempt_count < $1
+      AND (
+        l.delivery_kind <> 'official_lifecycle'
+        OR EXISTS (
+          SELECT 1
+          FROM official_alerts current_alert
+          WHERE current_alert.id = l.official_alert_id
+            AND current_alert.is_current = TRUE
+        )
+      )
     ORDER BY l.next_attempt_at
     LIMIT $2
     FOR UPDATE SKIP LOCKED
@@ -165,7 +193,11 @@ def lifecycle_message(row: dict[str, Any]) -> str:
 async def enqueue_official_alert_revision(
     pool: asyncpg.Pool,
     alert: dict[str, Any],
+    *,
+    connection: asyncpg.Connection | None = None,
 ) -> int:
+    if alert.get("is_current") is False:
+        return 0
     action = lifecycle_action(str(alert["message_type"]), str(alert["status"]))
     correlation_id = disaster_correlation_id(
         str(alert["source"]),
@@ -176,7 +208,7 @@ async def enqueue_official_alert_revision(
         if action in {"update", "cancellation", "expiry"}
         else _ENQUEUE_ACTIVE_SQL
     )
-    async with pool.acquire() as conn:
+    async def enqueue(conn: asyncpg.Connection) -> int:
         if action == "alert":
             rows = await conn.fetch(sql, alert["id"], action, correlation_id)
         else:
@@ -189,7 +221,89 @@ async def enqueue_official_alert_revision(
                 action,
                 correlation_id,
             )
-    return len(rows)
+        await conn.execute(
+            _SUPERSEDE_STALE_SQL,
+            alert["source"],
+            alert["source_alert_id"],
+            alert["revision"],
+        )
+        return len(rows)
+
+    if connection is not None:
+        return await enqueue(connection)
+    async with pool.acquire() as conn:
+        return await enqueue(conn)
+
+
+async def persist_official_alert_revision(
+    pool: asyncpg.Pool,
+    alert: OfficialAlertInput,
+    *,
+    source_record: SourceRecordInput | None = None,
+    source_name: str | None = None,
+    expected_config_version: int | None = None,
+    delivery_enabled: bool,
+) -> tuple[dict[str, Any], bool, bool]:
+    """Persist a revision and its queue rows atomically.
+
+    The enqueue runs for duplicate current revisions as a recovery path when
+    older code committed the alert before queueing its notification.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if source_name is not None and expected_config_version is not None:
+                allowed = await source_write_is_allowed(
+                    conn,
+                    source_name,
+                    expected_config_version,
+                )
+                if not allowed:
+                    return {}, False, False
+            if source_record is not None:
+                await create_source_record(
+                    pool,
+                    source_record,
+                    connection=conn,
+                )
+            row, created = await upsert_official_alert(
+                pool,
+                alert,
+                connection=conn,
+            )
+            if delivery_enabled and row.get("is_current", True):
+                await enqueue_official_alert_revision(
+                    pool,
+                    row,
+                    connection=conn,
+                )
+            return row, created, True
+
+
+async def expire_and_enqueue_official_alert_revisions(
+    pool: asyncpg.Pool,
+    *,
+    delivery_enabled: bool,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Expire current alerts and enqueue lifecycle delivery in one transaction."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            expired = await expire_official_alert_revisions(
+                pool,
+                now=now,
+                connection=conn,
+            ) if now is not None else await expire_official_alert_revisions(
+                pool,
+                connection=conn,
+            )
+            if delivery_enabled:
+                for revision in expired:
+                    await enqueue_official_alert_revision(
+                        pool,
+                        revision,
+                        connection=conn,
+                    )
+            return expired
 
 
 def _recipient(row: dict[str, Any]) -> str | None:
@@ -303,8 +417,10 @@ async def process_due_deliveries(
 
 __all__ = [
     "enqueue_official_alert_revision",
+    "expire_and_enqueue_official_alert_revisions",
     "lifecycle_action",
     "lifecycle_message",
     "process_due_deliveries",
+    "persist_official_alert_revision",
     "retry_delay",
 ]

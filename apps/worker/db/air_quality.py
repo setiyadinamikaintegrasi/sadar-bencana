@@ -39,9 +39,11 @@ def _json_value(value: dict[str, Any]) -> str:
 async def upsert_air_quality_observation(
     pool: asyncpg.Pool,
     observation: AirQualityObservationInput,
+    *,
+    connection: asyncpg.Connection | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Insert an observation, returning its row and whether it was created."""
-    async with pool.acquire() as conn:
+    async def execute(conn: asyncpg.Connection) -> tuple[dict[str, Any], bool]:
         row = await conn.fetchrow(
             _UPSERT_SQL,
             observation.source,
@@ -57,18 +59,26 @@ async def upsert_air_quality_observation(
             observation.source_url,
             _json_value(observation.raw_payload),
         )
-    return (dict(row), True) if row is not None else ({}, False)
+        return (dict(row), True) if row is not None else ({}, False)
+
+    if connection is not None:
+        return await execute(connection)
+    async with pool.acquire() as conn:
+        return await execute(conn)
 
 
 async def delete_old_air_quality_observations(
     pool: asyncpg.Pool,
     *,
     now: datetime | None = None,
+    connection: asyncpg.Connection | None = None,
 ) -> str:
     """Delete observations older than the database's 30-day retention period."""
     if now is not None and (now.tzinfo is None or now.utcoffset() is None):
         raise ValueError("now must include a timezone")
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if connection is not None:
+        return await connection.execute(_DELETE_OLD_SQL, current_time)
     async with pool.acquire() as conn:
         return await conn.execute(_DELETE_OLD_SQL, current_time)
 

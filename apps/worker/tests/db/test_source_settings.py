@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from db.source_settings import resolve_source_setting
+from db.source_settings import (
+    record_worker_shadow_evidence,
+    resolve_source_setting,
+    source_write_is_allowed,
+)
 
 
 def _pool(row):
@@ -52,12 +56,14 @@ async def test_dry_run_setting_loads_versioned_mapping():
         "adapter_version": "v1",
         "field_mapping": '{"report_id":"id","observed_at":"time.observed"}',
         "config_version": 3,
+        "poll_interval_seconds": 1800,
         "expected_interval_seconds": 3600,
     }), "bnpb")
     assert setting.enabled
     assert setting.run_mode == "dry_run"
     assert setting.field_mapping["report_id"] == "id"
     assert setting.config_version == 3
+    assert setting.poll_interval_seconds == 1800
     assert setting.expected_interval_seconds == 3600
 
 
@@ -93,3 +99,59 @@ async def test_missing_settings_table_falls_back_to_legacy_env():
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
     assert await resolve_source_setting(pool, "bnpb") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"enabled": True, "run_mode": "active", "config_version": 7}, True),
+        ({"enabled": False, "run_mode": "disabled", "config_version": 7}, False),
+        ({"enabled": True, "run_mode": "dry_run", "config_version": 7}, False),
+        ({"enabled": True, "run_mode": "active", "config_version": 8}, False),
+        (None, False),
+    ],
+)
+async def test_source_write_barrier_locks_and_matches_active_config(row, expected):
+    conn = AsyncMock()
+    conn.fetchrow.return_value = row
+
+    assert await source_write_is_allowed(conn, "bmkg_air_quality", 7) is expected
+    sql = " ".join(conn.fetchrow.await_args.args[0].split())
+    assert "FOR SHARE" in sql
+
+
+@pytest.mark.asyncio
+async def test_worker_shadow_audit_records_current_version_and_zero_persistence():
+    conn = AsyncMock()
+    pool = _pool({})
+    pool.acquire.return_value.__aenter__.return_value = conn
+    setting = type("Setting", (), {
+        "source_name": "bmkg_air_quality",
+        "config_version": 7,
+        "adapter_version": "v1",
+    })()
+
+    await record_worker_shadow_evidence(
+        pool,
+        setting,
+        success=True,
+        item_count=2,
+        errors=[],
+    )
+
+    args = conn.execute.await_args.args
+    assert args[1:5] == ("bmkg_air_quality", 7, True, "worker@sadarbencana.local")
+    metadata = __import__("json").loads(args[5])
+    assert metadata["stage"] == "worker_shadow"
+    assert metadata["config_version"] == 7
+    assert metadata["zero_persistence"] is True
+    assert metadata["persistence_counts"] == {
+        "official_alerts": 0,
+        "air_quality_observations": 0,
+        "ews_notification_log": 0,
+        "ews_delivery_queue": 0,
+        "source_evidence": 0,
+        "source_records": 0,
+        "disaster_observability_events": 0,
+    }

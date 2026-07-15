@@ -903,7 +903,18 @@ func validateAirQualityRecord(record map[string]any, kind string) error {
 	return validateAirQualityTime(record, "observed_at")
 }
 
+type airQualityTopologyValidator func(any) error
+
 func previewAirQualityPayload(payload any, mapping map[string]string, base sourcePreviewResult) sourcePreviewResult {
+	return previewAirQualityPayloadWithTopology(payload, mapping, base, nil)
+}
+
+func previewAirQualityPayloadWithTopology(
+	payload any,
+	mapping map[string]string,
+	base sourcePreviewResult,
+	validateTopology airQualityTopologyValidator,
+) sourcePreviewResult {
 	base.Errors = []string{}
 	base.MappedSample = []map[string]any{}
 	base.PayloadStored = false
@@ -947,10 +958,16 @@ func previewAirQualityPayload(payload any, mapping map[string]string, base sourc
 				continue
 			}
 			mapped := mapAirQualityRecord(record, collection.name, mapping)
-			if err := validateAirQualityRecord(mapped, collection.name); err != nil {
+			validationErr := validateAirQualityRecord(mapped, collection.name)
+			if validationErr == nil && collection.name == "warning" && validateTopology != nil {
+				if geometry, exists := mapped["area_geojson"]; exists && geometry != nil {
+					validationErr = validateTopology(geometry)
+				}
+			}
+			if validationErr != nil {
 				base.InvalidCount++
 				if len(base.Errors) < 10 {
-					base.Errors = append(base.Errors, fmt.Sprintf("%s %d: %v", collection.name, index, err))
+					base.Errors = append(base.Errors, fmt.Sprintf("%s %d: %v", collection.name, index, validationErr))
 				}
 			} else {
 				base.ValidCount++
@@ -964,6 +981,27 @@ func previewAirQualityPayload(payload any, mapping map[string]string, base sourc
 		base.StatusCode >= 200 && base.StatusCode < 300 && base.RecordCount > 0 &&
 		base.InvalidCount == 0
 	return base
+}
+
+func validateAirQualityTopology(ctx context.Context, db *sql.DB, value any) error {
+	if db == nil {
+		return errors.New("area_geojson topology validation is unavailable")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return errors.New("area_geojson topology is invalid")
+	}
+	var valid bool
+	err = db.QueryRowContext(ctx, `
+		SELECT COALESCE(
+		  ST_IsValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326))
+		  AND GeometryType(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) IN ('POLYGON', 'MULTIPOLYGON'),
+		  FALSE
+		)`, string(encoded)).Scan(&valid)
+	if err != nil || !valid {
+		return errors.New("area_geojson topology is invalid")
+	}
+	return nil
 }
 
 func loadSourceRuntimeConfig(
@@ -1015,6 +1053,10 @@ func loadSourceRuntimeConfig(
 }
 
 func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourcePreviewResult, error) {
+	return executeSourcePreviewWithDB(ctx, config, nil)
+}
+
+func executeSourcePreviewWithDB(ctx *gin.Context, config sourceRuntimeConfig, db *sql.DB) (sourcePreviewResult, error) {
 	result := sourcePreviewResult{
 		AdapterVersion: config.AdapterVersion,
 		Errors:         []string{},
@@ -1056,7 +1098,13 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 		return result, nil
 	}
 	if config.Source == "bmkg_air_quality" {
-		return previewAirQualityPayload(payload, config.FieldMapping, result), nil
+		var validateTopology airQualityTopologyValidator
+		if db != nil {
+			validateTopology = func(value any) error {
+				return validateAirQualityTopology(ctx.Request.Context(), db, value)
+			}
+		}
+		return previewAirQualityPayloadWithTopology(payload, config.FieldMapping, result, validateTopology), nil
 	}
 	result.RawSample = sanitizePreview(payload)
 	records := payloadRecords(payload, config.FieldMapping)
@@ -1119,13 +1167,19 @@ func OfficialSourcePreview(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed"})
 			return
 		}
-		result, previewErr := executeSourcePreview(c, config)
+		result, previewErr := executeSourcePreviewWithDB(c, config, db)
 		writeSourceAudit(db, source, "preview", AuthEmail(c), config.ConfigVersion, previewErr == nil && result.ContractValid,
 			gin.H{"record_count": result.RecordCount, "warning_count": result.WarningCount,
 				"observation_count": result.ObservationCount, "valid_count": result.ValidCount,
 				"payload_stored": false})
-		if previewErr != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "preview_failed", "message": previewErr.Error(), "data": result})
+		if previewErr != nil || !result.ContractValid {
+			message := "source contract validation failed"
+			if previewErr != nil {
+				message = previewErr.Error()
+			} else if len(result.Errors) > 0 {
+				message = result.Errors[0]
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "preview_failed", "message": message, "data": result})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"data": result})
@@ -1150,7 +1204,7 @@ func OfficialSourceDryRun(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 			c.JSON(http.StatusConflict, gin.H{"error": "dry_run_mode_required"})
 			return
 		}
-		result, previewErr := executeSourcePreview(c, config)
+		result, previewErr := executeSourcePreviewWithDB(c, config, db)
 		valid := previewErr == nil && result.ContractValid
 		updateResult, updateErr := db.ExecContext(c.Request.Context(), `
 			UPDATE official_source_settings SET last_dry_run_at=now(),
@@ -1178,12 +1232,50 @@ func OfficialSourceDryRun(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 			c.JSON(http.StatusConflict, gin.H{"error": "stale_config_version"})
 			return
 		}
-		if previewErr != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "dry_run_failed", "message": previewErr.Error(), "data": result})
+		if previewErr != nil || !result.ContractValid {
+			message := "source contract validation failed"
+			if previewErr != nil {
+				message = previewErr.Error()
+			} else if len(result.Errors) > 0 {
+				message = result.Errors[0]
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "dry_run_failed", "message": message, "data": result})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"data": result})
 	}
+}
+
+type sourceActivationBody struct {
+	ApprovalReference string `json:"approval_reference"`
+	ApprovalNote      string `json:"approval_note"`
+}
+
+type workerShadowEvidence struct {
+	ZeroPersistence  bool           `json:"zero_persistence"`
+	PersistenceCount map[string]int `json:"persistence_counts"`
+}
+
+var requiredZeroPersistenceTables = []string{
+	"source_records",
+	"disaster_observability_events",
+	"official_alerts",
+	"air_quality_observations",
+	"ews_notification_log",
+}
+
+func hasZeroPersistenceEvidence(metadata []byte) bool {
+	var evidence workerShadowEvidence
+	if json.Unmarshal(metadata, &evidence) != nil || !evidence.ZeroPersistence {
+		return false
+	}
+	for _, table := range requiredZeroPersistenceTables {
+		count, exists := evidence.PersistenceCount[table]
+		if !exists || count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func OfficialSourceActivate(db *sql.DB) gin.HandlerFunc {
@@ -1195,21 +1287,97 @@ func OfficialSourceActivate(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		source := strings.TrimSpace(c.Param("source"))
+		var body sourceActivationBody
+		if err := c.ShouldBindJSON(&body); err != nil && err != io.EOF {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+			return
+		}
+		body.ApprovalReference = strings.TrimSpace(body.ApprovalReference)
+		body.ApprovalNote = strings.TrimSpace(body.ApprovalNote)
+		if body.ApprovalReference == "" || body.ApprovalNote == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "approval_metadata_required"})
+			return
+		}
 		tx, err := db.BeginTx(c.Request.Context(), nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_transaction_failed"})
 			return
 		}
 		defer tx.Rollback()
+		var runMode string
+		var currentVersion int
+		var dryRunValid sql.NullBool
+		var dryRunVersion sql.NullInt64
+		var configUpdatedAt time.Time
+		err = tx.QueryRowContext(c.Request.Context(), `
+			SELECT run_mode, config_version, last_dry_run_valid,
+			       last_dry_run_config_version, updated_at
+			FROM official_source_settings
+			WHERE source_name=$1 FOR UPDATE`, source).Scan(
+			&runMode, &currentVersion, &dryRunValid, &dryRunVersion, &configUpdatedAt,
+		)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "source_not_found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "activation_failed"})
+			return
+		}
+		if runMode != "dry_run" || !dryRunValid.Valid || !dryRunValid.Bool ||
+			!dryRunVersion.Valid || int(dryRunVersion.Int64) != currentVersion {
+			c.JSON(http.StatusConflict, gin.H{"error": "successful_current_dry_run_required"})
+			return
+		}
+
+		var shadowSuccess bool
+		var shadowMetadata []byte
+		err = tx.QueryRowContext(c.Request.Context(), `
+			SELECT success, metadata
+			FROM official_source_setting_audit
+			WHERE source_name=$1 AND action='dry_run'
+			  AND config_version=$2 AND metadata->>'stage'='worker_shadow'
+			ORDER BY created_at DESC LIMIT 1`, source, currentVersion).Scan(&shadowSuccess, &shadowMetadata)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusConflict, gin.H{"error": "successful_current_worker_shadow_required"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "activation_failed"})
+			return
+		}
+		if !shadowSuccess {
+			c.JSON(http.StatusConflict, gin.H{"error": "successful_current_worker_shadow_required"})
+			return
+		}
+		if !hasZeroPersistenceEvidence(shadowMetadata) {
+			c.JSON(http.StatusConflict, gin.H{"error": "zero_persistence_evidence_required"})
+			return
+		}
+
+		var connectorHealthy bool
+		err = tx.QueryRowContext(c.Request.Context(), `
+			SELECT EXISTS (
+			  SELECT 1 FROM connector_health
+			  WHERE name=$1 AND last_polled_at IS NOT NULL
+			    AND last_polled_at >= $2 AND error_message IS NULL
+			)`, source, configUpdatedAt).Scan(&connectorHealthy)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "activation_failed"})
+			return
+		}
+		if !connectorHealthy {
+			c.JSON(http.StatusConflict, gin.H{"error": "successful_connector_health_required"})
+			return
+		}
+
 		var version int
 		err = tx.QueryRowContext(c.Request.Context(), `
 			WITH updated AS (
 			  UPDATE official_source_settings SET enabled=TRUE, run_mode='active',
 			    config_version=config_version+1, updated_by=$2, updated_at=now()
-			  WHERE source_name=$1 AND run_mode='dry_run'
-			    AND last_dry_run_valid=TRUE
-			    AND last_dry_run_config_version=config_version
-			  RETURNING *
+				  WHERE source_name=$1 AND run_mode='dry_run' AND config_version=$3
+				  RETURNING *
 			)
 			INSERT INTO official_source_setting_versions
 			  (source_name, version, configuration, api_token_encrypted, changed_by, change_reason)
@@ -1220,9 +1388,10 @@ func OfficialSourceActivate(db *sql.DB) gin.HandlerFunc {
 			    'custom_api_url',custom_api_url,'poll_interval_seconds',poll_interval_seconds,
 			    'expected_interval_seconds',expected_interval_seconds
 			  ),
-			  api_token_encrypted,$2,'Activated after successful dry run'
-			FROM updated RETURNING version`,
-			source, AuthEmail(c)).Scan(&version)
+				  api_token_encrypted,$2,$4
+				FROM updated RETURNING version`,
+			source, AuthEmail(c), currentVersion,
+			"Activated with approval "+body.ApprovalReference).Scan(&version)
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusConflict, gin.H{"error": "successful_current_dry_run_required"})
 			return
@@ -1231,11 +1400,20 @@ func OfficialSourceActivate(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "activation_failed"})
 			return
 		}
+		auditMetadata, _ := json.Marshal(gin.H{
+			"approval_reference": body.ApprovalReference,
+			"approval_note":      body.ApprovalNote,
+			"approved_by":        AuthEmail(c),
+			"validated_version":  currentVersion,
+			"worker_shadow":      true,
+			"zero_persistence":   true,
+			"connector_healthy":  true,
+		})
 		_, err = tx.ExecContext(c.Request.Context(), `
 			INSERT INTO official_source_setting_audit
 			  (source_name,action,actor_email,config_version,success,metadata)
-			VALUES ($1,'activate',$2,$3,TRUE,'{}'::jsonb)`,
-			source, AuthEmail(c), version)
+			VALUES ($1,'activate',$2,$3,TRUE,$4::jsonb)`,
+			source, AuthEmail(c), version, string(auditMetadata))
 		if err != nil || tx.Commit() != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "activation_audit_failed"})
 			return
@@ -1365,6 +1543,7 @@ func OfficialSourceHistory(db *sql.DB) gin.HandlerFunc {
 			}
 			var config any
 			_ = json.Unmarshal(configuration, &config)
+			config = sanitizeSourceConfiguration(config)
 			versions = append(versions, gin.H{
 				"version": version, "configuration": config, "changed_by": actor,
 				"change_reason": nullStringPtr(reason), "created_at": created,
@@ -1398,5 +1577,28 @@ func OfficialSourceHistory(db *sql.DB) gin.HandlerFunc {
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"versions": versions, "audit": audit}})
+	}
+}
+
+func sanitizeSourceConfiguration(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if (key == "custom_api_url" || key == "default_api_url") && item != nil {
+				result[key] = endpointForOutput(fmt.Sprint(item))
+				continue
+			}
+			result[key] = sanitizeSourceConfiguration(item)
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			result[index] = sanitizeSourceConfiguration(item)
+		}
+		return result
+	default:
+		return value
 	}
 }

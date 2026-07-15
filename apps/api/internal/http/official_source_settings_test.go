@@ -46,12 +46,97 @@ func TestAirQualityEndpointRequiresApprovedHTTPS443URL(t *testing.T) {
 	for _, endpoint := range []string{
 		"http://iklim.bmkg.go.id/api/air-quality",
 		"https://attacker@iklim.bmkg.go.id/api/air-quality",
+		"https://user:password@iklim.bmkg.go.id/api/air-quality",
+		"https://iklim.bmkg.go.id/api/air-quality?api_key=plaintext-secret",
+		"https://iklim.bmkg.go.id/api/air-quality?access_token=plaintext-secret",
+		"https://iklim.bmkg.go.id/api/air-quality#token=plaintext-secret",
 		"https://iklim.bmkg.go.id:8443/api/air-quality",
 		"https://evil.example/api/air-quality",
 	} {
 		if approvedSourceEndpoint("bmkg_air_quality", endpoint) {
 			t.Fatalf("unsafe endpoint accepted: %s", endpoint)
 		}
+	}
+}
+
+func TestOfficialSourceSettingUpdateRejectsCredentialsInEndpointURL(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://operator:secret@iklim.bmkg.go.id/api/air-quality",
+		"https://iklim.bmkg.go.id/api/air-quality?api_key=plaintext-secret",
+		"https://iklim.bmkg.go.id/api/air-quality#access_token=plaintext-secret",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT role FROM ews_subscribers").
+				WithArgs("admin@example.test").
+				WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+
+			body, err := json.Marshal(map[string]any{
+				"enabled": true, "run_mode": "dry_run", "mode": "custom_api",
+				"adapter_version": "v1", "field_mapping": map[string]string{},
+				"custom_api_url": endpoint, "poll_interval_seconds": 3600,
+				"expected_interval_seconds": 3600,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "source", Value: "bmkg_air_quality"}}
+			ctx.Set(ctxAuthEmail, "admin@example.test")
+			ctx.Request = httptest.NewRequest(http.MethodPatch, "/settings/official-sources/bmkg_air_quality", bytes.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+
+			OfficialSourceSettingUpdate(db, "test-key")(ctx)
+
+			if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"error":"invalid_api_url"`) {
+				t.Fatalf("credential-bearing URL was accepted: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
+func TestEndpointForOutputRemovesHistoricalURLCredentials(t *testing.T) {
+	for _, test := range []struct {
+		raw     string
+		secret  string
+		visible string
+	}{
+		{raw: "https://operator:password@iklim.bmkg.go.id/api/air-quality?station=kmy3", secret: "password", visible: "station=kmy3"},
+		{raw: "https://iklim.bmkg.go.id/api/air-quality?api_key=plaintext-secret&station=kmy3", secret: "plaintext-secret", visible: "station=kmy3"},
+		{raw: "https://iklim.bmkg.go.id/api/air-quality#access_token=fragment-secret", secret: "fragment-secret", visible: "iklim.bmkg.go.id/api/air-quality"},
+	} {
+		sanitized := endpointForOutput(test.raw)
+		if strings.Contains(sanitized, test.secret) || strings.Contains(sanitized, "operator") {
+			t.Fatalf("historical endpoint credential leaked: %q", sanitized)
+		}
+		if !strings.Contains(sanitized, test.visible) {
+			t.Fatalf("safe endpoint metadata was lost: %q", sanitized)
+		}
+	}
+}
+
+func TestSanitizeSourceConfigurationRemovesHistoricalEndpointSecrets(t *testing.T) {
+	configuration := map[string]any{
+		"custom_api_url": "https://iklim.bmkg.go.id/api/air-quality?token=history-secret&station=kmy3",
+		"mode":           "custom_api",
+	}
+	encoded, err := json.Marshal(sanitizeSourceConfiguration(configuration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "history-secret") {
+		t.Fatalf("history response leaked endpoint secret: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "station%3Dkmy3") && !strings.Contains(string(encoded), "station=kmy3") {
+		t.Fatalf("history response lost safe endpoint query: %s", encoded)
 	}
 }
 

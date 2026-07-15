@@ -80,8 +80,8 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 			}
 			item.FieldMapping = map[string]string{}
 			_ = json.Unmarshal(mapping, &item.FieldMapping)
-			item.DefaultAPIURL = nullStringPtr(defaultURL)
-			item.CustomAPIURL = nullStringPtr(customURL)
+			item.DefaultAPIURL = safeEndpointPtr(defaultURL)
+			item.CustomAPIURL = safeEndpointPtr(customURL)
 			item.TermsURL = nullStringPtr(termsURL)
 			item.Notes = nullStringPtr(notes)
 			if dryRunAt.Valid {
@@ -385,11 +385,48 @@ func approvedSourceHost(source, host string) bool {
 func approvedSourceEndpoint(source, raw string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil ||
-		!approvedSourceHost(source, parsed.Hostname()) {
+		endpointURLContainsCredentials(parsed) || !approvedSourceHost(source, parsed.Hostname()) {
 		return false
 	}
 	if source == "bmkg_air_quality" && parsed.Port() != "" && parsed.Port() != "443" {
 		return false
 	}
 	return true
+}
+
+func endpointURLContainsCredentials(parsed *url.URL) bool {
+	if parsed == nil || parsed.User != nil || parsed.Fragment != "" {
+		return true
+	}
+	for key := range parsed.Query() {
+		if sensitivePreviewKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func endpointForOutput(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+		return ""
+	}
+	parsed.User = nil
+	query := parsed.Query()
+	for key := range query {
+		if sensitivePreviewKey(key) {
+			query.Del(key)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func safeEndpointPtr(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	sanitized := endpointForOutput(value.String)
+	return &sanitized
 }

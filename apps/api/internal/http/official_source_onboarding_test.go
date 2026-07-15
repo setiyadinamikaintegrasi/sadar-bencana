@@ -145,6 +145,14 @@ CREATE TABLE official_source_setting_audit (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE connector_health (
+    name TEXT PRIMARY KEY,
+    last_polled_at TIMESTAMPTZ,
+    items_fetched INT NOT NULL DEFAULT 0,
+    error_message TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 INSERT INTO ews_subscribers (email, role, is_active)
 VALUES ('admin@example.test', 'admin', TRUE);
 `
@@ -219,6 +227,48 @@ func insertCurrentOfficialSource(t *testing.T, db *sql.DB, version int, runMode 
 		)`, enabled, runMode, version, evidenceVersion)
 	if err != nil {
 		t.Fatalf("insert current official source: %v", err)
+	}
+}
+
+var validActivationBody = []byte(`{
+  "approval_reference":"CHG-2026-0715",
+  "approval_note":"Approved for controlled production activation"
+}`)
+
+func insertWorkerShadowEvidence(t *testing.T, db *sql.DB, version int, zeroPersistence bool, healthy bool) {
+	t.Helper()
+	metadata := map[string]any{
+		"stage":            "worker_shadow",
+		"zero_persistence": zeroPersistence,
+		"persistence_counts": map[string]int{
+			"source_records":                0,
+			"disaster_observability_events": 0,
+			"official_alerts":               0,
+			"air_quality_observations":      0,
+			"ews_notification_log":          0,
+		},
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		INSERT INTO official_source_setting_audit
+		  (source_name, action, actor_email, config_version, success, metadata, created_at)
+		VALUES ('bmkg_air_quality', 'dry_run', 'worker@sadarbencana.local', $1, TRUE, $2::jsonb, now())`,
+		version, string(encoded))
+	if err != nil {
+		t.Fatalf("insert worker-shadow evidence: %v", err)
+	}
+	healthError := any(nil)
+	if !healthy {
+		healthError = "connector validation failed"
+	}
+	_, err = db.Exec(`
+		INSERT INTO connector_health (name, last_polled_at, items_fetched, error_message, updated_at)
+		VALUES ('bmkg_air_quality', now(), 2, $1, now())`, healthError)
+	if err != nil {
+		t.Fatalf("insert connector health: %v", err)
 	}
 }
 
@@ -377,12 +427,79 @@ func TestOfficialSourceDryRunRecordsOnlyTheValidatedCurrentVersion(t *testing.T)
 	})
 }
 
+func TestOfficialSourcePreviewAndDryRunRejectInvalidPostGISTopology(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := validAirQualityPreviewPayload()
+	payload["warnings"].([]any)[0].(map[string]any)["area_geojson"] = map[string]any{
+		"type": "Polygon",
+		"coordinates": []any{[]any{
+			[]any{106.0, -7.0}, []any{108.0, -5.0}, []any{106.0, -5.0},
+			[]any{108.0, -7.0}, []any{106.0, -7.0},
+		}},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name    string
+		handler func(*sql.DB) gin.HandlerFunc
+		path    string
+		body    []byte
+	}{
+		{name: "preview", handler: func(db *sql.DB) gin.HandlerFunc { return OfficialSourcePreview(db, "test-key") }, path: "/settings/official-sources/bmkg_air_quality/preview", body: []byte(`{}`)},
+		{name: "dry run", handler: func(db *sql.DB) gin.HandlerFunc { return OfficialSourceDryRun(db, "test-key") }, path: "/settings/official-sources/bmkg_air_quality/dry-run"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := openOfficialSourceOnboardingPostgreSQL(t)
+			insertCurrentOfficialSource(t, db, 7, "dry_run", nil)
+			installOfficialSourceTLSServer(t, stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(encoded)
+			}))
+
+			response := runAdminSourceHandler(t, test.handler(db), stdhttp.MethodPost, test.path, "bmkg_air_quality", test.body)
+
+			if response.Code != stdhttp.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "topology") {
+				t.Fatalf("invalid topology passed %s: status=%d body=%s", test.name, response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestOfficialSourcePreviewRejectsCredentialBearingDraftURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, endpoint := range []string{
+		"https://operator:secret@iklim.bmkg.go.id/api/air-quality",
+		"https://iklim.bmkg.go.id/api/air-quality?api_key=plaintext-secret",
+		"https://iklim.bmkg.go.id/api/air-quality#token=plaintext-secret",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			db := openOfficialSourceOnboardingPostgreSQL(t)
+			insertCurrentOfficialSource(t, db, 7, "dry_run", nil)
+			body, err := json.Marshal(map[string]any{"custom_api_url": endpoint})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			response := runAdminSourceHandler(t, OfficialSourcePreview(db, "test-key"), stdhttp.MethodPost,
+				"/settings/official-sources/bmkg_air_quality/preview", "bmkg_air_quality", body)
+
+			if response.Code != stdhttp.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "not approved") {
+				t.Fatalf("credential-bearing preview URL was accepted: status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestOfficialSourceActivateRequiresEvidenceForTheCurrentVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("current version succeeds", func(t *testing.T) {
 		db := openOfficialSourceOnboardingPostgreSQL(t)
 		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+		insertWorkerShadowEvidence(t, db, 7, true, true)
 
 		response := runAdminSourceHandler(
 			t,
@@ -390,7 +507,7 @@ func TestOfficialSourceActivateRequiresEvidenceForTheCurrentVersion(t *testing.T
 			stdhttp.MethodPost,
 			"/settings/official-sources/bmkg_air_quality/activate",
 			"bmkg_air_quality",
-			nil,
+			validActivationBody,
 		)
 
 		if response.Code != stdhttp.StatusOK || !strings.Contains(response.Body.String(), `"config_version":8`) {
@@ -408,6 +525,17 @@ func TestOfficialSourceActivateRequiresEvidenceForTheCurrentVersion(t *testing.T
 		if !enabled || runMode != "active" || version != 8 {
 			t.Fatalf("unexpected activated state: enabled=%v mode=%s version=%d", enabled, runMode, version)
 		}
+		var approvalReference, approvalNote string
+		if err := db.QueryRow(`
+			SELECT metadata->>'approval_reference', metadata->>'approval_note'
+			FROM official_source_setting_audit
+			WHERE source_name='bmkg_air_quality' AND action='activate'`,
+		).Scan(&approvalReference, &approvalNote); err != nil {
+			t.Fatalf("read activation approval audit: %v", err)
+		}
+		if approvalReference != "CHG-2026-0715" || approvalNote != "Approved for controlled production activation" {
+			t.Fatalf("activation approval metadata was not audited: reference=%q note=%q", approvalReference, approvalNote)
+		}
 	})
 
 	t.Run("stale evidence is rejected", func(t *testing.T) {
@@ -420,7 +548,7 @@ func TestOfficialSourceActivateRequiresEvidenceForTheCurrentVersion(t *testing.T
 			stdhttp.MethodPost,
 			"/settings/official-sources/bmkg_air_quality/activate",
 			"bmkg_air_quality",
-			nil,
+			validActivationBody,
 		)
 
 		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"successful_current_dry_run_required"`) {
@@ -436,6 +564,95 @@ func TestOfficialSourceActivateRequiresEvidenceForTheCurrentVersion(t *testing.T
 		}
 		if runMode != "dry_run" || version != 7 {
 			t.Fatalf("rejected activation changed state: mode=%s version=%d", runMode, version)
+		}
+	})
+
+	t.Run("worker shadow for current version is required", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+
+		response := runAdminSourceHandler(t, OfficialSourceActivate(db), stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate", "bmkg_air_quality", validActivationBody)
+
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"successful_current_worker_shadow_required"`) {
+			t.Fatalf("activation accepted missing shadow evidence: status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("stale worker shadow is rejected", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+		insertWorkerShadowEvidence(t, db, 6, true, true)
+
+		response := runAdminSourceHandler(t, OfficialSourceActivate(db), stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate", "bmkg_air_quality", validActivationBody)
+
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"successful_current_worker_shadow_required"`) {
+			t.Fatalf("activation accepted stale shadow evidence: status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("latest failed worker shadow supersedes earlier success", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+		insertWorkerShadowEvidence(t, db, 7, true, true)
+		_, err := db.Exec(`
+			INSERT INTO official_source_setting_audit
+			  (source_name, action, actor_email, config_version, success, metadata, created_at)
+			VALUES (
+			  'bmkg_air_quality', 'dry_run', 'worker@sadarbencana.local', 7, FALSE,
+			  '{"stage":"worker_shadow","zero_persistence":false}'::jsonb,
+			  now() + interval '1 second'
+			)`)
+		if err != nil {
+			t.Fatalf("insert failed worker-shadow evidence: %v", err)
+		}
+
+		response := runAdminSourceHandler(t, OfficialSourceActivate(db), stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate", "bmkg_air_quality", validActivationBody)
+
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"successful_current_worker_shadow_required"`) {
+			t.Fatalf("activation ignored latest failed shadow: status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("zero persistence evidence is required", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+		insertWorkerShadowEvidence(t, db, 7, false, true)
+
+		response := runAdminSourceHandler(t, OfficialSourceActivate(db), stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate", "bmkg_air_quality", validActivationBody)
+
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"zero_persistence_evidence_required"`) {
+			t.Fatalf("activation accepted persistence: status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("successful connector health is required", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+		insertWorkerShadowEvidence(t, db, 7, true, false)
+
+		response := runAdminSourceHandler(t, OfficialSourceActivate(db), stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate", "bmkg_air_quality", validActivationBody)
+
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"successful_connector_health_required"`) {
+			t.Fatalf("activation accepted failed health: status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("documented approval metadata is required", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+		insertWorkerShadowEvidence(t, db, 7, true, true)
+
+		for _, body := range [][]byte{nil, []byte(`{"approval_reference":"CHG-1"}`), []byte(`{"approval_note":"approved"}`)} {
+			response := runAdminSourceHandler(t, OfficialSourceActivate(db), stdhttp.MethodPost,
+				"/settings/official-sources/bmkg_air_quality/activate", "bmkg_air_quality", body)
+			if response.Code != stdhttp.StatusBadRequest || !strings.Contains(response.Body.String(), `"error":"approval_metadata_required"`) {
+				t.Fatalf("activation accepted missing approval metadata: status=%d body=%s", response.Code, response.Body.String())
+			}
 		}
 	})
 }
@@ -504,7 +721,7 @@ func TestOfficialSourceRollbackFailsClosed(t *testing.T) {
 			stdhttp.MethodPost,
 			"/settings/official-sources/bmkg_air_quality/activate",
 			"bmkg_air_quality",
-			nil,
+			validActivationBody,
 		)
 		if rejected.Code != stdhttp.StatusConflict {
 			t.Fatalf("rollback activated without fresh evidence: status=%d body=%s", rejected.Code, rejected.Body.String())
@@ -522,13 +739,25 @@ func TestOfficialSourceRollbackFailsClosed(t *testing.T) {
 		if dryRun.Code != stdhttp.StatusOK {
 			t.Fatalf("fresh dry-run after rollback failed: status=%d body=%s", dryRun.Code, dryRun.Body.String())
 		}
+		withoutShadow := runAdminSourceHandler(
+			t,
+			OfficialSourceActivate(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate",
+			"bmkg_air_quality",
+			validActivationBody,
+		)
+		if withoutShadow.Code != stdhttp.StatusConflict || !strings.Contains(withoutShadow.Body.String(), `"error":"successful_current_worker_shadow_required"`) {
+			t.Fatalf("rollback activation skipped fresh worker shadow: status=%d body=%s", withoutShadow.Code, withoutShadow.Body.String())
+		}
+		insertWorkerShadowEvidence(t, db, 11, true, true)
 		activated := runAdminSourceHandler(
 			t,
 			OfficialSourceActivate(db),
 			stdhttp.MethodPost,
 			"/settings/official-sources/bmkg_air_quality/activate",
 			"bmkg_air_quality",
-			nil,
+			validActivationBody,
 		)
 		if activated.Code != stdhttp.StatusOK || !strings.Contains(activated.Body.String(), `"config_version":12`) {
 			t.Fatalf("activation after fresh evidence failed: status=%d body=%s", activated.Code, activated.Body.String())
@@ -594,7 +823,7 @@ func TestOfficialSourceRollbackFailsClosed(t *testing.T) {
 			stdhttp.MethodPost,
 			"/settings/official-sources/bmkg_air_quality/activate",
 			"bmkg_air_quality",
-			nil,
+			validActivationBody,
 		)
 		if rejected.Code != stdhttp.StatusConflict {
 			t.Fatalf("disabled rollback activated: status=%d body=%s", rejected.Code, rejected.Body.String())

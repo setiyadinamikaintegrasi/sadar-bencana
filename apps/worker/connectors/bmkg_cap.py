@@ -6,11 +6,12 @@ import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urljoin, urlparse
 
 import httpx
 
 from models.official_alert import OfficialAlertInput
+from ssrf_guard import resolve_public_ips
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,8 @@ BMKG_CAP_RSS_URL = "https://www.bmkg.go.id/alerts/nowcast/id"
 BMKG_ATTRIBUTION = "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)"
 BMKG_CAP_USER_AGENT = "sadar-bencana/0.2 (+https://github.com/setiyadinamikaintegrasi/sadar-bencana)"
 MAX_ACTIVE_ALERTS = 50
+MAX_REDIRECTS = 5
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 CAP_SEVERITY = {
     "minor": "Moderate",
     "moderate": "Moderate",
@@ -51,19 +54,42 @@ def _parse_datetime(value: str, field: str) -> datetime:
     return parsed
 
 
-def _allowed_cap_url(url: str) -> bool:
+def _parsed_cap_url(url: str) -> ParseResult:
     parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return parsed.scheme == "https" and (
-        host == "bmkg.go.id" or host.endswith(".bmkg.go.id")
-    )
-
-
-def _validated_response_url(response: httpx.Response) -> str:
-    url = str(response.url)
-    if not _allowed_cap_url(url):
+    host = (parsed.hostname or "").lower().rstrip(".")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"BMKG HTTPS URL required, got {url!r}") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or not (host == "bmkg.go.id" or host.endswith(".bmkg.go.id"))
+    ):
         raise ValueError(f"BMKG HTTPS URL required, got {url!r}")
-    return url
+    return parsed
+
+
+def _allowed_cap_url(url: str) -> bool:
+    try:
+        _parsed_cap_url(url)
+    except ValueError:
+        return False
+    return True
+
+
+def _pinned_url(parsed: ParseResult, resolved_ip: str) -> tuple[str, str, str]:
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("BMKG HTTPS URL requires a hostname")
+    hostname = hostname.rstrip(".")
+    ip_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    pinned = parsed._replace(netloc=f"{ip_host}{port}").geturl()
+    host_header = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+    return pinned, host_header, hostname
 
 
 def parse_bmkg_cap_rss(xml_text: str) -> list[str]:
@@ -170,6 +196,13 @@ def parse_bmkg_cap(
     if not identifier or not sent_raw:
         raise ValueError("CAP identifier and sent are required")
 
+    cap_status = _child_text(root, "status")
+    if cap_status.casefold() != "actual":
+        raise ValueError(f"CAP status must be Actual, got {cap_status or 'missing'}")
+    cap_scope = _child_text(root, "scope")
+    if cap_scope.casefold() != "public":
+        raise ValueError(f"CAP scope must be Public, got {cap_scope or 'missing'}")
+
     message_type_map = {
         "alert": "alert",
         "update": "update",
@@ -185,6 +218,8 @@ def parse_bmkg_cap(
     payload = {
         "format": "CAP-XML",
         "message_identifier": identifier,
+        "cap_status": cap_status,
+        "cap_scope": cap_scope,
         "source_url": source_url,
         "xml": xml_text,
     }
@@ -222,20 +257,56 @@ class BMKGCAPConnector:
         self._rss_url = rss_url
         self._api_token = api_token
 
+    async def _get_with_validated_redirects(
+        self,
+        url: str,
+    ) -> tuple[httpx.Response, str]:
+        assert self._client is not None
+        current_url = url
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            parsed = _parsed_cap_url(current_url)
+            hostname = parsed.hostname
+            if not hostname:
+                raise ValueError("BMKG HTTPS URL requires a hostname")
+            resolved_ip = resolve_public_ips(hostname.rstrip("."))[0]
+            pinned_url, host_header, sni_hostname = _pinned_url(parsed, resolved_ip)
+            headers = {
+                "Host": host_header,
+                "User-Agent": BMKG_CAP_USER_AGENT,
+            }
+            if self._api_token:
+                headers["Authorization"] = f"Bearer {self._api_token}"
+            request = self._client.build_request(
+                "GET",
+                pinned_url,
+                headers=headers,
+                extensions={"sni_hostname": sni_hostname},
+            )
+            response = await self._client.send(request, follow_redirects=False)
+            if response.status_code not in REDIRECT_STATUSES:
+                return response, current_url
+
+            location = response.headers.get("Location")
+            if not location:
+                raise ValueError("BMKG redirect response is missing Location")
+            if redirect_count >= MAX_REDIRECTS:
+                raise ValueError("BMKG redirect limit exceeded")
+            next_url = urljoin(current_url, location)
+            # Validate before DNS resolution or any request to the next target.
+            _parsed_cap_url(next_url)
+            current_url = next_url
+
+        raise ValueError("BMKG redirect limit exceeded")
+
     async def fetch_active(self) -> tuple[list[OfficialAlertInput], list[str]]:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
-                follow_redirects=True,
-                headers={
-                    "User-Agent": BMKG_CAP_USER_AGENT,
-                    **({"Authorization": f"Bearer {self._api_token}"} if self._api_token else {}),
-                },
+                follow_redirects=False,
             )
         assert self._client is not None
 
-        response = await self._client.get(self._rss_url, follow_redirects=True)
-        _validated_response_url(response)
+        response, _ = await self._get_with_validated_redirects(self._rss_url)
         response.raise_for_status()
         urls = parse_bmkg_cap_rss(response.text)
 
@@ -243,8 +314,7 @@ class BMKGCAPConnector:
         errors: list[str] = []
         for url in urls:
             try:
-                detail = await self._client.get(url, follow_redirects=True)
-                detail_url = _validated_response_url(detail)
+                detail, detail_url = await self._get_with_validated_redirects(url)
                 detail.raise_for_status()
                 alert = parse_bmkg_cap(detail.text, source_url=detail_url)
                 alerts.append(alert)

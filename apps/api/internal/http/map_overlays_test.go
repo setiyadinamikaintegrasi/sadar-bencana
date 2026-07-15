@@ -4,12 +4,26 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 )
+
+func TestOfficialOverlayQueryHidesInactiveSourceAndFutureWarnings(t *testing.T) {
+	for _, clause := range []string{
+		"JOIN official_source_settings s ON s.source_name = oa.source",
+		"s.enabled = TRUE",
+		"s.run_mode = 'active'",
+		"oa.effective_at IS NULL OR oa.effective_at <= now()",
+	} {
+		if !strings.Contains(officialOverlayQuery, clause) {
+			t.Fatalf("official overlay query missing active-warning guard %q", clause)
+		}
+	}
+}
 
 func TestMapOverlaysReturnsBMKGMetadataForCoordinateAlert(t *testing.T) {
 	gin.SetMode(gin.TestMode)

@@ -46,6 +46,19 @@ WHERE ($1 = '' OR source = $1)
   AND ($2 = '' OR status = $2)
   AND ($3::boolean OR is_current = TRUE)
   AND ($4 = '' OR peril_type = $4)
+  AND (
+    status <> 'active'
+    OR (
+      (effective_at IS NULL OR effective_at <= now())
+      AND EXISTS (
+        SELECT 1
+        FROM official_source_settings s
+        WHERE s.source_name = official_alerts.source
+          AND s.enabled = TRUE
+          AND s.run_mode = 'active'
+      )
+    )
+  )
 ORDER BY sent_at DESC, revision DESC
 LIMIT $5
 `

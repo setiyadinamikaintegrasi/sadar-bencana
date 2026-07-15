@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -21,7 +25,9 @@ class ResolvedSourceSetting:
     adapter_version: str
     field_mapping: dict[str, str]
     config_version: int
+    poll_interval_seconds: int
     expected_interval_seconds: int
+    last_polled_at: datetime | None
 
 
 _ENV_URLS = {
@@ -32,6 +38,16 @@ _ENV_URLS = {
     "inarisk": "INARISK_FEED_URL",
 }
 
+_WORKER_SHADOW_PERSISTENCE_COUNTS = {
+    "official_alerts": 0,
+    "air_quality_observations": 0,
+    "ews_notification_log": 0,
+    "ews_delivery_queue": 0,
+    "source_evidence": 0,
+    "source_records": 0,
+    "disaster_observability_events": 0,
+}
+
 
 async def resolve_source_setting(
     pool: asyncpg.Pool,
@@ -40,16 +56,34 @@ async def resolve_source_setting(
     key = os.getenv("OFFICIAL_SOURCE_SETTINGS_KEY", "")
     try:
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
+            try:
+                row = await conn.fetchrow(
+                    """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
                           attribution, run_mode, adapter_version, field_mapping,
-                          config_version, expected_interval_seconds,
+                          config_version, poll_interval_seconds,
+                          expected_interval_seconds,
+                          (SELECT last_polled_at FROM connector_health
+                           WHERE name = oss.source_name) AS last_polled_at,
                           CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
                             THEN pgp_sym_decrypt(api_token_encrypted, $2) END AS api_token
-                   FROM official_source_settings WHERE source_name=$1""",
-                source_name,
-                key,
-            )
+                       FROM official_source_settings oss WHERE oss.source_name=$1""",
+                    source_name,
+                    key,
+                )
+            except asyncpg.UndefinedColumnError:
+                row = await conn.fetchrow(
+                    """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
+                              attribution, run_mode, adapter_version, field_mapping,
+                              config_version, 600 AS poll_interval_seconds,
+                              expected_interval_seconds,
+                              (SELECT last_polled_at FROM connector_health
+                               WHERE name = oss.source_name) AS last_polled_at,
+                              CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
+                                THEN pgp_sym_decrypt(api_token_encrypted, $2) END AS api_token
+                       FROM official_source_settings oss WHERE oss.source_name=$1""",
+                    source_name,
+                    key,
+                )
     except Exception:
         return None
     if row is None:
@@ -81,8 +115,80 @@ async def resolve_source_setting(
         adapter_version=str(row.get("adapter_version") or "v1"),
         field_mapping=mapping,
         config_version=int(row.get("config_version") or 1),
+        poll_interval_seconds=int(row.get("poll_interval_seconds") or 600),
         expected_interval_seconds=int(row.get("expected_interval_seconds") or 600),
+        last_polled_at=row.get("last_polled_at"),
     )
 
 
-__all__ = ["ResolvedSourceSetting", "resolve_source_setting"]
+async def source_write_is_allowed(
+    connection: asyncpg.Connection,
+    source_name: str,
+    config_version: int,
+) -> bool:
+    """Lock and verify the active config before writes in the same transaction."""
+    row = await connection.fetchrow(
+        """SELECT enabled, run_mode, config_version
+           FROM official_source_settings
+           WHERE source_name = $1
+           FOR SHARE""",
+        source_name,
+    )
+    if row is None:
+        return False
+    return (
+        bool(row["enabled"])
+        and str(row["run_mode"]) == "active"
+        and int(row["config_version"]) == config_version
+    )
+
+
+async def record_worker_shadow_evidence(
+    pool: asyncpg.Pool,
+    setting: ResolvedSourceSetting,
+    *,
+    success: bool,
+    item_count: int,
+    errors: list[str],
+) -> None:
+    """Record config-qualified worker dry-run evidence for activation gates."""
+    metadata = json.dumps(
+        {
+            "stage": "worker_shadow",
+            "config_version": setting.config_version,
+            "adapter_version": setting.adapter_version,
+            "item_count": item_count,
+            "error_count": len(errors),
+            "errors": errors[:3],
+            "zero_persistence": True,
+            "persistence_counts": _WORKER_SHADOW_PERSISTENCE_COUNTS,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    try:
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """INSERT INTO official_source_setting_audit
+                 (source_name, action, config_version, success, actor_email, metadata)
+               VALUES ($1, 'dry_run', $2, $3, $4, $5::jsonb)""",
+                setting.source_name,
+                setting.config_version,
+                success,
+                "worker@sadarbencana.local",
+                metadata,
+            )
+    except asyncpg.UndefinedTableError:
+        logger.warning(
+            "worker-shadow audit table unavailable for source %s",
+            setting.source_name,
+        )
+
+
+__all__ = [
+    "ResolvedSourceSetting",
+    "record_worker_shadow_evidence",
+    "resolve_source_setting",
+    "source_write_is_allowed",
+]

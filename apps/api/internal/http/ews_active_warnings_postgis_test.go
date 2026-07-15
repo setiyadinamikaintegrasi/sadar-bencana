@@ -57,6 +57,12 @@ CREATE TABLE official_alerts (
     is_current BOOLEAN NOT NULL DEFAULT TRUE
 );
 
+CREATE TABLE official_source_settings (
+    source_name VARCHAR(64) PRIMARY KEY,
+    enabled BOOLEAN NOT NULL,
+    run_mode VARCHAR(16) NOT NULL
+);
+
 CREATE TABLE ews_safety_guidance (
     peril_type VARCHAR(32) NOT NULL,
     language_code VARCHAR(8) NOT NULL,
@@ -67,6 +73,9 @@ CREATE TABLE ews_safety_guidance (
 `
 
 const activeWarningsPostGISFixtures = `
+INSERT INTO official_source_settings (source_name, enabled, run_mode)
+VALUES ('bmkg_cap', TRUE, 'active');
+
 INSERT INTO ews_subscribers (id, auth_user_id) VALUES
     ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001'),
     ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002');
@@ -152,6 +161,14 @@ func TestEWSMeActiveWarningsPostGIS(t *testing.T) {
 				warning.ID, warning.MatchedWatchZoneIDs, warning.MatchedWatchZoneLabels)
 		}
 	}
+
+	if _, err := db.Exec(`UPDATE official_source_settings SET enabled=FALSE WHERE source_name='bmkg_cap'`); err != nil {
+		t.Fatalf("disable source: %v", err)
+	}
+	assertActiveWarningIDs(t,
+		requestActiveWarnings(t, db, "20000000-0000-0000-0000-000000000001"),
+		[]string{},
+	)
 }
 
 type activeWarningsResponse struct {

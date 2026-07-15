@@ -8,7 +8,7 @@ import os
 import time
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -56,6 +56,8 @@ _setup_logging()
 from alerts import evaluate_and_create_alerts
 from alerts.lifecycle_delivery import (
     enqueue_official_alert_revision,
+    expire_and_enqueue_official_alert_revisions,
+    persist_official_alert_revision,
     process_due_deliveries,
 )
 from connectors.aisstream import AISStreamConnector
@@ -94,10 +96,13 @@ from db.events import fetch_top_events, upsert_events
 from db.evidence import create_impact_report, create_risk_context, create_source_record
 from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
-from db.official_alerts import expire_official_alert_revisions
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
-from db.source_settings import resolve_source_setting
+from db.source_settings import (
+    record_worker_shadow_evidence,
+    resolve_source_setting,
+    source_write_is_allowed,
+)
 from db.scoring_context import load_risk_scoring_contexts
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
@@ -342,6 +347,36 @@ def _masked_email(value: str) -> str:
     return f"{local[:1]}***@{domain}"
 
 
+async def _official_alert_topology_errors(
+    pool: asyncpg.Pool,
+    alerts: list[Any],
+) -> list[str]:
+    """Validate polygon topology with the same PostGIS primitive as persistence."""
+    errors: list[str] = []
+    async with pool.acquire() as connection:
+        for alert in alerts:
+            if alert.area_geojson is None:
+                continue
+            try:
+                valid = await connection.fetchval(
+                    """SELECT ST_IsValid(
+                           ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)
+                       )""",
+                    json.dumps(alert.area_geojson, separators=(",", ":")),
+                )
+                if not valid:
+                    errors.append(
+                        f"warning {alert.source_alert_id}: "
+                        "area_geojson topology is invalid"
+                    )
+            except Exception as exc:
+                errors.append(
+                    f"warning {alert.source_alert_id}: "
+                    f"area_geojson topology validation failed: {exc}"
+                )
+    return errors
+
+
 async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
     setting = await resolve_source_setting(pool, "bmkg_cap")
     if setting is not None:
@@ -349,15 +384,22 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
             return 0
         rss_url, api_token = setting.api_url, setting.api_token
         run_mode = setting.run_mode
+        config_version = getattr(setting, "config_version", None)
     else:
         if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
             return 0
         rss_url, api_token = "https://www.bmkg.go.id/alerts/nowcast/id", None
         run_mode = "active"
+        config_version = None
 
     connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
     try:
         alerts, detail_errors = await connector.fetch_active()
+        if run_mode == "dry_run" and config_version is not None:
+            detail_errors = [
+                *detail_errors,
+                *await _official_alert_topology_errors(pool, alerts),
+            ]
         error_message = "; ".join(detail_errors[:3]) if detail_errors else None
         await upsert_connector_health(
             pool,
@@ -366,18 +408,25 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
             error_message,
         )
         if run_mode == "dry_run":
+            if setting is not None and config_version is not None:
+                await record_worker_shadow_evidence(
+                    pool,
+                    setting,
+                    success=not detail_errors,
+                    item_count=len(alerts),
+                    errors=detail_errors,
+                )
             return 0
 
         created = 0
         for alert in alerts:
-            source_url = str(alert.raw_payload.get("source_url") or "")
-            correlation_id = disaster_correlation_id(
-                alert.source,
-                alert.source_alert_id,
-            )
-            await create_source_record(
-                pool,
-                SourceRecordInput(
+            try:
+                source_url = str(alert.raw_payload.get("source_url") or "")
+                correlation_id = disaster_correlation_id(
+                    alert.source,
+                    alert.source_alert_id,
+                )
+                source_record = SourceRecordInput(
                     source_name="bmkg_cap",
                     source_record_id=alert.source_alert_id,
                     source_type="official",
@@ -386,30 +435,56 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
                     observed_at=alert.effective_at,
                     published_at=alert.sent_at,
                     raw_payload=alert.raw_payload,
-                ),
-            )
-            await record_observation(
-                pool,
-                correlation_id=correlation_id,
-                stage="raw_source_ingested",
-                source_name=alert.source,
-                peril_type="weather",
-            )
-            official_row, was_created = await upsert_official_alert(pool, alert)
-            created += int(was_created)
-            await record_observation(
-                pool,
-                correlation_id=correlation_id,
-                stage="official_alert_revision",
-                source_name=alert.source,
-                peril_type="weather",
-                metadata={
-                    "revision": official_row.get("revision"),
-                    "created": was_created,
-                },
-            )
-            if was_created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
-                await enqueue_official_alert_revision(pool, official_row)
+                )
+                if config_version is None:
+                    await create_source_record(pool, source_record)
+                    official_row, was_created = await upsert_official_alert(
+                        pool,
+                        alert,
+                    )
+                    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+                        await enqueue_official_alert_revision(pool, official_row)
+                    allowed = True
+                else:
+                    official_row, was_created, allowed = (
+                        await persist_official_alert_revision(
+                            pool,
+                            alert,
+                            source_record=source_record,
+                            source_name="bmkg_cap",
+                            expected_config_version=config_version,
+                            delivery_enabled=_env_enabled(
+                                "EWS_LIFECYCLE_DELIVERY_ENABLED"
+                            ),
+                        )
+                    )
+                if not allowed:
+                    break
+                created += int(was_created)
+                await record_observation(
+                    pool,
+                    correlation_id=correlation_id,
+                    stage="raw_source_ingested",
+                    source_name=alert.source,
+                    peril_type="weather",
+                )
+                await record_observation(
+                    pool,
+                    correlation_id=correlation_id,
+                    stage="official_alert_revision",
+                    source_name=alert.source,
+                    peril_type="weather",
+                    metadata={
+                        "revision": official_row.get("revision"),
+                        "created": was_created,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "BMKG CAP record %s rejected during persistence: %s",
+                    alert.source_alert_id,
+                    exc,
+                )
 
         return created
     except Exception as exc:
@@ -420,19 +495,61 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         await connector.close()
 
 
-async def _bmkg_air_quality_cycle(pool: asyncpg.Pool) -> dict[str, int]:
+async def _persist_air_quality_observation(
+    pool: asyncpg.Pool,
+    observation: Any,
+    *,
+    expected_config_version: int,
+) -> bool:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if not await source_write_is_allowed(
+                conn,
+                "bmkg_air_quality",
+                expected_config_version,
+            ):
+                return False
+            await upsert_air_quality_observation(
+                pool,
+                observation,
+                connection=conn,
+            )
+            return True
+
+
+async def _bmkg_air_quality_cycle(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int]:
     setting = await resolve_source_setting(pool, "bmkg_air_quality")
     if setting is None or not setting.enabled or not setting.api_url:
+        return {"warnings": 0, "observations": 0}
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    last_polled_at = getattr(setting, "last_polled_at", None)
+    if (
+        last_polled_at is not None
+        and current_time - last_polled_at.astimezone(timezone.utc)
+        < timedelta(seconds=setting.poll_interval_seconds)
+    ):
         return {"warnings": 0, "observations": 0}
 
     connector = None
     try:
-        connector = BMKGAirQualityConnector(setting.api_url)
+        connector = BMKGAirQualityConnector(
+            setting.api_url,
+            api_token=setting.api_token,
+        )
         payload = await connector.fetch_payload()
         warnings, observations, record_errors = parse_air_quality_payload(
             payload,
             setting.field_mapping,
         )
+        if setting.run_mode == "dry_run":
+            record_errors = [
+                *record_errors,
+                *await _official_alert_topology_errors(pool, warnings),
+            ]
         health_error = "; ".join(record_errors[:3]) if record_errors else None
         await upsert_connector_health(
             pool,
@@ -441,13 +558,19 @@ async def _bmkg_air_quality_cycle(pool: asyncpg.Pool) -> dict[str, int]:
             health_error,
         )
         if setting.run_mode == "dry_run":
+            await record_worker_shadow_evidence(
+                pool,
+                setting,
+                success=not record_errors,
+                item_count=len(warnings) + len(observations),
+                errors=record_errors,
+            )
             return {"warnings": 0, "observations": 0}
 
         created_warnings = 0
         for warning in warnings:
-            await create_source_record(
-                pool,
-                SourceRecordInput(
+            try:
+                source_record = SourceRecordInput(
                     source_name="bmkg_air_quality",
                     source_record_id=warning.source_alert_id,
                     source_type="official",
@@ -456,15 +579,42 @@ async def _bmkg_air_quality_cycle(pool: asyncpg.Pool) -> dict[str, int]:
                     observed_at=warning.effective_at,
                     published_at=warning.sent_at,
                     raw_payload=warning.raw_payload,
-                ),
-            )
-            row, created = await upsert_official_alert(pool, warning)
-            created_warnings += int(created)
-            if created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
-                await enqueue_official_alert_revision(pool, row)
+                )
+                _, created, allowed = await persist_official_alert_revision(
+                    pool,
+                    warning,
+                    source_record=source_record,
+                    source_name="bmkg_air_quality",
+                    expected_config_version=setting.config_version,
+                    delivery_enabled=_env_enabled(
+                        "EWS_LIFECYCLE_DELIVERY_ENABLED"
+                    ),
+                )
+                if not allowed:
+                    return {"warnings": 0, "observations": 0}
+                created_warnings += int(created)
+            except Exception as exc:
+                logger.warning(
+                    "BMKG air-quality warning %s rejected during persistence: %s",
+                    warning.source_alert_id,
+                    exc,
+                )
 
         for observation in observations:
-            await upsert_air_quality_observation(pool, observation)
+            try:
+                allowed = await _persist_air_quality_observation(
+                    pool,
+                    observation,
+                    expected_config_version=setting.config_version,
+                )
+                if not allowed:
+                    return {"warnings": created_warnings, "observations": 0}
+            except Exception as exc:
+                logger.warning(
+                    "BMKG air-quality observation %s rejected during persistence: %s",
+                    observation.station_id,
+                    exc,
+                )
 
         await delete_old_air_quality_observations(pool)
         return {
@@ -896,10 +1046,10 @@ async def _news_poll_cycle() -> int:
 
 async def _expire_official_alerts_once() -> int:
     pool = get_pool()
-    expired = await expire_official_alert_revisions(pool)
-    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
-        for revision in expired:
-            await enqueue_official_alert_revision(pool, revision)
+    expired = await expire_and_enqueue_official_alert_revisions(
+        pool,
+        delivery_enabled=_env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"),
+    )
     return len(expired)
 
 

@@ -392,8 +392,28 @@ export async function dryRunOfficialSource(source: string): Promise<OfficialSour
   return response.data
 }
 
-export async function activateOfficialSource(source: string): Promise<void> {
-  await request(`/settings/official-sources/${encodeURIComponent(source)}/activate`, { method: 'POST' })
+export type OfficialSourceActivationInput = {
+  approval_reference: string
+  approval_note: string
+}
+
+export async function activateOfficialSource(
+  source: string,
+  input: OfficialSourceActivationInput,
+): Promise<void> {
+  const approvalReference = input.approval_reference.trim()
+  const approvalNote = input.approval_note.trim()
+  if (!approvalReference || !approvalNote) {
+    throw new Error('Approval reference dan catatan wajib diisi.')
+  }
+  await request(`/settings/official-sources/${encodeURIComponent(source)}/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      approval_reference: approvalReference,
+      approval_note: approvalNote,
+    }),
+  })
 }
 
 export type OfficialSourceHistory = {

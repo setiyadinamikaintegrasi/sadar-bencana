@@ -29,12 +29,16 @@ type MapOverlay struct {
 const officialOverlayQuery = `
 SELECT id, headline, area_geojson, latitude, longitude, effective_at,
        expires_at, source, peril_type, source_url
-FROM official_alerts
-WHERE is_current = TRUE
-  AND status = 'active'
-  AND (area_geojson IS NOT NULL OR (latitude IS NOT NULL AND longitude IS NOT NULL))
-  AND (expires_at IS NULL OR expires_at > now())
-ORDER BY sent_at DESC
+FROM official_alerts oa
+JOIN official_source_settings s ON s.source_name = oa.source
+WHERE oa.is_current = TRUE
+  AND oa.status = 'active'
+  AND s.enabled = TRUE
+  AND s.run_mode = 'active'
+  AND (oa.area_geojson IS NOT NULL OR (oa.latitude IS NOT NULL AND oa.longitude IS NOT NULL))
+  AND (oa.effective_at IS NULL OR oa.effective_at <= now())
+  AND (oa.expires_at IS NULL OR oa.expires_at > now())
+ORDER BY oa.sent_at DESC
 LIMIT 200
 `
 

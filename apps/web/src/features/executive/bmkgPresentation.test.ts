@@ -123,9 +123,14 @@ describe('BMKG presentation', () => {
     const elapsed = officialAlert({ id: 'elapsed', expires_at: '2026-07-15T04:59:59Z' })
     const cancelled = officialAlert({ id: 'cancelled', status: 'cancelled' })
     const updated = officialAlert({ id: 'updated', status: 'updated' })
+    const future = officialAlert({
+      id: 'future',
+      effective_at: '2026-07-15T05:00:01Z',
+      expires_at: '2026-07-15T07:00:00Z',
+    })
 
     expect(filterActiveOfficialAlerts(
-      [active, noExpiry, elapsed, cancelled, updated],
+      [active, noExpiry, elapsed, cancelled, updated, future],
       now,
     ).map((alert) => alert.id)).toEqual(['active', 'no-expiry'])
   })
