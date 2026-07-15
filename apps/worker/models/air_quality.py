@@ -5,9 +5,35 @@ from __future__ import annotations
 from datetime import datetime
 from math import isfinite
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, parse_qsl, urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+_SENSITIVE_QUERY_KEYS = frozenset({"auth", "key", "secret", "signature", "token"})
+_SENSITIVE_QUERY_KEY_SUFFIXES = (
+    "apikey",
+    "accesstoken",
+    "refreshtoken",
+    "clientsecret",
+    "signature",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "passwd",
+)
+
+
+def _source_url_contains_credentials(parsed: ParseResult) -> bool:
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+        return True
+    query = parsed.query.replace(";", "&")
+    for raw_key, _ in parse_qsl(query, keep_blank_values=True):
+        key = "".join(character for character in raw_key.lower() if character.isalnum())
+        if key in _SENSITIVE_QUERY_KEYS or key.endswith(_SENSITIVE_QUERY_KEY_SUFFIXES):
+            return True
+    return False
 
 
 def _is_json_compatible(value: Any) -> bool:
@@ -70,12 +96,14 @@ class AirQualityObservationInput(BaseModel):
             ) from exc
         if (
             parsed.scheme != "https"
-            or parsed.username is not None
-            or parsed.password is not None
             or port not in (None, 443)
             or not (host == "bmkg.go.id" or host.endswith(".bmkg.go.id"))
         ):
             raise ValueError("source_url must use an official BMKG HTTPS host")
+        if _source_url_contains_credentials(parsed):
+            raise ValueError(
+                "source_url must use an official BMKG HTTPS host without credentials"
+            )
         return value
 
     @field_validator("raw_payload", mode="before")

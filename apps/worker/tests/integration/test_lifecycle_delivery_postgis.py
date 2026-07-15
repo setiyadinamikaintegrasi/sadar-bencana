@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
 
-from alerts.lifecycle_delivery import enqueue_official_alert_revision
+from alerts import lifecycle_delivery
+from alerts.lifecycle_delivery import (
+    enqueue_official_alert_revision,
+    expire_and_enqueue_official_alert_revisions,
+    process_due_deliveries,
+)
 from db.official_alerts import expire_official_alert_revisions, upsert_official_alert
 from models.official_alert import OfficialAlertInput
 
@@ -107,8 +114,24 @@ CREATE TABLE official_alerts (
     UNIQUE (source, source_alert_id, payload_checksum)
 );
 
+CREATE TABLE official_source_settings (
+    source_name VARCHAR(64) PRIMARY KEY,
+    enabled BOOLEAN NOT NULL,
+    run_mode VARCHAR(16) NOT NULL
+);
+
+CREATE TABLE alerts (
+    id UUID PRIMARY KEY,
+    message TEXT,
+    severity TEXT,
+    alert_type TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE ews_subscribers (
     id UUID PRIMARY KEY,
+    email TEXT,
+    telegram_chat_id BIGINT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
@@ -143,12 +166,19 @@ CREATE TABLE ews_notification_log (
     official_alert_id UUID REFERENCES official_alerts(id),
     channel TEXT NOT NULL,
     status TEXT NOT NULL,
+    alert_id UUID REFERENCES alerts(id),
     source VARCHAR(64),
     source_alert_id VARCHAR(255),
     alert_revision INT,
     lifecycle_action VARCHAR(16),
     next_attempt_at TIMESTAMPTZ,
+    attempt_count INT NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMPTZ,
+    dead_lettered_at TIMESTAMPTZ,
     error_message TEXT,
+    sent_at TIMESTAMPTZ,
+    provider_id TEXT,
+    delivery_latency_ms BIGINT,
     correlation_id UUID,
     delivery_kind TEXT NOT NULL,
     matched_watch_zone_id UUID REFERENCES ews_watch_zones(id),
@@ -182,6 +212,11 @@ async def isolated_lifecycle_database():
             await conn.execute(
                 "INSERT INTO ews_channel_settings (channel, is_enabled) "
                 "VALUES ('email', TRUE), ('telegram', TRUE)"
+            )
+            await conn.execute(
+                "INSERT INTO official_source_settings "
+                "(source_name, enabled, run_mode) "
+                "VALUES ('bmkg_cap', TRUE, 'active')"
             )
         yield pool
     finally:
@@ -300,7 +335,9 @@ async def insert_recipient(
     subscriber_id = uuid4()
     zone_id = uuid4()
     await conn.execute(
-        "INSERT INTO ews_subscribers (id) VALUES ($1)", subscriber_id
+        "INSERT INTO ews_subscribers (id, email) VALUES ($1, $2)",
+        subscriber_id,
+        f"{subscriber_id}@example.test",
     )
     await conn.execute(
         """
@@ -329,6 +366,56 @@ async def insert_recipient(
         zone_created_at or datetime.now(timezone.utc),
     )
     return subscriber_id, zone_id
+
+
+class BlockingAdapter:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def send(self, *_args, **_kwargs):
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return {"success": True, "provider_id": f"provider-{self.calls}"}
+
+
+def cap_lifecycle_input(
+    identifier: str,
+    *,
+    sent_at: datetime,
+    message_type: str = "alert",
+    referenced_identifier: str | None = None,
+) -> OfficialAlertInput:
+    references = []
+    if referenced_identifier is not None:
+        references = [{
+            "sender": "nowcast@bmkg.go.id",
+            "identifier": referenced_identifier,
+            "sent": (sent_at - timedelta(minutes=1)).isoformat(),
+        }]
+    return OfficialAlertInput(
+        source="bmkg_cap",
+        source_alert_id=identifier,
+        message_type=message_type,
+        status="cancelled" if message_type == "cancel" else "active",
+        sent_at=sent_at,
+        effective_at=None if message_type == "cancel" else sent_at,
+        expires_at=None if message_type == "cancel" else sent_at + timedelta(hours=1),
+        headline=None if message_type == "cancel" else f"Warning {identifier}",
+        description=None,
+        area_geojson=None if message_type == "cancel" else JAKARTA_POLYGON,
+        raw_payload={
+            "message_identifier": identifier,
+            "references": references,
+            "referenced_message_identifiers": (
+                [referenced_identifier] if referenced_identifier else []
+            ),
+        },
+        peril_type="weather",
+        severity="High",
+    )
 
 
 def migration_geometry_validation_sql() -> str:
@@ -560,6 +647,248 @@ async def test_lifecycle_change_before_first_send_supersedes_stale_queue(
                 "lifecycle_action": expected_action,
                 "status": "pending",
             },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_parallel_workers_claim_and_send_a_delivery_once(monkeypatch):
+    adapter = BlockingAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            alert = await insert_alert(
+                conn,
+                source_alert_id="parallel-claim",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, alert) == 1
+
+        first = asyncio.create_task(process_due_deliveries(pool))
+        await asyncio.wait_for(adapter.started.wait(), timeout=2)
+        second_result = await process_due_deliveries(pool)
+        adapter.release.set()
+        first_result = await asyncio.wait_for(first, timeout=2)
+
+        assert adapter.calls == 1
+        assert second_result == {"sent": 0, "failed": 0, "dead_letter": 0}
+        assert first_result == {"sent": 1, "failed": 0, "dead_letter": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_type", "status", "expected_action"),
+    [("update", "active", "update"), ("cancel", "cancelled", "cancellation")],
+)
+async def test_inflight_delivery_cannot_overwrite_superseding_revision(
+    monkeypatch,
+    message_type: str,
+    status: str,
+    expected_action: str,
+):
+    adapter = BlockingAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            initial = await insert_alert(
+                conn,
+                source_alert_id="inflight-change",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, initial) == 1
+
+        sending = asyncio.create_task(process_due_deliveries(pool))
+        await asyncio.wait_for(adapter.started.wait(), timeout=2)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE official_alerts SET is_current=FALSE WHERE id=$1",
+                initial["id"],
+            )
+            changed = await insert_alert(
+                conn,
+                source_alert_id="inflight-change",
+                revision=2,
+                message_type=message_type,
+                status=status,
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, changed) == 1
+
+        adapter.release.set()
+        result = await asyncio.wait_for(sending, timeout=2)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT alert_revision, lifecycle_action, status "
+                "FROM ews_notification_log ORDER BY alert_revision"
+            )
+
+        assert result == {"sent": 0, "failed": 0, "dead_letter": 0}
+        assert [dict(row) for row in rows] == [
+            {"alert_revision": 1, "lifecycle_action": "alert", "status": "skipped"},
+            {
+                "alert_revision": 2,
+                "lifecycle_action": expected_action,
+                "status": "pending",
+            },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_skips_pending_delivery_without_send(monkeypatch):
+    adapter = AsyncMock()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            alert = await insert_alert(
+                conn,
+                source_alert_id="disabled-pending",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, alert) == 1
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE official_source_settings "
+                "SET enabled=FALSE, run_mode='disabled' "
+                "WHERE source_name='bmkg_cap'"
+            )
+
+        result = await process_due_deliveries(pool)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, error_message FROM ews_notification_log"
+            )
+
+        assert result == {"sent": 0, "failed": 0, "dead_letter": 0}
+        adapter.send.assert_not_awaited()
+        assert dict(row) == {
+            "status": "skipped",
+            "error_message": "source_disabled_or_not_active",
+        }
+
+
+@pytest.mark.asyncio
+async def test_disable_during_send_prevents_success_callback(monkeypatch):
+    adapter = BlockingAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            alert = await insert_alert(
+                conn,
+                source_alert_id="disabled-inflight",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, alert) == 1
+
+        sending = asyncio.create_task(process_due_deliveries(pool))
+        await asyncio.wait_for(adapter.started.wait(), timeout=2)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE official_source_settings "
+                "SET enabled=FALSE, run_mode='disabled' "
+                "WHERE source_name='bmkg_cap'"
+            )
+        adapter.release.set()
+        result = await asyncio.wait_for(sending, timeout=2)
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, error_message, sent_at FROM ews_notification_log"
+            )
+        assert result == {"sent": 0, "failed": 0, "dead_letter": 0}
+        assert dict(row) == {
+            "status": "skipped",
+            "error_message": "source_disabled_or_not_active",
+            "sent_at": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_is_not_expired_or_enqueued():
+    now = datetime(2026, 7, 15, 5, 0, tzinfo=timezone.utc)
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            alert = await insert_alert(
+                conn,
+                source_alert_id="disabled-expiry",
+                expires_at=now - timedelta(minutes=1),
+            )
+            await conn.execute(
+                "UPDATE official_source_settings "
+                "SET enabled=FALSE, run_mode='disabled' "
+                "WHERE source_name='bmkg_cap'"
+            )
+
+        expired = await expire_and_enqueue_official_alert_revisions(
+            pool,
+            delivery_enabled=True,
+            now=now,
+        )
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status FROM official_alerts WHERE id=$1",
+                alert["id"],
+            )
+            queue_count = await conn.fetchval("SELECT count(*) FROM ews_notification_log")
+
+        assert expired == []
+        assert row["status"] == "active"
+        assert queue_count == 0
+
+
+@pytest.mark.asyncio
+async def test_cap_reference_chain_resolves_to_one_lifecycle_and_queue():
+    now = datetime(2026, 7, 15, 5, 0, tzinfo=timezone.utc)
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+
+        inputs = [
+            cap_lifecycle_input("A", sent_at=now),
+            cap_lifecycle_input(
+                "B", sent_at=now + timedelta(minutes=1),
+                message_type="update", referenced_identifier="A",
+            ),
+            cap_lifecycle_input(
+                "C", sent_at=now + timedelta(minutes=2),
+                message_type="update", referenced_identifier="B",
+            ),
+            cap_lifecycle_input(
+                "D", sent_at=now + timedelta(minutes=3),
+                message_type="cancel", referenced_identifier="C",
+            ),
+        ]
+        for alert_input in inputs:
+            row, created = await upsert_official_alert(pool, alert_input, now=now)
+            assert created is True
+            await enqueue_official_alert_revision(pool, row)
+
+        async with pool.acquire() as conn:
+            alerts = await conn.fetch(
+                "SELECT source_alert_id, revision, is_current, status, "
+                "raw_payload->>'message_identifier' AS message_identifier "
+                "FROM official_alerts ORDER BY revision"
+            )
+            queue = await conn.fetch(
+                "SELECT alert_revision, lifecycle_action, status "
+                "FROM ews_notification_log ORDER BY alert_revision"
+            )
+
+        assert [row["source_alert_id"] for row in alerts] == ["A"] * 4
+        assert [row["revision"] for row in alerts] == [1, 2, 3, 4]
+        assert [row["message_identifier"] for row in alerts] == ["A", "B", "C", "D"]
+        assert [row["is_current"] for row in alerts] == [False, False, False, True]
+        assert alerts[-1]["status"] == "cancelled"
+        assert [dict(row) for row in queue] == [
+            {"alert_revision": 1, "lifecycle_action": "alert", "status": "skipped"},
+            {"alert_revision": 2, "lifecycle_action": "update", "status": "skipped"},
+            {"alert_revision": 3, "lifecycle_action": "update", "status": "skipped"},
+            {"alert_revision": 4, "lifecycle_action": "cancellation", "status": "pending"},
         ]
 
 

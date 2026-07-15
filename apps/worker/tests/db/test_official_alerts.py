@@ -260,3 +260,12 @@ async def test_expire_revisions_returns_structured_metadata():
         "source_url",
     ):
         assert field in expire_sql
+
+
+def test_expiry_requires_an_active_official_source():
+    sql = " ".join(__import__("db.official_alerts", fromlist=["_EXPIRE_SQL"])._EXPIRE_SQL.split())
+
+    assert "official_source_settings" in sql
+    assert "enabled = TRUE" in sql
+    assert "run_mode = 'active'" in sql
+    assert "FOR SHARE" in sql

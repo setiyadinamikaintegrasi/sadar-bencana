@@ -20,6 +20,7 @@ from observability import disaster_correlation_id, record_observation
 
 MAX_DELIVERY_ATTEMPTS = 5
 BASE_RETRY_SECONDS = 30
+DELIVERY_LEASE_SECONDS = 300
 
 _ENQUEUE_ACTIVE_SQL = """
 INSERT INTO ews_notification_log (
@@ -103,6 +104,37 @@ WHERE source = $1
   AND status IN ('pending', 'failed')
 """
 
+_SKIP_DISABLED_SQL = """
+UPDATE ews_notification_log l
+SET status = 'skipped',
+    error_message = 'source_disabled_or_not_active',
+    next_attempt_at = NULL
+WHERE l.delivery_kind = 'official_lifecycle'
+  AND l.status IN ('pending', 'failed')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM official_source_settings source_setting
+    WHERE source_setting.source_name = l.source
+      AND source_setting.enabled = TRUE
+      AND source_setting.run_mode = 'active'
+  )
+"""
+
+_SKIP_STALE_SQL = """
+UPDATE ews_notification_log l
+SET status = 'skipped',
+    error_message = 'official_alert_revision_not_current',
+    next_attempt_at = NULL
+WHERE l.delivery_kind = 'official_lifecycle'
+  AND l.status IN ('pending', 'failed')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM official_alerts current_alert
+    WHERE current_alert.id = l.official_alert_id
+      AND current_alert.is_current = TRUE
+  )
+"""
+
 _CLAIM_DUE_SQL = """
 WITH due AS (
     SELECT l.id
@@ -117,8 +149,12 @@ WITH due AS (
         OR EXISTS (
           SELECT 1
           FROM official_alerts current_alert
+          JOIN official_source_settings source_setting
+            ON source_setting.source_name = current_alert.source
           WHERE current_alert.id = l.official_alert_id
             AND current_alert.is_current = TRUE
+            AND source_setting.enabled = TRUE
+            AND source_setting.run_mode = 'active'
         )
       )
     ORDER BY l.next_attempt_at
@@ -127,7 +163,8 @@ WITH due AS (
 ), claimed AS (
     UPDATE ews_notification_log l
     SET attempt_count = l.attempt_count + 1,
-        last_attempt_at = now()
+        last_attempt_at = now(),
+        next_attempt_at = now() + ($3 * interval '1 second')
     FROM due
     WHERE l.id = due.id
     RETURNING l.*
@@ -149,8 +186,27 @@ UPDATE ews_notification_log
 SET status = 'sent', error_message = NULL, sent_at = $2,
     next_attempt_at = NULL,
     provider_id = $4,
-    delivery_latency_ms = GREATEST(0, (EXTRACT(EPOCH FROM ($2 - $3)) * 1000)::bigint)
+    delivery_latency_ms = GREATEST(
+        0,
+        (EXTRACT(EPOCH FROM ($2::timestamptz - $3::timestamptz)) * 1000)::bigint
+    )
 WHERE id = $1
+  AND attempt_count = $5
+  AND status IN ('pending', 'failed')
+  AND (
+    delivery_kind <> 'official_lifecycle'
+    OR EXISTS (
+      SELECT 1
+      FROM official_alerts current_alert
+      JOIN official_source_settings source_setting
+        ON source_setting.source_name = current_alert.source
+      WHERE current_alert.id = ews_notification_log.official_alert_id
+        AND current_alert.is_current = TRUE
+        AND source_setting.enabled = TRUE
+        AND source_setting.run_mode = 'active'
+    )
+  )
+RETURNING id
 """
 
 _MARK_FAILED_SQL = """
@@ -158,6 +214,22 @@ UPDATE ews_notification_log
 SET status = $2, error_message = $3, next_attempt_at = $4,
     dead_lettered_at = CASE WHEN $2 = 'dead_letter' THEN now() ELSE NULL END
 WHERE id = $1
+  AND attempt_count = $5
+  AND status IN ('pending', 'failed')
+  AND (
+    delivery_kind <> 'official_lifecycle'
+    OR EXISTS (
+      SELECT 1
+      FROM official_alerts current_alert
+      JOIN official_source_settings source_setting
+        ON source_setting.source_name = current_alert.source
+      WHERE current_alert.id = ews_notification_log.official_alert_id
+        AND current_alert.is_current = TRUE
+        AND source_setting.enabled = TRUE
+        AND source_setting.run_mode = 'active'
+    )
+  )
+RETURNING id
 """
 
 
@@ -324,10 +396,13 @@ async def process_due_deliveries(
     current = now or datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await conn.execute(_SKIP_DISABLED_SQL)
+            await conn.execute(_SKIP_STALE_SQL)
             rows = await conn.fetch(
                 _CLAIM_DUE_SQL,
                 MAX_DELIVERY_ATTEMPTS,
                 batch_size,
+                DELIVERY_LEASE_SECONDS,
             )
 
     result = {"sent": 0, "failed": 0, "dead_letter": 0}
@@ -364,14 +439,21 @@ async def process_due_deliveries(
             error = send_result.get("error")
 
         async with pool.acquire() as conn:
+            # Recheck containment/currentness after network I/O. A disable,
+            # rollback, update, or cancellation may have committed meanwhile.
+            await conn.execute(_SKIP_DISABLED_SQL)
+            await conn.execute(_SKIP_STALE_SQL)
             if send_result.get("success"):
-                await conn.execute(
+                updated_id = await conn.fetchval(
                     _MARK_SENT_SQL,
                     row["id"],
                     current,
                     row["source_sent_at"],
                     send_result.get("provider_id"),
+                    row["attempt_count"],
                 )
+                if updated_id is None:
+                    continue
                 result["sent"] += 1
                 if row.get("correlation_id"):
                     await record_observation(
@@ -394,13 +476,16 @@ async def process_due_deliveries(
                 dead = attempts >= MAX_DELIVERY_ATTEMPTS
                 status = "dead_letter" if dead else "failed"
                 next_attempt = None if dead else current + retry_delay(attempts)
-                await conn.execute(
+                updated_id = await conn.fetchval(
                     _MARK_FAILED_SQL,
                     row["id"],
                     status,
                     error or "delivery_failed",
                     next_attempt,
+                    row["attempt_count"],
                 )
+                if updated_id is None:
+                    continue
                 result[status] += 1
                 if row.get("correlation_id"):
                     await record_observation(

@@ -45,6 +45,18 @@ FROM official_alerts
 WHERE source = $1 AND source_alert_id = $2
 """
 
+_FIND_CAP_MESSAGE_SQL = """
+SELECT source_alert_id, raw_payload
+FROM official_alerts
+WHERE source = $1
+  AND (
+    raw_payload->>'message_identifier' = $2
+    OR source_alert_id = $2
+  )
+ORDER BY is_current DESC, sent_at DESC, revision DESC
+LIMIT 1
+"""
+
 _INSERT_SQL = f"""
 INSERT INTO official_alerts (
     source, source_alert_id, revision, message_type, status, sent_at,
@@ -60,12 +72,20 @@ RETURNING {_RETURNING_COLUMNS}
 """
 
 _EXPIRE_SQL = f"""
-UPDATE official_alerts
+WITH active_sources AS MATERIALIZED (
+    SELECT source_name
+    FROM official_source_settings
+    WHERE enabled = TRUE AND run_mode = 'active'
+    FOR SHARE
+)
+UPDATE official_alerts alerts
 SET status = 'expired'
-WHERE is_current = TRUE
-  AND status = 'active'
-  AND expires_at IS NOT NULL
-  AND expires_at <= $1
+FROM active_sources source_settings
+WHERE source_settings.source_name = alerts.source
+  AND alerts.is_current = TRUE
+  AND alerts.status = 'active'
+  AND alerts.expires_at IS NOT NULL
+  AND alerts.expires_at <= $1
 RETURNING {_RETURNING_COLUMNS}
 """
 
@@ -97,6 +117,63 @@ def _current_status(alert: OfficialAlertInput, now: datetime) -> str:
     return "active"
 
 
+def _referenced_message_identifiers(payload: dict[str, Any]) -> list[str]:
+    raw_identifiers = payload.get("referenced_message_identifiers")
+    if isinstance(raw_identifiers, list):
+        return [
+            str(identifier).strip()
+            for identifier in raw_identifiers
+            if str(identifier).strip()
+        ]
+    references = payload.get("references")
+    if not isinstance(references, list):
+        return []
+    return [
+        str(reference.get("identifier") or "").strip()
+        for reference in references
+        if isinstance(reference, dict)
+        and str(reference.get("identifier") or "").strip()
+    ]
+
+
+async def _resolve_cap_lifecycle_id(
+    conn: asyncpg.Connection,
+    alert: OfficialAlertInput,
+) -> str:
+    """Resolve immediate CAP references to the persisted canonical lifecycle.
+
+    New rows store the canonical lifecycle in ``source_alert_id`` while retaining
+    the CAP message identifier in raw payload. Following legacy rows recursively
+    keeps chains coherent across deployments of this resolver.
+    """
+    if alert.source != "bmkg_cap" or alert.message_type == "alert":
+        return alert.source_alert_id
+    pending = _referenced_message_identifiers(alert.raw_payload)
+    if not pending:
+        return alert.source_alert_id
+    fallback = pending[0]
+    visited: set[str] = {alert.source_alert_id}
+    while pending:
+        identifier = pending.pop(0)
+        if identifier in visited:
+            continue
+        visited.add(identifier)
+        row = await conn.fetchrow(_FIND_CAP_MESSAGE_SQL, alert.source, identifier)
+        if row is None:
+            return identifier
+        canonical = str(row["source_alert_id"])
+        if canonical != identifier:
+            return canonical
+        raw_payload = row["raw_payload"]
+        if isinstance(raw_payload, str):
+            raw_payload = json.loads(raw_payload)
+        parent_identifiers = _referenced_message_identifiers(raw_payload or {})
+        if not parent_identifiers:
+            return canonical
+        pending = [*parent_identifiers, *pending]
+    return fallback
+
+
 async def upsert_official_alert(
     pool: asyncpg.Pool,
     alert: OfficialAlertInput,
@@ -111,18 +188,23 @@ async def upsert_official_alert(
     """
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     checksum = payload_checksum(alert.raw_payload)
-    lock_key = f"{alert.source}:{alert.source_alert_id}"
 
     async def execute(conn: asyncpg.Connection) -> tuple[dict[str, Any], bool]:
+        canonical_source_alert_id = await _resolve_cap_lifecycle_id(conn, alert)
+        persisted_alert = (
+            alert
+            if canonical_source_alert_id == alert.source_alert_id
+            else alert.model_copy(update={"source_alert_id": canonical_source_alert_id})
+        )
         await conn.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-            lock_key,
+            f"{persisted_alert.source}:{persisted_alert.source_alert_id}",
         )
 
         duplicate = await conn.fetchrow(
             _FIND_PAYLOAD_SQL,
-            alert.source,
-            alert.source_alert_id,
+            persisted_alert.source,
+            persisted_alert.source_alert_id,
             checksum,
         )
         if duplicate is not None:
@@ -130,52 +212,52 @@ async def upsert_official_alert(
 
         previous = await conn.fetchrow(
             _FIND_CURRENT_SQL,
-            alert.source,
-            alert.source_alert_id,
+            persisted_alert.source,
+            persisted_alert.source_alert_id,
         )
         revision = int(
             await conn.fetchval(
                 _NEXT_REVISION_SQL,
-                alert.source,
-                alert.source_alert_id,
+                persisted_alert.source,
+                persisted_alert.source_alert_id,
             )
         )
         previous_id = None
         is_current = True
         if previous is not None:
             previous_id = previous["id"]
-            is_current = alert.sent_at > previous["sent_at"]
+            is_current = persisted_alert.sent_at > previous["sent_at"]
             if is_current:
                 await conn.execute(_SUPERSEDE_SQL, previous_id)
 
-        status = _current_status(alert, current_time)
+        status = _current_status(persisted_alert, current_time)
         if not is_current and status == "active":
             status = "updated"
 
         row = await conn.fetchrow(
             _INSERT_SQL,
-            alert.source,
-            alert.source_alert_id,
+            persisted_alert.source,
+            persisted_alert.source_alert_id,
             revision,
-            alert.message_type,
+            persisted_alert.message_type,
             status,
-            alert.sent_at,
-            alert.effective_at,
-            alert.expires_at,
-            alert.headline,
-            alert.description,
-            _json_value(alert.area_geojson),
-            _json_value(alert.raw_payload),
+            persisted_alert.sent_at,
+            persisted_alert.effective_at,
+            persisted_alert.expires_at,
+            persisted_alert.headline,
+            persisted_alert.description,
+            _json_value(persisted_alert.area_geojson),
+            _json_value(persisted_alert.raw_payload),
             checksum,
             previous_id,
             is_current,
-            alert.peril_type,
-            alert.severity,
-            alert.category,
-            alert.area_name,
-            alert.latitude,
-            alert.longitude,
-            alert.source_url,
+            persisted_alert.peril_type,
+            persisted_alert.severity,
+            persisted_alert.category,
+            persisted_alert.area_name,
+            persisted_alert.latitude,
+            persisted_alert.longitude,
+            persisted_alert.source_url,
         )
         return (dict(row), True) if row is not None else ({}, False)
 

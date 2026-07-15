@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from db.source_settings import (
+    capture_worker_shadow_persistence_counts,
     record_worker_shadow_evidence,
     resolve_source_setting,
     source_write_is_allowed,
@@ -92,13 +93,43 @@ async def test_air_quality_auto_mode_uses_gated_environment_endpoint(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_enabled_flag_and_run_mode_must_both_allow_polling():
+    setting = await resolve_source_setting(_pool({
+        "source_name": "bmkg_cap",
+        "enabled": False,
+        "mode": "default_public",
+        "default_api_url": "https://www.bmkg.go.id/alerts/nowcast/id",
+        "custom_api_url": None,
+        "attribution": "BMKG",
+        "api_token": None,
+        "run_mode": "active",
+    }), "bmkg_cap")
+
+    assert setting.enabled is False
+
+
+@pytest.mark.asyncio
 async def test_missing_settings_table_falls_back_to_legacy_env():
     conn = AsyncMock()
-    conn.fetchrow.side_effect = RuntimeError("relation does not exist")
+    conn.fetchrow.side_effect = __import__("asyncpg").UndefinedTableError(
+        "relation does not exist"
+    )
     pool = MagicMock()
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
     assert await resolve_source_setting(pool, "bnpb") is None
+
+
+@pytest.mark.asyncio
+async def test_settings_read_error_is_not_converted_to_legacy_fallback():
+    conn = AsyncMock()
+    conn.fetchrow.side_effect = RuntimeError("database unavailable")
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await resolve_source_setting(pool, "bmkg_cap")
 
 
 @pytest.mark.asyncio
@@ -138,6 +169,13 @@ async def test_worker_shadow_audit_records_current_version_and_zero_persistence(
         success=True,
         item_count=2,
         errors=[],
+        persistence_counts={
+            "official_alerts": 0,
+            "air_quality_observations": 0,
+            "ews_notification_log": 0,
+            "source_records": 0,
+            "disaster_observability_events": 0,
+        },
     )
 
     args = conn.execute.await_args.args
@@ -150,8 +188,61 @@ async def test_worker_shadow_audit_records_current_version_and_zero_persistence(
         "official_alerts": 0,
         "air_quality_observations": 0,
         "ews_notification_log": 0,
-        "ews_delivery_queue": 0,
-        "source_evidence": 0,
         "source_records": 0,
         "disaster_observability_events": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_worker_shadow_nonzero_delta_fails_evidence():
+    conn = AsyncMock()
+    pool = _pool({})
+    pool.acquire.return_value.__aenter__.return_value = conn
+    setting = type("Setting", (), {
+        "source_name": "bmkg_cap",
+        "config_version": 11,
+        "adapter_version": "v1",
+    })()
+
+    await record_worker_shadow_evidence(
+        pool,
+        setting,
+        success=True,
+        item_count=1,
+        errors=[],
+        persistence_counts={
+            "official_alerts": 1,
+            "air_quality_observations": 0,
+            "ews_notification_log": 0,
+            "source_records": 0,
+            "disaster_observability_events": 0,
+        },
+    )
+
+    args = conn.execute.await_args.args
+    metadata = __import__("json").loads(args[5])
+    assert args[3] is False
+    assert metadata["zero_persistence"] is False
+    assert metadata["persistence_counts"]["official_alerts"] == 1
+    assert "unexpected_shadow_persistence" in metadata["errors"]
+
+
+@pytest.mark.asyncio
+async def test_shadow_counts_are_source_scoped():
+    conn = AsyncMock()
+    conn.fetchval.side_effect = [2, 3, 4, 5, 6]
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    counts = await capture_worker_shadow_persistence_counts(pool, "bmkg_cap")
+
+    assert counts == {
+        "official_alerts": 2,
+        "air_quality_observations": 3,
+        "ews_notification_log": 4,
+        "source_records": 5,
+        "disaster_observability_events": 6,
+    }
+    assert conn.fetchval.await_count == 5
+    assert all(call.args[1] == "bmkg_cap" for call in conn.fetchval.await_args_list)

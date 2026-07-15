@@ -34,19 +34,12 @@ def cap_xml(
     references: str = "",
     status: str = "Actual",
     scope: str = "Public",
+    include_info: bool = True,
 ) -> str:
     reference_element = (
         f"<references>{references}</references>" if references else ""
     )
-    return f"""\
-<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
-  <identifier>{identifier}</identifier>
-  <sender>nowcast@bmkg.go.id</sender>
-  <sent>2026-06-30T10:00:00+07:00</sent>
-  <status>{status}</status>
-  <msgType>{message_type}</msgType>
-  <scope>{scope}</scope>
-  {reference_element}
+    info_blocks = """\
   <info>
     <language>en-US</language>
     <event>Heavy rain</event>
@@ -64,7 +57,17 @@ def cap_xml(
       <areaDesc>Jawa Barat</areaDesc>
       <polygon>-6.9,107.5 -6.7,107.8 -7.1,107.9</polygon>
     </area>
-  </info>
+  </info>""" if include_info else ""
+    return f"""\
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+  <identifier>{identifier}</identifier>
+  <sender>nowcast@bmkg.go.id</sender>
+  <sent>2026-06-30T10:00:00+07:00</sent>
+  <status>{status}</status>
+  <msgType>{message_type}</msgType>
+  <scope>{scope}</scope>
+  {reference_element}
+  {info_blocks}
 </alert>
 """
 
@@ -291,22 +294,110 @@ class BMKGCAPParserTests(unittest.TestCase):
             },
         )
 
-    def test_cancel_uses_original_referenced_identifier(self) -> None:
+    def test_chain_preserves_each_message_identity_and_immediate_reference(self) -> None:
+        chain = [
+            parse_bmkg_cap(cap_xml(identifier="A")),
+            parse_bmkg_cap(
+                cap_xml(
+                    identifier="B",
+                    message_type="Update",
+                    references="nowcast@bmkg.go.id,A,2026-06-30T10:00:00+07:00",
+                )
+            ),
+            parse_bmkg_cap(
+                cap_xml(
+                    identifier="C",
+                    message_type="Update",
+                    references="nowcast@bmkg.go.id,B,2026-06-30T10:00:00+07:00",
+                )
+            ),
+            parse_bmkg_cap(
+                cap_xml(
+                    identifier="D",
+                    message_type="Cancel",
+                    references="nowcast@bmkg.go.id,C,2026-06-30T10:00:00+07:00",
+                )
+            ),
+        ]
+
+        self.assertEqual([alert.source_alert_id for alert in chain], ["A", "B", "C", "D"])
+        self.assertEqual(
+            [alert.raw_payload["referenced_message_identifiers"] for alert in chain],
+            [[], ["A"], ["B"], ["C"]],
+        )
+        self.assertEqual(
+            chain[-1].raw_payload["references"],
+            [
+                {
+                    "sender": "nowcast@bmkg.go.id",
+                    "identifier": "C",
+                    "sent": "2026-06-30T10:00:00+07:00",
+                }
+            ],
+        )
+
+    def test_accepts_cancel_without_info_using_referenced_identity(self) -> None:
         alert = parse_bmkg_cap(
             cap_xml(
-                identifier="BMKG-003",
+                identifier="BMKG-CANCEL-1",
                 message_type="Cancel",
                 references=(
-                    "nowcast@bmkg.go.id,BMKG-001,"
+                    "nowcast@bmkg.go.id,BMKG-UPDATE-1,"
                     "2026-06-30T10:00:00+07:00"
                 ),
+                include_info=False,
             )
         )
 
-        self.assertEqual(alert.source_alert_id, "BMKG-001")
+        self.assertEqual(alert.source_alert_id, "BMKG-CANCEL-1")
         self.assertEqual(alert.message_type, "cancel")
         self.assertEqual(alert.status, "cancelled")
-        self.assertEqual(alert.raw_payload["message_identifier"], "BMKG-003")
+        self.assertEqual(
+            alert.raw_payload["referenced_message_identifiers"],
+            ["BMKG-UPDATE-1"],
+        )
+        self.assertIsNone(alert.headline)
+        self.assertIsNone(alert.description)
+        self.assertIsNone(alert.area_geojson)
+
+    def test_rejects_cancel_without_a_valid_reference(self) -> None:
+        invalid_references = (
+            "",
+            "not-a-cap-reference",
+            "nowcast@bmkg.go.id,,2026-06-30T10:00:00+07:00",
+            "nowcast@bmkg.go.id,BMKG-001,not-a-timestamp",
+        )
+        for references in invalid_references:
+            with self.subTest(references=references):
+                with self.assertRaisesRegex(ValueError, "valid CAP reference"):
+                    parse_bmkg_cap(
+                        cap_xml(
+                            identifier="BMKG-CANCEL-INVALID",
+                            message_type="Cancel",
+                            references=references,
+                            include_info=False,
+                        )
+                    )
+
+    def test_rejects_non_production_cancel_without_info(self) -> None:
+        reference = "nowcast@bmkg.go.id,BMKG-001,2026-06-30T10:00:00+07:00"
+        for field, value, expected_error in (
+            ("status", "Test", "status must be Actual"),
+            ("status", "Exercise", "status must be Actual"),
+            ("status", "Draft", "status must be Actual"),
+            ("scope", "Restricted", "scope must be Public"),
+            ("scope", "Private", "scope must be Public"),
+        ):
+            with self.subTest(field=field, value=value):
+                arguments = {
+                    "identifier": "BMKG-CANCEL-NONPROD",
+                    "message_type": "Cancel",
+                    "references": reference,
+                    "include_info": False,
+                    field: value,
+                }
+                with self.assertRaisesRegex(ValueError, expected_error):
+                    parse_bmkg_cap(cap_xml(**arguments))
 
     def test_rejects_missing_required_fields_and_naive_timestamp(self) -> None:
         with self.assertRaisesRegex(ValueError, "identifier and sent"):

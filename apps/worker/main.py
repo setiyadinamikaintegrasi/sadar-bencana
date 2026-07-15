@@ -99,9 +99,11 @@ from db.news import fetch_news, upsert_news_items
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
 from db.source_settings import (
+    capture_worker_shadow_persistence_counts,
     record_worker_shadow_evidence,
     resolve_source_setting,
     source_write_is_allowed,
+    worker_shadow_persistence_deltas,
 )
 from db.scoring_context import load_risk_scoring_contexts
 from geo.locator import extract_location
@@ -377,10 +379,26 @@ async def _official_alert_topology_errors(
     return errors
 
 
-async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
-    setting = await resolve_source_setting(pool, "bmkg_cap")
+async def _bmkg_cap_cycle(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+) -> int:
+    try:
+        setting = await resolve_source_setting(pool, "bmkg_cap")
+    except Exception as exc:
+        logger.warning("BMKG CAP settings resolution failed closed: %s", exc)
+        return 0
     if setting is not None:
         if not setting.enabled or not setting.api_url:
+            return 0
+        current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        last_polled_at = getattr(setting, "last_polled_at", None)
+        if (
+            last_polled_at is not None
+            and current_time - last_polled_at.astimezone(timezone.utc)
+            < timedelta(seconds=setting.poll_interval_seconds)
+        ):
             return 0
         rss_url, api_token = setting.api_url, setting.api_token
         run_mode = setting.run_mode
@@ -391,6 +409,13 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         rss_url, api_token = "https://www.bmkg.go.id/alerts/nowcast/id", None
         run_mode = "active"
         config_version = None
+
+    shadow_before = None
+    if run_mode == "dry_run" and config_version is not None:
+        shadow_before = await capture_worker_shadow_persistence_counts(
+            pool,
+            "bmkg_cap",
+        )
 
     connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
     try:
@@ -409,12 +434,20 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         )
         if run_mode == "dry_run":
             if setting is not None and config_version is not None:
+                shadow_after = await capture_worker_shadow_persistence_counts(
+                    pool,
+                    "bmkg_cap",
+                )
                 await record_worker_shadow_evidence(
                     pool,
                     setting,
                     success=not detail_errors,
                     item_count=len(alerts),
                     errors=detail_errors,
+                    persistence_counts=worker_shadow_persistence_deltas(
+                        shadow_before or {},
+                        shadow_after,
+                    ),
                 )
             return 0
 
@@ -534,6 +567,13 @@ async def _bmkg_air_quality_cycle(
     ):
         return {"warnings": 0, "observations": 0}
 
+    shadow_before = None
+    if setting.run_mode == "dry_run":
+        shadow_before = await capture_worker_shadow_persistence_counts(
+            pool,
+            "bmkg_air_quality",
+        )
+
     connector = None
     try:
         connector = BMKGAirQualityConnector(
@@ -558,12 +598,20 @@ async def _bmkg_air_quality_cycle(
             health_error,
         )
         if setting.run_mode == "dry_run":
+            shadow_after = await capture_worker_shadow_persistence_counts(
+                pool,
+                "bmkg_air_quality",
+            )
             await record_worker_shadow_evidence(
                 pool,
                 setting,
                 success=not record_errors,
                 item_count=len(warnings) + len(observations),
                 errors=record_errors,
+                persistence_counts=worker_shadow_persistence_deltas(
+                    shadow_before or {},
+                    shadow_after,
+                ),
             )
             return {"warnings": 0, "observations": 0}
 

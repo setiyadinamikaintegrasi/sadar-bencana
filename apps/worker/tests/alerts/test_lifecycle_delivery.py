@@ -184,6 +184,46 @@ def test_claim_only_dispatches_the_current_official_alert_revision():
     assert "current_alert.id = l.official_alert_id" in sql
 
 
+def test_claim_uses_lease_and_active_source_barrier():
+    sql = " ".join(lifecycle_delivery._CLAIM_DUE_SQL.split())
+
+    assert "next_attempt_at = now() +" in sql
+    assert "official_source_settings" in sql
+    assert "source_setting.enabled = TRUE" in sql
+    assert "source_setting.run_mode = 'active'" in sql
+
+
+def test_delivery_callbacks_compare_and_set_the_claim_attempt():
+    sent_sql = " ".join(lifecycle_delivery._MARK_SENT_SQL.split())
+    failed_sql = " ".join(lifecycle_delivery._MARK_FAILED_SQL.split())
+
+    for sql in (sent_sql, failed_sql):
+        assert "attempt_count = $" in sql
+        assert "status IN ('pending', 'failed')" in sql
+        assert "current_alert.is_current = TRUE" in sql
+        assert "source_setting.enabled = TRUE" in sql
+        assert "source_setting.run_mode = 'active'" in sql
+        assert "RETURNING id" in sql
+
+
+def test_disabled_official_source_rows_are_deterministically_skipped():
+    sql = " ".join(lifecycle_delivery._SKIP_DISABLED_SQL.split())
+
+    assert "status = 'skipped'" in sql
+    assert "source_disabled_or_not_active" in sql
+    assert "official_source_settings" in sql
+    assert "source_setting.enabled = TRUE" in sql
+    assert "source_setting.run_mode = 'active'" in sql
+
+
+def test_stale_official_delivery_is_deterministically_skipped():
+    sql = " ".join(lifecycle_delivery._SKIP_STALE_SQL.split())
+
+    assert "status = 'skipped'" in sql
+    assert "official_alert_revision_not_current" in sql
+    assert "current_alert.is_current = TRUE" in sql
+
+
 def test_claimed_official_delivery_prefers_official_severity_and_peril_type():
     sql = lifecycle_delivery._CLAIM_DUE_SQL
 

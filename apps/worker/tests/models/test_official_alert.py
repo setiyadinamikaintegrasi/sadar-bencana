@@ -79,10 +79,42 @@ def test_non_bmkg_sources_accept_generic_https_source_urls():
     assert alert.source_url == "https://example.com/alerts/alert-1"
 
 
-def test_non_bmkg_source_url_policy_remains_generic_https_only():
-    source_url = "https://reader:secret@example.com:8443/alerts/alert-1"
+def test_non_bmkg_source_url_rejects_userinfo_credentials():
+    with pytest.raises(ValueError, match="credentials"):
+        base_alert(
+            source="gdacs",
+            source_url="https://reader:secret@example.com/alerts/alert-1",
+        )
 
-    assert base_alert(source="gdacs", source_url=source_url).source_url == source_url
+
+@pytest.mark.parametrize(
+    "query_key",
+    [
+        "token",
+        "api_key",
+        "key",
+        "secret",
+        "X-Amz-Signature",
+        "auth",
+        "service_credential",
+    ],
+)
+def test_official_alert_rejects_sensitive_source_url_query_keys(query_key: str):
+    with pytest.raises(ValueError, match="credentials"):
+        base_alert(
+            source_url=f"https://www.bmkg.go.id/alerts/alert-1?{query_key}=plaintext-secret"
+        )
+
+
+def test_official_alert_rejects_source_url_fragment():
+    with pytest.raises(ValueError, match="credentials"):
+        base_alert(source_url="https://www.bmkg.go.id/alerts/alert-1#access-token")
+
+
+def test_official_alert_accepts_non_secret_source_url_query_parameters():
+    source_url = "https://www.bmkg.go.id/alerts/alert-1?station=kmy3&page=1"
+
+    assert base_alert(source_url=source_url).source_url == source_url
 
 
 @pytest.mark.parametrize(

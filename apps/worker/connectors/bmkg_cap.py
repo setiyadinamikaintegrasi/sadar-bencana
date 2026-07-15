@@ -152,10 +152,10 @@ def _area_name(info: ET.Element) -> str | None:
     return "; ".join(dict.fromkeys(names)) or None
 
 
-def _preferred_info(root: ET.Element) -> ET.Element:
+def _preferred_info(root: ET.Element) -> ET.Element | None:
     infos = _children(root, "info")
     if not infos:
-        raise ValueError("CAP alert does not contain an info block")
+        return None
     for info in infos:
         language = _child_text(info, "language").lower()
         if language.startswith("id"):
@@ -163,22 +163,23 @@ def _preferred_info(root: ET.Element) -> ET.Element:
     return infos[0]
 
 
-def _lifecycle_identifier(
-    root: ET.Element,
-    identifier: str,
-    message_type: str,
-) -> str:
-    """Use the original referenced identifier for CAP update/cancel revisions."""
-    if message_type == "alert":
-        return identifier
-    references = _child_text(root, "references").split()
-    # CAP references are space-separated entries, each encoded as
-    # sender,identifier,sent. The first entry identifies the original message.
-    if references:
-        first_reference = references[0].split(",", 2)
-        if len(first_reference) == 3 and first_reference[1]:
-            return first_reference[1]
-    return identifier
+def _parse_references(root: ET.Element) -> list[dict[str, str]]:
+    """Preserve CAP references so persistence can resolve chained lifecycles."""
+    references: list[dict[str, str]] = []
+    for raw_reference in _child_text(root, "references").split():
+        parts = raw_reference.split(",", 2)
+        if len(parts) != 3 or any(not part.strip() for part in parts):
+            raise ValueError("CAP message must contain a valid CAP reference")
+        sender, identifier, sent = (part.strip() for part in parts)
+        _parse_datetime(sent, "reference sent")
+        references.append(
+            {
+                "sender": sender,
+                "identifier": identifier,
+                "sent": sent,
+            }
+        )
+    return references
 
 
 def parse_bmkg_cap(
@@ -212,12 +213,22 @@ def parse_bmkg_cap(
         raise ValueError(f"unsupported CAP msgType: {message_type_raw}")
     message_type = message_type_map[message_type_raw]
 
+    references = _parse_references(root)
+    if message_type in {"update", "cancel"} and not references:
+        raise ValueError(f"CAP {message_type} must contain a valid CAP reference")
+
     info = _preferred_info(root)
-    effective_raw = _child_text(info, "effective")
-    expires_raw = _child_text(info, "expires")
+    if info is None and message_type != "cancel":
+        raise ValueError("CAP alert does not contain an info block")
+    effective_raw = _child_text(info, "effective") if info is not None else ""
+    expires_raw = _child_text(info, "expires") if info is not None else ""
     payload = {
         "format": "CAP-XML",
         "message_identifier": identifier,
+        "references": references,
+        "referenced_message_identifiers": [
+            reference["identifier"] for reference in references
+        ],
         "cap_status": cap_status,
         "cap_scope": cap_scope,
         "source_url": source_url,
@@ -226,18 +237,28 @@ def parse_bmkg_cap(
 
     return OfficialAlertInput(
         source="bmkg_cap",
-        source_alert_id=_lifecycle_identifier(root, identifier, message_type),
+        # This is always the current CAP message identity. Persistence follows
+        # raw_payload.references to resolve the canonical alert lifecycle.
+        source_alert_id=identifier,
         message_type=message_type,
         status="cancelled" if message_type == "cancel" else "active",
         sent_at=_parse_datetime(sent_raw, "sent"),
         effective_at=_parse_datetime(effective_raw, "effective") if effective_raw else None,
         expires_at=_parse_datetime(expires_raw, "expires") if expires_raw else None,
-        headline=_child_text(info, "headline") or _child_text(info, "event") or None,
-        description=_child_text(info, "description") or None,
-        area_geojson=_area_geojson(info),
+        headline=(
+            _child_text(info, "headline") or _child_text(info, "event") or None
+            if info is not None
+            else None
+        ),
+        description=_child_text(info, "description") or None if info is not None else None,
+        area_geojson=_area_geojson(info) if info is not None else None,
         peril_type="weather",
-        severity=CAP_SEVERITY.get((_child_text(info, "severity") or "").lower()),
-        area_name=_area_name(info),
+        severity=(
+            CAP_SEVERITY.get((_child_text(info, "severity") or "").lower())
+            if info is not None
+            else None
+        ),
+        area_name=_area_name(info) if info is not None else None,
         source_url=source_url,
         raw_payload=payload,
     )

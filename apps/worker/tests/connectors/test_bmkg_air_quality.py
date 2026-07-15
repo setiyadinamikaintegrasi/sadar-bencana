@@ -83,6 +83,13 @@ class _PayloadConnector:
 
 
 def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
+    zero_counts = {
+        "official_alerts": 0,
+        "air_quality_observations": 0,
+        "ews_notification_log": 0,
+        "source_records": 0,
+        "disaster_observability_events": 0,
+    }
     dependencies = {
         "resolve_source_setting": AsyncMock(return_value=setting),
         "BMKGAirQualityConnector": MagicMock(return_value=connector),
@@ -92,6 +99,9 @@ def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
         "delete_old_air_quality_observations": AsyncMock(return_value="DELETE 0"),
         "upsert_connector_health": AsyncMock(),
         "record_worker_shadow_evidence": AsyncMock(),
+        "capture_worker_shadow_persistence_counts": AsyncMock(
+            return_value=zero_counts
+        ),
         "_official_alert_topology_errors": AsyncMock(return_value=[]),
         "enqueue_official_alert_revision": AsyncMock(),
         "persist_official_alert_revision": AsyncMock(
@@ -290,7 +300,15 @@ async def test_dry_run_updates_health_without_persisting_or_retaining(monkeypatc
         success=True,
         item_count=2,
         errors=[],
+        persistence_counts={
+            "official_alerts": 0,
+            "air_quality_observations": 0,
+            "ews_notification_log": 0,
+            "source_records": 0,
+            "disaster_observability_events": 0,
+        },
     )
+    assert dependencies["capture_worker_shadow_persistence_counts"].await_count == 2
     for name in (
         "create_source_record",
         "upsert_official_alert",

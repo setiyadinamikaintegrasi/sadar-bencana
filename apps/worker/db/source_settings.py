@@ -38,14 +38,18 @@ _ENV_URLS = {
     "inarisk": "INARISK_FEED_URL",
 }
 
-_WORKER_SHADOW_PERSISTENCE_COUNTS = {
-    "official_alerts": 0,
-    "air_quality_observations": 0,
-    "ews_notification_log": 0,
-    "ews_delivery_queue": 0,
-    "source_evidence": 0,
-    "source_records": 0,
-    "disaster_observability_events": 0,
+_WORKER_SHADOW_COUNT_SQL = {
+    "official_alerts": "SELECT count(*) FROM official_alerts WHERE source = $1",
+    "air_quality_observations": (
+        "SELECT count(*) FROM air_quality_observations WHERE source = $1"
+    ),
+    "ews_notification_log": (
+        "SELECT count(*) FROM ews_notification_log WHERE source = $1"
+    ),
+    "source_records": "SELECT count(*) FROM source_records WHERE source_name = $1",
+    "disaster_observability_events": (
+        "SELECT count(*) FROM disaster_observability_events WHERE source_name = $1"
+    ),
 }
 
 
@@ -84,7 +88,9 @@ async def resolve_source_setting(
                     source_name,
                     key,
                 )
-    except Exception:
+    except asyncpg.UndefinedTableError:
+        # A pre-control-plane database intentionally uses legacy environment
+        # configuration. All other read/decryption failures remain fail-closed.
         return None
     if row is None:
         return None
@@ -106,7 +112,7 @@ async def resolve_source_setting(
     }
     return ResolvedSourceSetting(
         source_name=source_name,
-        enabled=run_mode != "disabled",
+        enabled=bool(row["enabled"]) and run_mode != "disabled",
         api_url=api_url,
         api_token=row["api_token"],
         mode=mode,
@@ -150,18 +156,27 @@ async def record_worker_shadow_evidence(
     success: bool,
     item_count: int,
     errors: list[str],
+    persistence_counts: dict[str, int],
 ) -> None:
     """Record config-qualified worker dry-run evidence for activation gates."""
+    normalized_counts = {
+        table: int(persistence_counts.get(table, 0))
+        for table in _WORKER_SHADOW_COUNT_SQL
+    }
+    zero_persistence = all(count == 0 for count in normalized_counts.values())
+    evidence_errors = list(errors)
+    if not zero_persistence:
+        evidence_errors.append("unexpected_shadow_persistence")
     metadata = json.dumps(
         {
             "stage": "worker_shadow",
             "config_version": setting.config_version,
             "adapter_version": setting.adapter_version,
             "item_count": item_count,
-            "error_count": len(errors),
-            "errors": errors[:3],
-            "zero_persistence": True,
-            "persistence_counts": _WORKER_SHADOW_PERSISTENCE_COUNTS,
+            "error_count": len(evidence_errors),
+            "errors": evidence_errors[:3],
+            "zero_persistence": zero_persistence,
+            "persistence_counts": normalized_counts,
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -175,7 +190,7 @@ async def record_worker_shadow_evidence(
                VALUES ($1, 'dry_run', $2, $3, $4, $5::jsonb)""",
                 setting.source_name,
                 setting.config_version,
-                success,
+                success and zero_persistence,
                 "worker@sadarbencana.local",
                 metadata,
             )
@@ -186,9 +201,33 @@ async def record_worker_shadow_evidence(
         )
 
 
+async def capture_worker_shadow_persistence_counts(
+    pool: asyncpg.Pool,
+    source_name: str,
+) -> dict[str, int]:
+    """Measure source-scoped persistence tables used by the activation gate."""
+    async with pool.acquire() as connection:
+        return {
+            table: int(await connection.fetchval(sql, source_name))
+            for table, sql in _WORKER_SHADOW_COUNT_SQL.items()
+        }
+
+
+def worker_shadow_persistence_deltas(
+    before: dict[str, int],
+    after: dict[str, int],
+) -> dict[str, int]:
+    return {
+        table: int(after.get(table, 0)) - int(before.get(table, 0))
+        for table in _WORKER_SHADOW_COUNT_SQL
+    }
+
+
 __all__ = [
     "ResolvedSourceSetting",
+    "capture_worker_shadow_persistence_counts",
     "record_worker_shadow_evidence",
     "resolve_source_setting",
     "source_write_is_allowed",
+    "worker_shadow_persistence_deltas",
 ]

@@ -81,6 +81,47 @@ def test_bmkg_explicit_https_port_source_url_is_accepted():
 
 
 @pytest.mark.parametrize(
+    "query_key",
+    [
+        "token",
+        "api_key",
+        "key",
+        "secret",
+        "X-Amz-Signature",
+        "auth",
+        "service_credential",
+    ],
+)
+def test_air_quality_rejects_sensitive_source_url_query_keys(query_key: str):
+    with pytest.raises(ValueError, match="credentials"):
+        observation(
+            source_url=(
+                "https://www.bmkg.go.id/kualitas-udara/pm25/pm25_kmy3"
+                f"?{query_key}=plaintext-secret"
+            )
+        )
+
+
+def test_air_quality_rejects_source_url_fragment():
+    with pytest.raises(ValueError, match="credentials"):
+        observation(
+            source_url=(
+                "https://www.bmkg.go.id/kualitas-udara/pm25/pm25_kmy3"
+                "#access-token"
+            )
+        )
+
+
+def test_air_quality_accepts_non_secret_source_url_query_parameters():
+    source_url = (
+        "https://www.bmkg.go.id/kualitas-udara/pm25/pm25_kmy3"
+        "?station=kmy3&page=1"
+    )
+
+    assert observation(source_url=source_url).source_url == source_url
+
+
+@pytest.mark.parametrize(
     "source_url",
     [
         "https://bmkg.go.id.example.com/kualitas-udara/pm25/pm25_kmy3",

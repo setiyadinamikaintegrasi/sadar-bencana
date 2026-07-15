@@ -70,6 +70,13 @@ async def test_worker_shadow_evidence_satisfies_activation_metadata_contract():
             success=True,
             item_count=4,
             errors=[],
+            persistence_counts={
+                "official_alerts": 0,
+                "air_quality_observations": 0,
+                "ews_notification_log": 0,
+                "source_records": 0,
+                "disaster_observability_events": 0,
+            },
         )
         async with pool.acquire() as connection:
             row = await connection.fetchrow(
@@ -91,8 +98,8 @@ async def test_worker_shadow_evidence_satisfies_activation_metadata_contract():
         "official_alerts",
         "air_quality_observations",
         "ews_notification_log",
-        "ews_delivery_queue",
-        "source_evidence",
+        "source_records",
+        "disaster_observability_events",
     } <= set(metadata["persistence_counts"])
 
 

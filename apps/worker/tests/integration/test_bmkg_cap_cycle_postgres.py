@@ -125,9 +125,15 @@ CREATE TABLE official_alerts (
     UNIQUE (source, source_alert_id, payload_checksum)
 );
 
+CREATE TABLE air_quality_observations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source VARCHAR(64) NOT NULL
+);
+
 CREATE TABLE ews_notification_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    official_alert_id UUID REFERENCES official_alerts(id)
+    official_alert_id UUID REFERENCES official_alerts(id),
+    source VARCHAR(64)
 );
 
 INSERT INTO official_source_settings (
@@ -214,6 +220,10 @@ async def test_cap_dry_run_and_active_cycle_use_real_persistence(
                 "UPDATE official_source_settings "
                 "SET run_mode='active', enabled=TRUE, config_version=42 "
                 "WHERE source_name='bmkg_cap'"
+            )
+            await connection.execute(
+                "UPDATE connector_health SET last_polled_at=NULL "
+                "WHERE name='bmkg_cap'"
             )
 
         active_created = await worker_main._bmkg_cap_cycle(pool)

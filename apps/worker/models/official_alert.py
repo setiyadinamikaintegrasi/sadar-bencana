@@ -4,9 +4,35 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, parse_qsl, urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+_SENSITIVE_QUERY_KEYS = frozenset({"auth", "key", "secret", "signature", "token"})
+_SENSITIVE_QUERY_KEY_SUFFIXES = (
+    "apikey",
+    "accesstoken",
+    "refreshtoken",
+    "clientsecret",
+    "signature",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "passwd",
+)
+
+
+def _source_url_contains_credentials(parsed: ParseResult) -> bool:
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+        return True
+    query = parsed.query.replace(";", "&")
+    for raw_key, _ in parse_qsl(query, keep_blank_values=True):
+        key = "".join(character for character in raw_key.lower() if character.isalnum())
+        if key in _SENSITIVE_QUERY_KEYS or key.endswith(_SENSITIVE_QUERY_KEY_SUFFIXES):
+            return True
+    return False
 
 
 class OfficialAlertInput(BaseModel):
@@ -46,12 +72,18 @@ class OfficialAlertInput(BaseModel):
 
     @field_validator("source_url")
     @classmethod
-    def source_url_must_be_official_https(cls, value: str | None) -> str | None:
+    def source_url_must_be_official_https(cls, value: str | None, info) -> str | None:
         if value is None:
             return None
         parsed = urlparse(value)
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("source_url must use HTTPS")
+        if _source_url_contains_credentials(parsed):
+            if info.data.get("source") in {"bmkg_cap", "bmkg_air_quality"}:
+                raise ValueError(
+                    "BMKG source_url must use bmkg.go.id without credentials"
+                )
+            raise ValueError("source_url must not contain credentials")
         return value
 
     @model_validator(mode="after")
