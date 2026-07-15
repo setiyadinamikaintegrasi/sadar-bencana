@@ -227,6 +227,65 @@ export async function getMapOverlays(): Promise<MapOverlay[]> {
   return response.data
 }
 
+export type OfficialAlert = {
+  id: string
+  source: string
+  source_alert_id: string
+  revision: number
+  message_type: 'alert' | 'update' | 'cancel'
+  status: 'active' | 'updated' | 'expired' | 'cancelled'
+  sent_at: string
+  effective_at: string | null
+  expires_at: string | null
+  peril_type: 'weather' | 'air_quality' | null
+  severity: AlertSeverity | null
+  category: string | null
+  headline: string | null
+  description: string | null
+  area_name: string | null
+  area_geojson: MapOverlay['geometry']
+  latitude: number | null
+  longitude: number | null
+  source_url: string | null
+}
+
+export type AirQualityObservation = {
+  id: string
+  source: 'bmkg'
+  station_id: string
+  station_name: string
+  latitude: number | null
+  longitude: number | null
+  pollutant: 'pm25'
+  value: number
+  unit: 'ug/m3'
+  category: 'Baik' | 'Sedang' | 'Tidak Sehat' | 'Sangat Tidak Sehat' | 'Berbahaya'
+  observed_at: string
+  source_url: string | null
+  stale: boolean
+  ingested_at: string
+}
+
+export type AirQualityObservationsResponse = {
+  data: AirQualityObservation[]
+  meta: { count: number; limit: number; latest: boolean; source_active: boolean }
+}
+
+export async function getOfficialAlerts(
+  source: 'bmkg_cap' | 'bmkg_air_quality',
+): Promise<OfficialAlert[]> {
+  const response = await request<{ data: OfficialAlert[] }>(
+    '/official-alerts?source=' + encodeURIComponent(source) + '&status=active&limit=20',
+  )
+  return response.data
+}
+
+export async function getAirQualityObservations(): Promise<AirQualityObservationsResponse> {
+  return request<AirQualityObservationsResponse>(
+    '/air-quality/observations?source=bmkg&latest=true&limit=50',
+  )
+}
+
 export type RegionalHistoryProfile = {
   administrative_code: string
   period: { from: string; to: string }

@@ -1,6 +1,6 @@
 // apps/web/src/components/RiskMap.tsx
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, MapContainer, Marker, Polygon, Popup, TileLayer, useMap } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Marker, Polygon, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { Event, MapOverlay, NewsItem } from '../lib/api/client'
 
@@ -128,6 +128,18 @@ function pointInRing(latitude: number, longitude: number, ring: [number, number]
   return inside
 }
 
+export function overlayPolygons(overlay: MapOverlay): [number, number][][] {
+  if (!overlay.geometry) return []
+  if (overlay.geometry.type === 'Polygon') {
+    const rings = overlay.geometry.coordinates as number[][][]
+    return [rings[0].map(([longitude, latitude]) => [latitude, longitude])]
+  }
+  const polygons = overlay.geometry.coordinates as number[][][][]
+  return polygons.map((polygon) =>
+    polygon[0].map(([longitude, latitude]) => [latitude, longitude]),
+  )
+}
+
 function createEventIcon(event: Event, selected: boolean): L.DivIcon {
   const color = eventColor(event)
   const critical = event.magnitude >= 6 || ['wildfire', 'volcano', 'flood'].includes((event.event_type ?? '').toLowerCase())
@@ -217,6 +229,24 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
   return null
 }
 
+function OverlayFocusController({ overlay }: { overlay?: MapOverlay }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!overlay) return
+    const polygons = overlayPolygons(overlay)
+    if (polygons.length > 0) {
+      map.fitBounds(polygons.flat(), { padding: [32, 32], maxZoom: 9 })
+      return
+    }
+    if (overlay.latitude != null && overlay.longitude != null) {
+      map.flyTo([overlay.latitude, overlay.longitude], 9, { animate: true, duration: 0.8 })
+    }
+  }, [map, overlay])
+
+  return null
+}
+
 interface RiskMapProps {
   events: Event[]
   news?: NewsItem[]
@@ -225,6 +255,7 @@ interface RiskMapProps {
   onFilterChange: (filter: string) => void
   onEventClick: (event: Event) => void
   selectedEvent?: Event | null
+  selectedOverlayId?: string | null
   height?: number | string
 }
 
@@ -236,6 +267,7 @@ export default function RiskMap({
   onFilterChange,
   onEventClick,
   selectedEvent,
+  selectedOverlayId,
   height = 430,
 }: RiskMapProps) {
   const [timelineHoursAgo, setTimelineHoursAgo] = useState(0)
@@ -279,9 +311,11 @@ export default function RiskMap({
     [news, currentFilter],
   )
 
+  const selectedOverlay = overlays.find((overlay) => overlay.id === selectedOverlayId)
   const focusEvent = selectedEvent ?? visibleEvents[0] ?? events[0]
   const timelineAt = Date.now() - timelineHoursAgo * 60 * 60 * 1000
   const visibleOverlays = overlays.filter((overlay) => {
+    if (overlay.id === selectedOverlayId) return true
     if (!visibleOverlayClasses.has(overlay.layer_class)) return false
     if (overlay.layer_class !== 'official') return true
     const effective = overlay.effective_at ? new Date(overlay.effective_at).getTime() : 0
@@ -298,15 +332,6 @@ export default function RiskMap({
     })
   }
 
-  const overlayPolygons = (overlay: MapOverlay): [number, number][][] => {
-    if (!overlay.geometry) return []
-    if (overlay.geometry.type === 'Polygon') {
-      const rings = overlay.geometry.coordinates as number[][][]
-      return [rings[0].map(([lon, lat]) => [lat, lon])]
-    }
-    const polygons = overlay.geometry.coordinates as number[][][][]
-    return polygons.map((polygon) => polygon[0].map(([lon, lat]) => [lat, lon]))
-  }
   const officialPolygons = visibleOverlays
     .filter((overlay) => overlay.layer_class === 'official')
     .flatMap(overlayPolygons)
@@ -376,7 +401,11 @@ export default function RiskMap({
         <div className="pointer-events-none absolute left-3 top-3 z-[500] max-w-[70%] rounded-xl border border-slate-700/80 bg-slate-950/85 px-3 py-2 shadow-2xl shadow-slate-950/50 backdrop-blur">
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Map Focus</p>
           <p className="mt-1 line-clamp-1 text-xs font-semibold text-slate-100">
-            {focusEvent ? `${eventLabel(focusEvent.event_type)} · ${focusEvent.place}` : 'Menunggu data peta'}
+            {selectedOverlay
+              ? `Peringatan resmi · ${selectedOverlay.label}`
+              : focusEvent
+                ? `${eventLabel(focusEvent.event_type)} · ${focusEvent.place}`
+                : 'Menunggu data peta'}
           </p>
           <p className="mt-1 text-[10px] text-slate-500">
             Events {visibleEvents.length} · News pins {visibleNews.length}
@@ -407,6 +436,7 @@ export default function RiskMap({
             style={{ height: '100%', width: '100%', background: '#020617' }}
           >
             <MiniMapController events={visibleEvents.length > 0 ? visibleEvents : events} selectedEvent={selectedEvent} />
+            <OverlayFocusController overlay={selectedOverlay} />
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
 
             {visibleOverlays.flatMap((overlay) =>
@@ -435,6 +465,32 @@ export default function RiskMap({
                 </Polygon>
               )),
             )}
+
+            {visibleOverlays
+              .filter((overlay) =>
+                overlay.layer_class === 'official'
+                && overlay.latitude != null
+                && overlay.longitude != null
+                && !overlay.geometry,
+              )
+              .map((overlay) => (
+                <CircleMarker
+                  key={overlay.id}
+                  center={[overlay.latitude!, overlay.longitude!]}
+                  radius={8}
+                  pathOptions={{ color: '#e879f9', fillColor: '#e879f9', fillOpacity: 0.35 }}
+                >
+                  <Popup>
+                    <strong>{overlay.label}</strong>
+                    <br />
+                    <span>Warning resmi</span>
+                    <br />
+                    <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+                      {overlay.attribution ?? 'Sumber belum dicantumkan'}
+                    </span>
+                  </Popup>
+                </CircleMarker>
+              ))}
 
             {visibleOverlays
               .filter((overlay) => overlay.layer_class === 'watch_zone' && overlay.latitude != null && overlay.longitude != null)

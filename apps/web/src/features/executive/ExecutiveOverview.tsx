@@ -5,20 +5,26 @@ import MagnitudeFilter from '../../components/MagnitudeFilter'
 import RiskMap from '../../components/RiskMap'
 import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
+import BmkgWarningsPanel from './BmkgWarningsPanel'
+import { toOfficialAlertOverlays, unpackBmkgResults } from './bmkgPresentation'
 import {
+  getAirQualityObservations,
   getAlerts,
   getConnectorHealth,
   getEvents,
   getMapOverlays,
   getMeta,
   getNews,
+  getOfficialAlerts,
   getRiskScores,
+  type AirQualityObservation,
   type Alert,
   type ConnectorHealth,
   type Event,
   type Meta,
   type MapOverlay,
   type NewsItem,
+  type OfficialAlert,
   type RiskScore,
 } from '../../lib/api/client'
 
@@ -140,6 +146,13 @@ export default function ExecutiveOverview() {
   const [riskScores, setRiskScores] = useState<RiskScore[]>([])
   const [connectors, setConnectors] = useState<ConnectorHealth[]>([])
   const [mapOverlays, setMapOverlays] = useState<MapOverlay[]>([])
+  const [weatherWarnings, setWeatherWarnings] = useState<OfficialAlert[]>([])
+  const [airWarnings, setAirWarnings] = useState<OfficialAlert[]>([])
+  const [airObservations, setAirObservations] = useState<AirQualityObservation[]>([])
+  const [airQualitySourceActive, setAirQualitySourceActive] = useState(false)
+  const [bmkgErrors, setBmkgErrors] = useState<Record<string, string>>({})
+  const [bmkgLoading, setBmkgLoading] = useState(true)
+  const [selectedOfficialAlertId, setSelectedOfficialAlertId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [newsLoading, setNewsLoading] = useState(true)
@@ -189,10 +202,33 @@ export default function ExecutiveOverview() {
     }
   }, [])
 
+  const loadBmkg = useCallback(async () => {
+    setBmkgLoading(true)
+    setBmkgErrors({})
+    try {
+      const settled = await Promise.allSettled([
+        getOfficialAlerts('bmkg_cap'),
+        getOfficialAlerts('bmkg_air_quality'),
+        getAirQualityObservations(),
+      ] as const)
+      const result = unpackBmkgResults(settled)
+      if (result.weatherAlerts) setWeatherWarnings(result.weatherAlerts)
+      if (result.airQualityAlerts) setAirWarnings(result.airQualityAlerts)
+      if (result.observationsResponse) {
+        setAirObservations(result.observationsResponse.data)
+        setAirQualitySourceActive(result.observationsResponse.meta.source_active)
+      }
+      setBmkgErrors(result.errors)
+    } finally {
+      setBmkgLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void load('initial')
     void loadNews()
-  }, [load, loadNews])
+    void loadBmkg()
+  }, [load, loadBmkg, loadNews])
 
   useEffect(() => {
     const monitoringDesk = monitoringDeskRef.current
@@ -211,9 +247,11 @@ export default function ExecutiveOverview() {
   const handleRefresh = useCallback(() => {
     void load('refresh')
     void loadNews()
-  }, [load, loadNews])
+    void loadBmkg()
+  }, [load, loadBmkg, loadNews])
 
   const handleEventClick = useCallback((event: Event) => {
+    setSelectedOfficialAlertId(null)
     setSelectedEvent(event)
   }, [])
 
@@ -247,8 +285,22 @@ export default function ExecutiveOverview() {
   const handleFocusLatestEarthquake = useCallback(() => {
     if (!latestBmkgEarthquake) return
     setActivePerilFilter('earthquake')
+    setSelectedOfficialAlertId(null)
     setSelectedEvent(latestBmkgEarthquake)
   }, [latestBmkgEarthquake])
+
+  const handleFocusOfficialAlert = useCallback((id: string) => {
+    setSelectedEvent(null)
+    setSelectedOfficialAlertId(id)
+  }, [])
+
+  const combinedMapOverlays = useMemo(() => {
+    const overlaysById = new Map(mapOverlays.map((overlay) => [overlay.id, overlay]))
+    toOfficialAlertOverlays([...weatherWarnings, ...airWarnings]).forEach((overlay) => {
+      overlaysById.set(overlay.id, overlay)
+    })
+    return Array.from(overlaysById.values())
+  }, [airWarnings, mapOverlays, weatherWarnings])
 
   const unacknowledgedAlerts = useMemo(
     () => alerts.filter((alert) => !alert.acknowledged).length,
@@ -415,11 +467,12 @@ export default function ExecutiveOverview() {
           <RiskMap
             events={events}
             news={news}
-            overlays={mapOverlays}
+            overlays={combinedMapOverlays}
             activePerilFilter={activePerilFilter}
             onFilterChange={setActivePerilFilter}
             onEventClick={handleEventClick}
             selectedEvent={selectedEvent}
+            selectedOverlayId={selectedOfficialAlertId}
             height="min(62vh, 560px)"
           />
         )}
@@ -479,6 +532,17 @@ export default function ExecutiveOverview() {
           )}
         </div>
       </section>
+
+      <BmkgWarningsPanel
+        weatherAlerts={weatherWarnings}
+        airQualityAlerts={airWarnings}
+        observations={airObservations}
+        sourceActive={airQualitySourceActive}
+        loading={bmkgLoading}
+        errors={bmkgErrors}
+        onFocusAlert={handleFocusOfficialAlert}
+        onRetry={loadBmkg}
+      />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {kpis.map((item) => (
