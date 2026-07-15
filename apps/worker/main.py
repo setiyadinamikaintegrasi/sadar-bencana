@@ -99,9 +99,10 @@ from db.news import fetch_news, upsert_news_items
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
 from db.source_settings import (
+    acquire_source_poll_slot,
     capture_worker_shadow_persistence_counts,
+    complete_source_poll,
     record_worker_shadow_evidence,
-    reserve_source_poll_slot,
     resolve_source_setting,
     source_write_is_allowed,
     worker_shadow_persistence_deltas,
@@ -405,28 +406,46 @@ async def _bmkg_cap_cycle(
         config_version = None
         poll_interval_seconds = 600
 
+    poll_context = acquire_source_poll_slot(
+        pool,
+        "bmkg_cap",
+        config_version=config_version,
+        poll_interval_seconds=poll_interval_seconds,
+        now=now,
+    )
     try:
-        reserved = await reserve_source_poll_slot(
-            pool,
-            "bmkg_cap",
-            config_version=config_version,
-            poll_interval_seconds=poll_interval_seconds,
-            now=now,
-        )
+        poll_slot = await poll_context.__aenter__()
     except Exception as exc:
         logger.warning("BMKG CAP poll reservation failed closed: %s", exc)
         return 0
-    if not reserved:
+    if poll_slot is None:
+        await poll_context.__aexit__(None, None, None)
         return 0
 
     shadow_before = None
-    if run_mode == "dry_run" and config_version is not None:
-        shadow_before = await capture_worker_shadow_persistence_counts(
-            pool,
-            "bmkg_cap",
-        )
+    try:
+        if run_mode == "dry_run" and config_version is not None:
+            shadow_before = await capture_worker_shadow_persistence_counts(
+                pool,
+                "bmkg_cap",
+            )
+    except Exception:
+        await poll_context.__aexit__(*sys.exc_info())
+        raise
 
-    connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
+    try:
+        connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
+    except Exception as exc:
+        try:
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=0,
+                error_message=str(exc),
+            )
+        finally:
+            await poll_context.__aexit__(*sys.exc_info())
+        logger.warning("BMKG CAP connector construction failed: %s", exc)
+        return 0
     try:
         alerts, detail_errors = await connector.fetch_active()
         if run_mode == "dry_run" and config_version is not None:
@@ -435,12 +454,6 @@ async def _bmkg_cap_cycle(
                 *await _official_alert_topology_errors(pool, alerts),
             ]
         error_message = "; ".join(detail_errors[:3]) if detail_errors else None
-        await upsert_connector_health(
-            pool,
-            "bmkg_cap",
-            len(alerts),
-            error_message,
-        )
         if run_mode == "dry_run":
             if setting is not None and config_version is not None:
                 shadow_after = await capture_worker_shadow_persistence_counts(
@@ -458,6 +471,11 @@ async def _bmkg_cap_cycle(
                         shadow_after,
                     ),
                 )
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=len(alerts),
+                error_message=error_message,
+            )
             return 0
 
         created = 0
@@ -528,13 +546,25 @@ async def _bmkg_cap_cycle(
                     exc,
                 )
 
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=len(alerts),
+            error_message=error_message,
+        )
         return created
     except Exception as exc:
-        await upsert_connector_health(pool, "bmkg_cap", 0, str(exc))
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=0,
+            error_message=str(exc),
+        )
         logger.warning("BMKG CAP fetch failed: %s", exc)
         return 0
     finally:
-        await connector.close()
+        try:
+            await connector.close()
+        finally:
+            await poll_context.__aexit__(*sys.exc_info())
 
 
 async def _persist_air_quality_observation(
@@ -571,26 +601,32 @@ async def _bmkg_air_quality_cycle(
         return {"warnings": 0, "observations": 0}
     if setting is None or not setting.enabled or not setting.api_url:
         return {"warnings": 0, "observations": 0}
+    poll_context = acquire_source_poll_slot(
+        pool,
+        "bmkg_air_quality",
+        config_version=setting.config_version,
+        poll_interval_seconds=setting.poll_interval_seconds,
+        now=now,
+    )
     try:
-        reserved = await reserve_source_poll_slot(
-            pool,
-            "bmkg_air_quality",
-            config_version=setting.config_version,
-            poll_interval_seconds=setting.poll_interval_seconds,
-            now=now,
-        )
+        poll_slot = await poll_context.__aenter__()
     except Exception as exc:
         logger.warning("BMKG air-quality poll reservation failed closed: %s", exc)
         return {"warnings": 0, "observations": 0}
-    if not reserved:
+    if poll_slot is None:
+        await poll_context.__aexit__(None, None, None)
         return {"warnings": 0, "observations": 0}
 
     shadow_before = None
-    if setting.run_mode == "dry_run":
-        shadow_before = await capture_worker_shadow_persistence_counts(
-            pool,
-            "bmkg_air_quality",
-        )
+    try:
+        if setting.run_mode == "dry_run":
+            shadow_before = await capture_worker_shadow_persistence_counts(
+                pool,
+                "bmkg_air_quality",
+            )
+    except Exception:
+        await poll_context.__aexit__(*sys.exc_info())
+        raise
 
     connector = None
     try:
@@ -609,12 +645,6 @@ async def _bmkg_air_quality_cycle(
                 *await _official_alert_topology_errors(pool, warnings),
             ]
         health_error = "; ".join(record_errors[:3]) if record_errors else None
-        await upsert_connector_health(
-            pool,
-            "bmkg_air_quality",
-            len(warnings) + len(observations),
-            health_error,
-        )
         if setting.run_mode == "dry_run":
             shadow_after = await capture_worker_shadow_persistence_counts(
                 pool,
@@ -630,6 +660,11 @@ async def _bmkg_air_quality_cycle(
                     shadow_before or {},
                     shadow_after,
                 ),
+            )
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=len(warnings) + len(observations),
+                error_message=health_error,
             )
             return {"warnings": 0, "observations": 0}
 
@@ -683,17 +718,29 @@ async def _bmkg_air_quality_cycle(
                 )
 
         await delete_old_air_quality_observations(pool)
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=len(warnings) + len(observations),
+            error_message=health_error,
+        )
         return {
             "warnings": created_warnings,
             "observations": len(observations),
         }
     except Exception as exc:
-        await upsert_connector_health(pool, "bmkg_air_quality", 0, str(exc))
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=0,
+            error_message=str(exc),
+        )
         logger.warning("BMKG air-quality fetch failed: %s", exc)
         return {"warnings": 0, "observations": 0}
     finally:
-        if connector is not None:
-            await connector.close()
+        try:
+            if connector is not None:
+                await connector.close()
+        finally:
+            await poll_context.__aexit__(*sys.exc_info())
 
 
 async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:

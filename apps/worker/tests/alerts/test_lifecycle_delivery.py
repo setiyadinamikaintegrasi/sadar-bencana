@@ -193,16 +193,20 @@ def test_claim_uses_lease_and_active_source_barrier():
     assert "source_setting.run_mode = 'active'" in sql
 
 
-def test_pre_send_cas_revalidates_lease_revision_and_source():
-    sql = " ".join(lifecycle_delivery._PREPARE_SEND_SQL.split())
+def test_pre_send_lock_revalidates_source_revision_lease_and_claim():
+    source_sql = " ".join(lifecycle_delivery._LOCK_ACTIVE_SOURCE_SQL.split())
+    alert_sql = " ".join(lifecycle_delivery._LOCK_CURRENT_ALERT_SQL.split())
+    queue_sql = " ".join(lifecycle_delivery._LOCK_QUEUE_FOR_SEND_SQL.split())
 
-    assert "attempt_count = $2" in sql
-    assert "status IN ('pending', 'failed')" in sql
-    assert "next_attempt_at > now()" in sql
-    assert "current_alert.is_current = TRUE" in sql
-    assert "source_setting.enabled = TRUE" in sql
-    assert "source_setting.run_mode = 'active'" in sql
-    assert "RETURNING id" in sql
+    assert "enabled = TRUE" in source_sql
+    assert "run_mode = 'active'" in source_sql
+    assert "FOR SHARE" in source_sql
+    assert "is_current = TRUE" in alert_sql
+    assert "FOR SHARE" in alert_sql
+    assert "attempt_count = $2" in queue_sql
+    assert "status IN ('pending', 'failed')" in queue_sql
+    assert "next_attempt_at > now()" in queue_sql
+    assert "RETURNING id" in queue_sql
 
 
 def test_delivery_callbacks_compare_and_set_the_claim_attempt():

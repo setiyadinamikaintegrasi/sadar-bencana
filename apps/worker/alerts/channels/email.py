@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import socket
 import smtplib
 from email.message import EmailMessage
 from typing import Any
@@ -43,6 +45,12 @@ class EmailChannel(BaseChannel):
             msg["From"] = from_addr
             msg["To"] = recipient
             msg["Subject"] = subject
+            idempotency_key = str(kwargs.get("idempotency_key") or "")
+            if idempotency_key:
+                safe_key = idempotency_key.replace("\r", " ").replace("\n", " ")[:200]
+                digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+                msg["Message-ID"] = f"<ews-{digest}@sadarbencana.id>"
+                msg["X-SadarBencana-Idempotency-Key"] = safe_key
             msg.set_content(message)
             msg.add_alternative(
                 render_html_email(
@@ -52,19 +60,37 @@ class EmailChannel(BaseChannel):
                     **{
                         key: value
                         for key, value in kwargs.items()
-                        if key not in {"subject", "public_base_url"}
+                        if key not in {
+                            "subject",
+                            "public_base_url",
+                            "idempotency_key",
+                        }
                     },
                 ),
                 subtype="html",
             )
 
             # Run blocking SMTP in thread executor for async compatibility.
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, self._smtp_send, host, port, user, password,
-                from_addr, recipient, msg.as_string(),
+            await asyncio.to_thread(
+                self._smtp_send,
+                host,
+                port,
+                user,
+                password,
+                from_addr,
+                recipient,
+                msg.as_string(),
             )
             return {"success": True, "provider_id": None}
+        except (TimeoutError, socket.timeout):
+            logger.warning("Email delivery timed out with an ambiguous provider result")
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "email_delivery_ambiguous",
+                "ambiguous": True,
+                "retryable": False,
+            }
         except Exception as exc:
             logger.warning(
                 "Email delivery failed (error_type=%s)",

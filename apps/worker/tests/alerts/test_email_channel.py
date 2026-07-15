@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import unittest
 from email import message_from_string
 from email.policy import default
@@ -69,6 +70,7 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
                 "recipient@example.com",
                 "Gempa terdeteksi di wilayah pantauan.",
                 subject="[SadarBencana][Critical] Gempa",
+                idempotency_key="3ad5dc52-3b61-4852-a504-c54f9f643ab2",
                 notification_kind="alert",
                 severity="Critical",
                 alert_type="earthquake",
@@ -98,6 +100,14 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
             "Buka Dashboard SadarBencana",
             email.get_body(preferencelist=("html",)).get_content(),
         )
+        self.assertEqual(
+            email["Message-ID"],
+            "<ews-d2108927afbc4637049dcb659a10c88acdf4f4c762b5a6a36bb7986b09b5fae0@sadarbencana.id>",
+        )
+        self.assertEqual(
+            email["X-SadarBencana-Idempotency-Key"],
+            "3ad5dc52-3b61-4852-a504-c54f9f643ab2",
+        )
 
     async def test_header_injection_is_removed_from_subject(self):
         channel = EmailChannel()
@@ -124,3 +134,34 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
         email = message_from_string(serialized, policy=default)
         self.assertNotIn("Bcc", email)
         self.assertEqual(email["Subject"], "Valid  Bcc: attacker@example.com")
+
+    async def test_smtp_timeout_is_ambiguous_and_not_retryable(self):
+        channel = EmailChannel()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+        }
+
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch.object(channel, "_smtp_send", side_effect=socket.timeout),
+        ):
+            result = await channel.send(
+                "recipient@example.com",
+                "Test",
+                idempotency_key="delivery-timeout",
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "provider_id": None,
+                "error": "email_delivery_ambiguous",
+                "ambiguous": True,
+                "retryable": False,
+            },
+        )

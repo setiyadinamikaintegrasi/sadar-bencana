@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import AsyncIterator
 
 import asyncpg
 
@@ -32,6 +35,12 @@ class ResolvedSourceSetting:
     poll_interval_seconds: int
     expected_interval_seconds: int
     last_polled_at: datetime | None
+
+
+@dataclass(frozen=True)
+class SourcePollSlot:
+    source_name: str
+    connection: asyncpg.Connection
 
 
 _ENV_URLS = {
@@ -60,41 +69,41 @@ _PERSISTED_SOURCE_NAMES = {
     ("bmkg_air_quality", "air_quality_observations"): "bmkg",
 }
 
-_RESERVE_POLL_SQL = """
-INSERT INTO connector_health (
-    name, last_polled_at, items_fetched, error_message, updated_at
+_POLL_DUE_SQL = """
+SELECT EXISTS (
+    SELECT 1
+    FROM official_source_settings source_setting
+    LEFT JOIN connector_health health ON health.name = source_setting.source_name
+    WHERE source_setting.source_name = $1
+      AND source_setting.enabled = TRUE
+      AND source_setting.run_mode IN ('active', 'dry_run')
+      AND source_setting.config_version = $2
+      AND (
+          health.last_polled_at IS NULL
+          OR health.last_polled_at <= $3::timestamptz - ($4 * interval '1 second')
+      )
 )
-SELECT $1, $3, 0, NULL, now()
-FROM official_source_settings source_setting
-WHERE source_setting.source_name = $1
-  AND source_setting.enabled = TRUE
-  AND source_setting.run_mode IN ('active', 'dry_run')
-  AND source_setting.config_version = $2
-ON CONFLICT (name) DO UPDATE SET
-    last_polled_at = EXCLUDED.last_polled_at,
-    items_fetched = 0,
-    error_message = NULL,
-    updated_at = now()
-WHERE connector_health.last_polled_at IS NULL
-   OR connector_health.last_polled_at
-      <= EXCLUDED.last_polled_at - ($4 * interval '1 second')
-RETURNING TRUE
 """
 
-_RESERVE_LEGACY_POLL_SQL = """
+_LEGACY_POLL_DUE_SQL = """
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM connector_health
+    WHERE name = $1
+      AND last_polled_at > $2::timestamptz - ($3 * interval '1 second')
+)
+"""
+
+_COMPLETE_POLL_SQL = """
 INSERT INTO connector_health (
     name, last_polled_at, items_fetched, error_message, updated_at
 )
-VALUES ($1, $2, 0, NULL, now())
+VALUES ($1, $2, $3, $4, now())
 ON CONFLICT (name) DO UPDATE SET
     last_polled_at = EXCLUDED.last_polled_at,
-    items_fetched = 0,
-    error_message = NULL,
+    items_fetched = EXCLUDED.items_fetched,
+    error_message = EXCLUDED.error_message,
     updated_at = now()
-WHERE connector_health.last_polled_at IS NULL
-   OR connector_health.last_polled_at
-      <= EXCLUDED.last_polled_at - ($3 * interval '1 second')
-RETURNING TRUE
 """
 
 
@@ -196,33 +205,76 @@ async def source_write_is_allowed(
     )
 
 
-async def reserve_source_poll_slot(
+@asynccontextmanager
+async def acquire_source_poll_slot(
     pool: asyncpg.Pool,
     source_name: str,
     *,
     config_version: int | None,
     poll_interval_seconds: int,
     now: datetime | None = None,
-) -> bool:
-    """Atomically reserve one source poll across all worker replicas."""
-    reserved_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+) -> AsyncIterator[SourcePollSlot | None]:
+    """Hold a crash-releasing session lock across one due network poll."""
+    checked_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    lock_key = f"official-source-poll:{source_name}"
     async with pool.acquire() as connection:
-        if config_version is None:
-            reserved = await connection.fetchval(
-                _RESERVE_LEGACY_POLL_SQL,
-                source_name,
-                reserved_at,
-                poll_interval_seconds,
+        locked = bool(
+            await connection.fetchval(
+                "SELECT pg_try_advisory_lock(hashtextextended($1, 0))",
+                lock_key,
             )
-        else:
-            reserved = await connection.fetchval(
-                _RESERVE_POLL_SQL,
-                source_name,
-                config_version,
-                reserved_at,
-                poll_interval_seconds,
-            )
-    return bool(reserved)
+        )
+        if not locked:
+            yield None
+            return
+        try:
+            if config_version is None:
+                due = await connection.fetchval(
+                    _LEGACY_POLL_DUE_SQL,
+                    source_name,
+                    checked_at,
+                    poll_interval_seconds,
+                )
+            else:
+                due = await connection.fetchval(
+                    _POLL_DUE_SQL,
+                    source_name,
+                    config_version,
+                    checked_at,
+                    poll_interval_seconds,
+                )
+            yield SourcePollSlot(source_name, connection) if due else None
+        finally:
+            try:
+                await asyncio.shield(
+                    connection.execute(
+                        "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+                        lock_key,
+                    )
+                )
+            except Exception:
+                # A dead session has already released its advisory locks.
+                logger.warning("poll lock session closed for source %s", source_name)
+
+
+async def complete_source_poll(
+    slot: SourcePollSlot,
+    *,
+    items_fetched: int,
+    error_message: str | None,
+    completed_at: datetime | None = None,
+) -> None:
+    """Publish connector health only after a network poll has completed."""
+    completion_time = (completed_at or datetime.now(timezone.utc)).astimezone(
+        timezone.utc
+    )
+    await slot.connection.execute(
+        _COMPLETE_POLL_SQL,
+        slot.source_name,
+        completion_time,
+        items_fetched,
+        error_message,
+    )
 
 
 async def record_worker_shadow_evidence(
@@ -308,9 +360,11 @@ def worker_shadow_persistence_deltas(
 __all__ = [
     "MissingSourceSettingError",
     "ResolvedSourceSetting",
+    "SourcePollSlot",
+    "acquire_source_poll_slot",
     "capture_worker_shadow_persistence_counts",
+    "complete_source_poll",
     "record_worker_shadow_evidence",
-    "reserve_source_poll_slot",
     "resolve_source_setting",
     "source_write_is_allowed",
     "worker_shadow_persistence_deltas",

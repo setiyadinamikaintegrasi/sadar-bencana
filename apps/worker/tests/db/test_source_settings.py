@@ -4,9 +4,10 @@ import pytest
 
 from db.source_settings import (
     MissingSourceSettingError,
+    acquire_source_poll_slot,
     capture_worker_shadow_persistence_counts,
+    complete_source_poll,
     record_worker_shadow_evidence,
-    reserve_source_poll_slot,
     resolve_source_setting,
     source_write_is_allowed,
 )
@@ -280,22 +281,37 @@ async def test_air_quality_shadow_uses_persisted_bmkg_source_identifier():
 
 
 @pytest.mark.asyncio
-async def test_poll_reservation_uses_config_version_and_interval():
+async def test_poll_slot_uses_session_lock_without_mutating_health():
     conn = AsyncMock()
-    conn.fetchval.return_value = True
+    conn.fetchval.side_effect = [True, True]
     pool = MagicMock()
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    reserved = await reserve_source_poll_slot(
-        pool,
-        "bmkg_cap",
-        config_version=7,
-        poll_interval_seconds=600,
-    )
+    async with acquire_source_poll_slot(
+        pool, "bmkg_cap", config_version=7, poll_interval_seconds=600
+    ) as slot:
+        assert slot is not None
+        assert conn.execute.await_count == 0
 
-    assert reserved is True
-    sql, source, version, _now, interval = conn.fetchval.await_args.args
-    assert "ON CONFLICT" in sql
-    assert "config_version" in sql
+    lock_sql, lock_key = conn.fetchval.await_args_list[0].args
+    due_sql, source, version, _now, interval = conn.fetchval.await_args_list[1].args
+    assert "pg_try_advisory_lock" in lock_sql
+    assert lock_key == "official-source-poll:bmkg_cap"
+    assert "connector_health" in due_sql
+    assert "config_version" in due_sql
     assert (source, version, interval) == ("bmkg_cap", 7, 600)
+    assert "pg_advisory_unlock" in conn.execute.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_complete_source_poll_records_only_completed_result():
+    conn = AsyncMock()
+    slot = type("Slot", (), {"source_name": "bmkg_cap", "connection": conn})()
+
+    await complete_source_poll(slot, items_fetched=3, error_message=None)
+
+    sql, source, completed_at, items, error = conn.execute.await_args.args
+    assert "connector_health" in sql
+    assert (source, items, error) == ("bmkg_cap", 3, None)
+    assert completed_at.tzinfo is not None

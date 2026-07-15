@@ -376,7 +376,6 @@ async def _upsert_cap_alert(
     )
 
     created = duplicate is None
-    incoming_id = duplicate["id"] if duplicate is not None else None
     if duplicate is None:
         status = _current_status(alert, now)
         inserted = await conn.fetchrow(
@@ -407,12 +406,11 @@ async def _upsert_cap_alert(
         if inserted is None:
             return {}, False
         duplicate = dict(inserted)
-        incoming_id = duplicate["id"]
         rows.append(duplicate)
 
     reconciled = await _reconcile_cap_lifecycle(conn, alert, rows, now=now)
-    incoming = next((row for row in reconciled if row["id"] == incoming_id), None)
-    return (incoming or duplicate or {}), created
+    current = next((row for row in reconciled if row["is_current"]), None)
+    return (current or duplicate or {}), created
 
 
 async def upsert_official_alert(
@@ -422,10 +420,12 @@ async def upsert_official_alert(
     now: datetime | None = None,
     connection: asyncpg.Connection | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Insert one immutable revision, returning ``(row, created)``.
+    """Insert one immutable revision, returning ``(current_row, created)``.
 
     The transaction is serialized per source alert identifier. Replaying an
-    identical raw payload returns the existing revision without writing.
+    identical raw payload returns the reconciled current revision without
+    writing. For CAP, ``created`` describes the incoming message even when
+    graph reconciliation makes another row current and eligible for enqueue.
     """
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     checksum = payload_checksum(alert.raw_payload)

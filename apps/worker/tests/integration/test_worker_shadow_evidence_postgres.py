@@ -15,9 +15,10 @@ import pytest
 
 import main as worker_main
 from db.source_settings import (
+    acquire_source_poll_slot,
     capture_worker_shadow_persistence_counts,
+    complete_source_poll,
     record_worker_shadow_evidence,
-    reserve_source_poll_slot,
 )
 
 
@@ -183,32 +184,71 @@ async def test_air_quality_shadow_detects_real_persisted_source_write():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_replicas_reserve_only_one_poll_slot():
+async def test_poll_slot_is_exclusive_and_does_not_report_health_before_completion():
     async with isolated_audit_database() as pool:
         now = datetime(2026, 7, 15, 5, 0, tzinfo=timezone.utc)
-        first, second = await asyncio.gather(
-            reserve_source_poll_slot(
-                pool,
-                "bmkg_cap",
-                config_version=7,
-                poll_interval_seconds=600,
-                now=now,
-            ),
-            reserve_source_poll_slot(
-                pool,
-                "bmkg_cap",
-                config_version=7,
-                poll_interval_seconds=600,
-                now=now,
-            ),
-        )
-        recovered = await reserve_source_poll_slot(
-            pool,
-            "bmkg_cap",
-            config_version=7,
-            poll_interval_seconds=600,
-            now=now + timedelta(seconds=601),
-        )
+        async with acquire_source_poll_slot(
+            pool, "bmkg_cap", config_version=7,
+            poll_interval_seconds=600, now=now,
+        ) as first:
+            assert first is not None
+            async with acquire_source_poll_slot(
+                pool, "bmkg_cap", config_version=7,
+                poll_interval_seconds=600, now=now,
+            ) as second:
+                assert second is None
+            async with pool.acquire() as connection:
+                health = await connection.fetchrow(
+                    "SELECT * FROM connector_health WHERE name='bmkg_cap'"
+                )
+            assert health is None
+            await complete_source_poll(
+                first,
+                items_fetched=2,
+                error_message=None,
+                completed_at=now,
+            )
 
-    assert sorted((first, second)) == [False, True]
-    assert recovered is True
+        async with acquire_source_poll_slot(
+            pool, "bmkg_cap", config_version=7,
+            poll_interval_seconds=600, now=now,
+        ) as too_soon:
+            assert too_soon is None
+        async with acquire_source_poll_slot(
+            pool, "bmkg_cap", config_version=7,
+            poll_interval_seconds=600, now=now + timedelta(seconds=601),
+        ) as recovered:
+            assert recovered is not None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_poll_releases_lock_without_false_completion():
+    async with isolated_audit_database() as pool:
+        now = datetime(2026, 7, 15, 5, 0, tzinfo=timezone.utc)
+        entered = asyncio.Event()
+
+        async def interrupted_poll():
+            async with acquire_source_poll_slot(
+                pool, "bmkg_cap", config_version=7,
+                poll_interval_seconds=600, now=now,
+            ) as slot:
+                assert slot is not None
+                entered.set()
+                await asyncio.Future()
+
+        task = asyncio.create_task(interrupted_poll())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        async with acquire_source_poll_slot(
+            pool, "bmkg_cap", config_version=7,
+            poll_interval_seconds=600, now=now,
+        ) as recovered:
+            assert recovered is not None
+        async with pool.acquire() as connection:
+            health = await connection.fetchrow(
+                "SELECT * FROM connector_health WHERE name='bmkg_cap'"
+            )
+        assert health is None

@@ -186,26 +186,30 @@ LEFT JOIN official_alerts oa ON oa.id = c.official_alert_id
 LEFT JOIN alerts a ON a.id = c.alert_id
 """
 
-_PREPARE_SEND_SQL = """
+_LOCK_ACTIVE_SOURCE_SQL = """
+SELECT source_name
+FROM official_source_settings
+WHERE source_name = $1
+  AND enabled = TRUE
+  AND run_mode = 'active'
+FOR SHARE
+"""
+
+_LOCK_CURRENT_ALERT_SQL = """
+SELECT id
+FROM official_alerts
+WHERE id = $1
+  AND is_current = TRUE
+FOR SHARE
+"""
+
+_LOCK_QUEUE_FOR_SEND_SQL = """
 UPDATE ews_notification_log
 SET next_attempt_at = now() + ($3 * interval '1 second')
 WHERE id = $1
   AND attempt_count = $2
   AND status IN ('pending', 'failed')
   AND next_attempt_at > now()
-  AND (
-    delivery_kind <> 'official_lifecycle'
-    OR EXISTS (
-      SELECT 1
-      FROM official_alerts current_alert
-      JOIN official_source_settings source_setting
-        ON source_setting.source_name = current_alert.source
-      WHERE current_alert.id = ews_notification_log.official_alert_id
-        AND current_alert.is_current = TRUE
-        AND source_setting.enabled = TRUE
-        AND source_setting.run_mode = 'active'
-    )
-  )
 RETURNING id
 """
 
@@ -415,6 +419,56 @@ def _recipient(row: dict[str, Any]) -> str | None:
     return None
 
 
+async def _lock_delivery_for_send(
+    conn: asyncpg.Connection,
+    row: dict[str, Any],
+    lease_seconds: int,
+) -> Any | None:
+    """Linearize source/revision containment with one external send.
+
+    Locks follow control-plane order: source setting, official alert, then queue
+    row. Supersession paths update the alert and queue row; disable updates the
+    source setting. Once these locks are held, neither can commit until this
+    delivery records its terminal result.
+    """
+    if row.get("delivery_kind") == "official_lifecycle":
+        source_name = await conn.fetchval(
+            _LOCK_ACTIVE_SOURCE_SQL,
+            row.get("source"),
+        )
+        if source_name is None:
+            return None
+        alert_id = await conn.fetchval(
+            _LOCK_CURRENT_ALERT_SQL,
+            row.get("official_alert_id"),
+        )
+        if alert_id is None:
+            return None
+    return await conn.fetchval(
+        _LOCK_QUEUE_FOR_SEND_SQL,
+        row["id"],
+        row["attempt_count"],
+        lease_seconds,
+    )
+
+
+async def _send_with_channel_timeout(
+    channel: str,
+    adapter: Any,
+    recipient: str,
+    message: str,
+    *,
+    timeout_seconds: int,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    send = adapter.send(recipient, message, **kwargs)
+    if channel == "email":
+        # SMTP runs in a thread with a bounded socket timeout. Cancelling that
+        # future would leave the SMTP operation running with an ambiguous result.
+        return await send
+    return await asyncio.wait_for(send, timeout=timeout_seconds)
+
+
 async def process_due_deliveries(
     pool: asyncpg.Pool,
     *,
@@ -440,117 +494,125 @@ async def process_due_deliveries(
         row = dict(raw)
         adapter = CHANNELS.get(row["channel"])
         recipient = _recipient(row)
-        error: str | None = None
-        send_result: dict[str, Any] = {"success": False}
-        if adapter is None:
-            error = "unsupported_channel"
-        elif recipient is None:
-            error = "recipient_unavailable"
-        else:
-            send_timeout = CHANNEL_SEND_TIMEOUT_SECONDS.get(
-                row["channel"],
-                max(CHANNEL_SEND_TIMEOUT_SECONDS.values()),
-            )
-            lease_seconds = send_timeout + DELIVERY_LEASE_MARGIN_SECONDS
-            async with pool.acquire() as conn:
-                async with conn.transaction():
-                    await conn.execute(_SKIP_DISABLED_SQL)
-                    await conn.execute(_SKIP_STALE_SQL)
-                    prepared_id = await conn.fetchval(
-                        _PREPARE_SEND_SQL,
-                        row["id"],
-                        row["attempt_count"],
-                        lease_seconds,
-                    )
-            if prepared_id is None:
-                continue
-            subject = (
-                f"[SadarBencana][{row.get('severity') or 'ALERT'}] "
-                f"{row.get('alert_type') or 'alert'}"
-                if row.get("delivery_kind") == "alert"
-                else f"[SadarBencana] {row['lifecycle_action']}"
-            )
-            try:
-                send_result = await asyncio.wait_for(
-                    adapter.send(
-                        recipient,
-                        lifecycle_message(row),
-                        subject=subject,
-                        notification_kind=row.get("delivery_kind"),
-                        severity=row.get("severity"),
-                        alert_type=row.get("alert_type"),
-                        headline=row.get("headline"),
-                        description=row.get("description"),
-                        source=row.get("source"),
-                        occurred_at=row.get("source_sent_at"),
-                        lifecycle_action=row.get("lifecycle_action"),
-                    ),
-                    timeout=send_timeout,
-                )
-                error = send_result.get("error")
-            except TimeoutError:
-                error = "delivery_timeout"
-
+        send_timeout = CHANNEL_SEND_TIMEOUT_SECONDS.get(
+            row["channel"],
+            max(CHANNEL_SEND_TIMEOUT_SECONDS.values()),
+        )
+        lease_seconds = send_timeout + DELIVERY_LEASE_MARGIN_SECONDS
+        subject = (
+            f"[SadarBencana][{row.get('severity') or 'ALERT'}] "
+            f"{row.get('alert_type') or 'alert'}"
+            if row.get("delivery_kind") == "alert"
+            else f"[SadarBencana] {row['lifecycle_action']}"
+        )
+        terminal_status: str | None = None
+        terminal_error: str | None = None
         current = now or datetime.now(timezone.utc)
         async with pool.acquire() as conn:
-            # Recheck containment/currentness after network I/O. A disable,
-            # rollback, update, or cancellation may have committed meanwhile.
-            await conn.execute(_SKIP_DISABLED_SQL)
-            await conn.execute(_SKIP_STALE_SQL)
-            if send_result.get("success"):
-                updated_id = await conn.fetchval(
-                    _MARK_SENT_SQL,
-                    row["id"],
-                    current,
-                    row["source_sent_at"],
-                    send_result.get("provider_id"),
-                    row["attempt_count"],
+            async with conn.transaction():
+                await conn.execute(_SKIP_DISABLED_SQL)
+                await conn.execute(_SKIP_STALE_SQL)
+                locked_id = await _lock_delivery_for_send(
+                    conn,
+                    row,
+                    lease_seconds,
                 )
-                if updated_id is None:
+                if locked_id is None:
                     continue
-                result["sent"] += 1
-                if row.get("correlation_id"):
-                    await record_observation(
-                        pool,
-                        correlation_id=row["correlation_id"],
-                        stage="notification_sent",
-                        source_name=row.get("source"),
-                        success=True,
-                        duration_ms=max(
-                            0,
-                            int((current - row["source_sent_at"]).total_seconds() * 1000),
-                        ),
-                        metadata={
-                            "channel": row["channel"],
-                            "lifecycle_action": row["lifecycle_action"],
-                        },
+
+                error: str | None = None
+                send_result: dict[str, Any] = {"success": False}
+                if adapter is None:
+                    error = "unsupported_channel"
+                elif recipient is None:
+                    error = "recipient_unavailable"
+                else:
+                    try:
+                        send_result = await _send_with_channel_timeout(
+                            row["channel"],
+                            adapter,
+                            recipient,
+                            lifecycle_message(row),
+                            timeout_seconds=send_timeout,
+                            subject=subject,
+                            notification_kind=row.get("delivery_kind"),
+                            severity=row.get("severity"),
+                            alert_type=row.get("alert_type"),
+                            headline=row.get("headline"),
+                            description=row.get("description"),
+                            source=row.get("source"),
+                            occurred_at=row.get("source_sent_at"),
+                            lifecycle_action=row.get("lifecycle_action"),
+                            idempotency_key=str(row["id"]),
+                        )
+                        error = send_result.get("error")
+                    except TimeoutError:
+                        error = "delivery_timeout"
+
+                current = now or datetime.now(timezone.utc)
+                if send_result.get("success"):
+                    updated_id = await conn.fetchval(
+                        _MARK_SENT_SQL,
+                        row["id"],
+                        current,
+                        row["source_sent_at"],
+                        send_result.get("provider_id"),
+                        row["attempt_count"],
                     )
+                    if updated_id is None:
+                        continue
+                    terminal_status = "sent"
+                else:
+                    attempts = int(row["attempt_count"])
+                    dead = (
+                        attempts >= MAX_DELIVERY_ATTEMPTS
+                        or send_result.get("retryable") is False
+                    )
+                    status = "dead_letter" if dead else "failed"
+                    next_attempt = None if dead else current + retry_delay(attempts)
+                    updated_id = await conn.fetchval(
+                        _MARK_FAILED_SQL,
+                        row["id"],
+                        status,
+                        error or "delivery_failed",
+                        next_attempt,
+                        row["attempt_count"],
+                    )
+                    if updated_id is None:
+                        continue
+                    terminal_status = status
+                    terminal_error = error or "delivery_failed"
+
+        if terminal_status is None:
+            continue
+        result[terminal_status] += 1
+        if row.get("correlation_id"):
+            if terminal_status == "sent":
+                await record_observation(
+                    pool,
+                    correlation_id=row["correlation_id"],
+                    stage="notification_sent",
+                    source_name=row.get("source"),
+                    success=True,
+                    duration_ms=max(
+                        0,
+                        int((current - row["source_sent_at"]).total_seconds() * 1000),
+                    ),
+                    metadata={
+                        "channel": row["channel"],
+                        "lifecycle_action": row["lifecycle_action"],
+                    },
+                )
             else:
-                attempts = int(row["attempt_count"])
-                dead = attempts >= MAX_DELIVERY_ATTEMPTS
-                status = "dead_letter" if dead else "failed"
-                next_attempt = None if dead else current + retry_delay(attempts)
-                updated_id = await conn.fetchval(
-                    _MARK_FAILED_SQL,
-                    row["id"],
-                    status,
-                    error or "delivery_failed",
-                    next_attempt,
-                    row["attempt_count"],
+                await record_observation(
+                    pool,
+                    correlation_id=row["correlation_id"],
+                    stage="notification_delivery",
+                    source_name=row.get("source"),
+                    success=False,
+                    error_code=terminal_error,
+                    metadata={"channel": row["channel"], "status": terminal_status},
                 )
-                if updated_id is None:
-                    continue
-                result[status] += 1
-                if row.get("correlation_id"):
-                    await record_observation(
-                        pool,
-                        correlation_id=row["correlation_id"],
-                        stage="notification_delivery",
-                        source_name=row.get("source"),
-                        success=False,
-                        error_code=error or "delivery_failed",
-                        metadata={"channel": row["channel"], "status": status},
-                    )
     return result
 
 

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from alerts.lifecycle_delivery import enqueue_official_alert_revision
+from alerts.lifecycle_delivery import (
+    enqueue_official_alert_revision,
+    persist_official_alert_revision,
+)
 from db.official_alerts import upsert_official_alert
 from tests.integration.test_lifecycle_delivery_postgis import (
     cap_lifecycle_input,
@@ -105,9 +109,71 @@ async def test_missing_predecessor_reconciles_existing_descendants_when_it_arriv
         root, created = await upsert_official_alert(pool, inputs["A"], now=NOW)
         assert created is True
         assert root["source_alert_id"] == "A"
-        assert root["revision"] == 1
-        assert root["is_current"] is False
+        assert root["revision"] == 4
+        assert root["message_type"] == "cancel"
+        assert root["is_current"] is True
         assert_reconciled_chain(await lifecycle_rows(pool))
+
+
+@pytest.mark.asyncio
+async def test_newest_first_bridge_enqueues_reconciled_cancellation_once():
+    inputs = cap_chain()
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+
+        initial, _ = await upsert_official_alert(pool, inputs["A"], now=NOW)
+        assert await enqueue_official_alert_revision(pool, initial) == 1
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE ews_notification_log SET status = 'sent'")
+
+        returned = []
+        for identifier in ("D", "C", "B", "A"):
+            row, created, allowed = await persist_official_alert_revision(
+                pool,
+                inputs[identifier],
+                delivery_enabled=True,
+            )
+            assert allowed is True
+            returned.append((identifier, row, created))
+
+        bridge_row = next(row for identifier, row, _ in returned if identifier == "B")
+        bridge_payload = bridge_row["raw_payload"]
+        if isinstance(bridge_payload, str):
+            bridge_payload = json.loads(bridge_payload)
+        assert bridge_payload["message_identifier"] == "D"
+        assert bridge_row["revision"] == 4
+        assert bridge_row["is_current"] is True
+
+        duplicate_root = returned[-1]
+        assert duplicate_root[2] is False
+        duplicate_payload = duplicate_root[1]["raw_payload"]
+        if isinstance(duplicate_payload, str):
+            duplicate_payload = json.loads(duplicate_payload)
+        assert duplicate_payload["message_identifier"] == "D"
+
+        async with pool.acquire() as conn:
+            deliveries = await conn.fetch(
+                """
+                SELECT source_alert_id, alert_revision, lifecycle_action, status
+                FROM ews_notification_log
+                ORDER BY alert_revision
+                """
+            )
+        assert [dict(row) for row in deliveries] == [
+            {
+                "source_alert_id": "A",
+                "alert_revision": 1,
+                "lifecycle_action": "alert",
+                "status": "sent",
+            },
+            {
+                "source_alert_id": "A",
+                "alert_revision": 4,
+                "lifecycle_action": "cancellation",
+                "status": "pending",
+            },
+        ]
 
 
 @pytest.mark.asyncio

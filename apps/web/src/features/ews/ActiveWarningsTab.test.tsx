@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchMyActiveWarnings, type EWSActiveWarning } from '../../lib/api/ews'
 import ActiveWarningsTab from './ActiveWarningsTab'
 
@@ -9,6 +9,10 @@ vi.mock('../../lib/api/ews', async (importOriginal) => ({
 }))
 
 const fetchWarnings = vi.mocked(fetchMyActiveWarnings)
+
+beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-07-15T05:00:00Z').getTime())
+})
 
 async function flushPromises() {
   await act(async () => {
@@ -51,6 +55,7 @@ function warning(overrides: Partial<EWSActiveWarning> = {}): EWSActiveWarning {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 

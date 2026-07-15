@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -23,6 +24,11 @@ def _setting(**overrides):
     return SimpleNamespace(**values)
 
 
+@asynccontextmanager
+async def _poll_slot(*_args, allowed=True, source_name="bmkg_cap", **_kwargs):
+    yield SimpleNamespace(source_name=source_name, connection=object()) if allowed else None
+
+
 @pytest.mark.asyncio
 async def test_bmkg_cap_cycle_enforces_configured_poll_cadence(monkeypatch):
     now = datetime(2026, 7, 15, 5, 0, tzinfo=timezone.utc)
@@ -33,12 +39,16 @@ async def test_bmkg_cap_cycle_enforces_configured_poll_cadence(monkeypatch):
     )
     connector = MagicMock()
     monkeypatch.setattr(worker_main, "BMKGCAPConnector", connector)
-    reserve = AsyncMock(return_value=False)
-    monkeypatch.setattr(worker_main, "reserve_source_poll_slot", reserve)
+    reserve = MagicMock(
+        side_effect=lambda *args, **kwargs: _poll_slot(
+            *args, allowed=False, **kwargs
+        )
+    )
+    monkeypatch.setattr(worker_main, "acquire_source_poll_slot", reserve)
 
     assert await worker_main._bmkg_cap_cycle(object(), now=now) == 0
     connector.assert_not_called()
-    reserve.assert_awaited_once_with(
+    reserve.assert_called_once_with(
         ANY,
         "bmkg_cap",
         config_version=4,
@@ -61,8 +71,8 @@ async def test_bmkg_cap_settings_error_fails_closed_without_legacy_poll(monkeypa
     monkeypatch.setattr(worker_main, "upsert_connector_health", health)
     monkeypatch.setattr(
         worker_main,
-        "reserve_source_poll_slot",
-        AsyncMock(return_value=True),
+        "acquire_source_poll_slot",
+        MagicMock(side_effect=_poll_slot),
     )
 
     assert await worker_main._bmkg_cap_cycle(object()) == 0
@@ -79,13 +89,13 @@ async def test_bmkg_cap_missing_control_plane_row_fails_closed(monkeypatch):
         AsyncMock(side_effect=MissingSourceSettingError("bmkg_cap missing")),
     )
     connector = MagicMock()
-    reserve = AsyncMock()
+    reserve = MagicMock()
     monkeypatch.setattr(worker_main, "BMKGCAPConnector", connector)
-    monkeypatch.setattr(worker_main, "reserve_source_poll_slot", reserve)
+    monkeypatch.setattr(worker_main, "acquire_source_poll_slot", reserve)
 
     assert await worker_main._bmkg_cap_cycle(object()) == 0
     connector.assert_not_called()
-    reserve.assert_not_awaited()
+    reserve.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -120,11 +130,11 @@ async def test_bmkg_cap_shadow_reports_measured_persistence_delta(monkeypatch):
         capture,
     )
     monkeypatch.setattr(worker_main, "record_worker_shadow_evidence", audit)
-    monkeypatch.setattr(worker_main, "upsert_connector_health", AsyncMock())
+    monkeypatch.setattr(worker_main, "complete_source_poll", AsyncMock())
     monkeypatch.setattr(
         worker_main,
-        "reserve_source_poll_slot",
-        AsyncMock(return_value=True),
+        "acquire_source_poll_slot",
+        MagicMock(side_effect=_poll_slot),
     )
     monkeypatch.setattr(
         worker_main,

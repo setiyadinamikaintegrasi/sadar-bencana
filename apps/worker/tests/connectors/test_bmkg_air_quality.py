@@ -1,6 +1,7 @@
 from copy import deepcopy
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -82,6 +83,14 @@ class _PayloadConnector:
         self.closed = True
 
 
+@asynccontextmanager
+async def _poll_slot(*_args, allowed=True, **_kwargs):
+    yield (
+        SimpleNamespace(source_name="bmkg_air_quality", connection=object())
+        if allowed else None
+    )
+
+
 def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
     zero_counts = {
         "official_alerts": 0,
@@ -92,7 +101,8 @@ def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
     }
     dependencies = {
         "resolve_source_setting": AsyncMock(return_value=setting),
-        "reserve_source_poll_slot": AsyncMock(return_value=True),
+        "acquire_source_poll_slot": MagicMock(side_effect=_poll_slot),
+        "complete_source_poll": AsyncMock(),
         "BMKGAirQualityConnector": MagicMock(return_value=connector),
         "create_source_record": AsyncMock(return_value=({"id": "source-1"}, True)),
         "upsert_official_alert": AsyncMock(return_value=({"id": "alert-1", "revision": 1}, True)),
@@ -172,11 +182,10 @@ async def test_active_cycle_persists_both_collections_but_only_enqueues_warning(
     observation = dependencies["_persist_air_quality_observation"].await_args.args[1]
     assert observation.station_id == "kmy3"
     dependencies["delete_old_air_quality_observations"].assert_awaited_once()
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_air_quality",
-        2,
-        None,
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=2,
+        error_message=None,
     )
     assert connector.closed
 
@@ -207,7 +216,9 @@ async def test_scheduled_cycle_skips_fetch_until_poll_interval_is_due(monkeypatc
         setting=_setting(last_polled_at=now, poll_interval_seconds=3600),
         connector=connector,
     )
-    dependencies["reserve_source_poll_slot"].return_value = False
+    dependencies["acquire_source_poll_slot"].side_effect = (
+        lambda *args, **kwargs: _poll_slot(*args, allowed=False, **kwargs)
+    )
 
     result = await worker_main._bmkg_air_quality_cycle(object(), now=now)
 
@@ -290,11 +301,10 @@ async def test_dry_run_updates_health_without_persisting_or_retaining(monkeypatc
     result = await worker_main._bmkg_air_quality_cycle(pool)
 
     assert result == {"warnings": 0, "observations": 0}
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_air_quality",
-        2,
-        None,
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=2,
+        error_message=None,
     )
     dependencies["record_worker_shadow_evidence"].assert_awaited_once_with(
         pool,
@@ -365,7 +375,9 @@ async def test_cycle_health_reports_at_most_three_record_errors(monkeypatch):
     result = await worker_main._bmkg_air_quality_cycle(pool)
 
     assert result == {"warnings": 1, "observations": 1}
-    health_error = dependencies["upsert_connector_health"].await_args.args[3]
+    health_error = dependencies["complete_source_poll"].await_args.kwargs[
+        "error_message"
+    ]
     assert "warning bad-1" in health_error
     assert "warning bad-2" in health_error
     assert "warning bad-3" in health_error
@@ -385,11 +397,10 @@ async def test_cycle_fetch_failure_updates_health_and_closes_connector(monkeypat
     result = await worker_main._bmkg_air_quality_cycle(pool)
 
     assert result == {"warnings": 0, "observations": 0}
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_air_quality",
-        0,
-        "upstream unavailable",
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=0,
+        error_message="upstream unavailable",
     )
     dependencies["persist_official_alert_revision"].assert_not_awaited()
     dependencies["_persist_air_quality_observation"].assert_not_awaited()
@@ -414,11 +425,10 @@ async def test_cycle_connector_construction_failure_is_bounded_and_updates_healt
     result = await worker_main._bmkg_air_quality_cycle(pool)
 
     assert result == {"warnings": 0, "observations": 0}
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_air_quality",
-        0,
-        "Hostname resolves to blocked IP 127.0.0.1",
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=0,
+        error_message="Hostname resolves to blocked IP 127.0.0.1",
     )
     dependencies["persist_official_alert_revision"].assert_not_awaited()
     dependencies["_persist_air_quality_observation"].assert_not_awaited()

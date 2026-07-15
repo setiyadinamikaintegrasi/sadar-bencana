@@ -1,6 +1,7 @@
 import unittest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -101,6 +102,11 @@ class _CycleConnector:
         self.closed = True
 
 
+@asynccontextmanager
+async def _poll_slot(*_args, allowed=True, **_kwargs):
+    yield SimpleNamespace(source_name="bmkg_cap", connection=object()) if allowed else None
+
+
 def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
     zero_counts = {
         "official_alerts": 0,
@@ -111,7 +117,8 @@ def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
     }
     dependencies = {
         "resolve_source_setting": AsyncMock(return_value=setting),
-        "reserve_source_poll_slot": AsyncMock(return_value=True),
+        "acquire_source_poll_slot": MagicMock(side_effect=_poll_slot),
+        "complete_source_poll": AsyncMock(),
         "BMKGCAPConnector": MagicMock(return_value=connector),
         "create_source_record": AsyncMock(return_value=({"id": "source-1"}, True)),
         "record_observation": AsyncMock(),
@@ -176,11 +183,10 @@ async def test_dry_run_updates_health_without_persistence_or_delivery(monkeypatc
     result = await worker_main._bmkg_cap_cycle(pool)
 
     assert result == 0
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_cap",
-        1,
-        "detail alert-2: upstream unavailable",
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=1,
+        error_message="detail alert-2: upstream unavailable",
     )
     for name in (
         "create_source_record",
@@ -217,11 +223,10 @@ async def test_active_cycle_persists_observations_and_enqueues_new_alert(monkeyp
     assert persist.await_args.args == (pool, alert)
     assert persist.await_args.kwargs["source_name"] == "bmkg_cap"
     assert persist.await_args.kwargs["expected_config_version"] == 7
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_cap",
-        1,
-        None,
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=1,
+        error_message=None,
     )
     assert connector.closed
 
@@ -262,11 +267,10 @@ async def test_cycle_fetch_failure_updates_health_without_persistence(monkeypatc
     result = await worker_main._bmkg_cap_cycle(pool)
 
     assert result == 0
-    dependencies["upsert_connector_health"].assert_awaited_once_with(
-        pool,
-        "bmkg_cap",
-        0,
-        "upstream unavailable",
+    dependencies["complete_source_poll"].assert_awaited_once_with(
+        ANY,
+        items_fetched=0,
+        error_message="upstream unavailable",
     )
     for name in (
         "create_source_record",
