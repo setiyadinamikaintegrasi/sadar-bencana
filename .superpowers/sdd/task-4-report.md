@@ -164,3 +164,136 @@ Both INSERT statements have 12 target columns and 12 projected values.
 - Successful notification rows created before migration 040 can have a null
   `matched_watch_zone_id`; a later lifecycle revision correctly carries that
   historical null because no reliable prior zone exists to reconstruct.
+
+## Review Finding Fixes (2026-07-15)
+
+### Behavior Added
+
+- Added an opt-in `asyncpg`/PostGIS integration module that creates a unique
+  schema with only the tables, columns, foreign keys, and official-delivery
+  unique index used by `enqueue_official_alert_revision`. The schema is dropped
+  in `finally`, including when a test fails.
+- Covered intersecting/non-intersecting polygons, points inside/outside the
+  configured radius, deterministic selection between competing zones, zone
+  peril exclusion, minimum-severity exclusion, alert-type and disabled-
+  preference exclusion, `ON CONFLICT` revision deduplication, and matched-zone
+  retention for update/cancellation/expiry.
+- Added `official_alerts_area_geojson_valid_check` to migration 040. The PostGIS
+  `ST_IsValid` check is `NOT VALID`, so historical rows are not scanned while
+  subsequent invalid polygon writes are rejected.
+- Guarded `ST_Intersects` behind a `CASE` and `ST_IsValid`, so a historical
+  self-intersecting polygon is ignored and cannot enqueue a delivery.
+- Added explicit PostgreSQL casts to the prior-recipient parameters. The live
+  test exposed that the prior query previously failed at prepare time because
+  `$2` was inferred as both `text` and `varchar`.
+
+### RED Evidence
+
+Production lifecycle SQL and migration 040 were unchanged for the first run.
+
+```bash
+cd apps/worker
+TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/sadar_test \
+  .venv/bin/python -m pytest \
+  tests/integration/test_lifecycle_delivery_postgis.py -q
+```
+
+Result: `4 failed, 4 passed in 2.17s`.
+
+- Update, cancellation, and expiry each failed with
+  `asyncpg.exceptions.AmbiguousParameterError: inconsistent types deduced for
+  parameter $2 (text versus character varying)`.
+- The invalid-polygon case failed because migration 040 did not contain
+  `official_alerts_area_geojson_valid_check`.
+
+After adding only the migration constraint, the focused invalid-history case
+remained RED:
+
+```bash
+cd apps/worker
+TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/sadar_test \
+  .venv/bin/python -m pytest \
+  tests/integration/test_lifecycle_delivery_postgis.py::test_historical_invalid_polygon_is_quarantined_without_aborting_batch \
+  -q
+```
+
+Result: `1 failed in 0.36s`; the historical self-intersecting polygon enqueued
+one delivery (`assert 1 == 0`), proving that write-time enforcement alone did
+not quarantine historical data.
+
+### GREEN Evidence
+
+The explicit prior-recipient bind casts were verified independently:
+
+```bash
+cd apps/worker
+TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/sadar_test \
+  .venv/bin/python -m pytest \
+  tests/integration/test_lifecycle_delivery_postgis.py::test_lifecycle_changes_retain_prior_recipient_zone \
+  -q
+```
+
+Result: `3 passed in 1.04s`.
+
+Real PostGIS integration suite after the validity guard:
+
+```bash
+cd apps/worker
+TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/sadar_test \
+  .venv/bin/python -m pytest \
+  tests/integration/test_lifecycle_delivery_postgis.py -q
+```
+
+Result: `8 passed in 2.26s` against PostgreSQL 16 / PostGIS 3.4.3.
+
+Focused lifecycle verification:
+
+```bash
+cd apps/worker
+TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/sadar_test \
+  .venv/bin/python -m pytest \
+  tests/alerts/test_lifecycle_delivery.py \
+  tests/integration/test_lifecycle_delivery_postgis.py -q
+```
+
+Result: `17 passed in 2.21s`.
+
+Full worker verification with the integration tests opted in:
+
+```bash
+cd apps/worker
+TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/sadar_test \
+  .venv/bin/python -m pytest tests -q
+```
+
+Result: `248 passed, 4 warnings in 2.86s`. The warnings are the existing FastAPI
+`on_event` lifespan deprecations in `main.py` and FastAPI internals.
+
+Additional evidence:
+
+- Database cleanup query returned `task4 schemas remaining: 0`.
+- `git diff --check`: passed.
+- Python compilation of the changed lifecycle and test modules: passed.
+- `ruff` was unavailable in `apps/worker/.venv`; no ruff result is claimed.
+
+### Review Self-Check
+
+- The integration test executes the production enqueue function and production
+  SQL through a real `asyncpg.Pool`; it does not mock database results.
+- The migration test inserts historical invalid data first, then extracts and
+  executes migration 040's actual `ALTER TABLE` statement. It verifies the old
+  row remains and a new equivalent invalid row raises `CheckViolationError`.
+- `CASE` guarantees `ST_Intersects` is evaluated only for non-null, topologically
+  valid polygon geometry. Point matching remains an independent fallback.
+- Competing zones produce one delivery and retain the earliest `created_at, id`
+  match. Repeating the same revision produces zero additional rows.
+- Update, cancellation, and expiry retain the original successful recipient and
+  `matched_watch_zone_id`, even when the later alert geometry is outside the
+  zone.
+- Changes remain scoped to lifecycle delivery/tests, migration 040, and this
+  report.
+
+### Remaining Concerns
+
+- Historical successful rows created before migration 040 may still have a null
+  `matched_watch_zone_id`; this pre-existing limitation is unchanged.

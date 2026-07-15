@@ -15,6 +15,7 @@ ALTER TABLE official_alerts
     DROP CONSTRAINT IF EXISTS official_alerts_peril_type_check,
     DROP CONSTRAINT IF EXISTS official_alerts_severity_check,
     DROP CONSTRAINT IF EXISTS official_alerts_coordinates_check,
+    DROP CONSTRAINT IF EXISTS official_alerts_area_geojson_valid_check,
     ADD CONSTRAINT official_alerts_peril_type_check
       CHECK (peril_type IS NULL OR peril_type IN ('weather', 'air_quality')),
     ADD CONSTRAINT official_alerts_severity_check
@@ -23,7 +24,14 @@ ALTER TABLE official_alerts
       CHECK (
         (latitude IS NULL AND longitude IS NULL)
         OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)
-      );
+      ),
+    ADD CONSTRAINT official_alerts_area_geojson_valid_check
+      CHECK (
+        area_geojson IS NULL
+        OR ST_IsValid(
+          ST_SetSRID(ST_GeomFromGeoJSON(area_geojson::text), 4326)
+        )
+      ) NOT VALID;
 
 ALTER TABLE ews_notification_log
     ADD COLUMN IF NOT EXISTS matched_watch_zone_id UUID

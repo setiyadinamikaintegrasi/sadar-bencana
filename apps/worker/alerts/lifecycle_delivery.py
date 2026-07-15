@@ -34,13 +34,18 @@ JOIN LATERAL (
       AND z.is_active = TRUE
       AND (cardinality(z.peril_types) = 0 OR oa.peril_type = ANY(z.peril_types))
       AND (
-        (oa.area_geojson IS NOT NULL AND ST_Intersects(
+        CASE
+          WHEN oa.area_geojson IS NOT NULL AND ST_IsValid(
+            ST_SetSRID(ST_GeomFromGeoJSON(oa.area_geojson::text), 4326)
+          ) THEN ST_Intersects(
             ST_SetSRID(ST_GeomFromGeoJSON(oa.area_geojson::text), 4326)::geography,
             ST_Buffer(
                 ST_SetSRID(ST_MakePoint(z.longitude, z.latitude), 4326)::geography,
                 z.radius_km * 1000
             )
-        ))
+          )
+          ELSE FALSE
+        END
         OR
         (oa.latitude IS NOT NULL AND oa.longitude IS NOT NULL AND ST_DWithin(
             ST_SetSRID(ST_MakePoint(oa.longitude, oa.latitude), 4326)::geography,
@@ -67,11 +72,12 @@ INSERT INTO ews_notification_log (
     delivery_kind, matched_watch_zone_id
 )
 SELECT DISTINCT ON (l.subscriber_id, l.channel)
-       l.subscriber_id, $1, l.channel, 'pending', $2, $3, $4, $5, now(), $6,
+       l.subscriber_id, $1::uuid, l.channel, 'pending', $2::varchar(64),
+       $3::varchar(255), $4::int, $5::varchar(16), now(), $6::uuid,
        'official_lifecycle', l.matched_watch_zone_id
 FROM ews_notification_log l
 JOIN ews_channel_settings cs ON cs.channel = l.channel AND cs.is_enabled = TRUE
-WHERE l.source = $2 AND l.source_alert_id = $3
+WHERE l.source = $2::varchar(64) AND l.source_alert_id = $3::varchar(255)
   AND l.status IN ('sent', 'acknowledged')
 ORDER BY l.subscriber_id, l.channel, l.alert_revision DESC, l.created_at DESC
 ON CONFLICT DO NOTHING

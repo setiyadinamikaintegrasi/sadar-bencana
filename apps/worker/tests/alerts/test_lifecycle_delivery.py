@@ -83,8 +83,11 @@ async def test_initial_alert_matches_geometry_zone_peril_severity_and_preference
     for fragment in (
         "FROM official_alerts oa",
         "JOIN LATERAL",
+        "CASE",
+        "ST_IsValid",
         "ST_Intersects",
         "oa.area_geojson IS NOT NULL",
+        "ELSE FALSE",
         "ST_DWithin",
         "oa.latitude IS NOT NULL AND oa.longitude IS NOT NULL",
         "cardinality(z.peril_types) = 0 OR oa.peril_type = ANY(z.peril_types)",
