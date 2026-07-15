@@ -18,6 +18,12 @@ BMKG_CAP_RSS_URL = "https://www.bmkg.go.id/alerts/nowcast/id"
 BMKG_ATTRIBUTION = "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)"
 BMKG_CAP_USER_AGENT = "sadar-bencana/0.2 (+https://github.com/setiyadinamikaintegrasi/sadar-bencana)"
 MAX_ACTIVE_ALERTS = 50
+CAP_SEVERITY = {
+    "minor": "Moderate",
+    "moderate": "Moderate",
+    "severe": "High",
+    "extreme": "Critical",
+}
 
 
 def _local_name(tag: str) -> str:
@@ -104,6 +110,15 @@ def _area_geojson(info: ET.Element) -> dict[str, Any] | None:
     return {"type": "MultiPolygon", "coordinates": rings}
 
 
+def _area_name(info: ET.Element) -> str | None:
+    names = [
+        _child_text(area, "areaDesc")
+        for area in _children(info, "area")
+        if _child_text(area, "areaDesc")
+    ]
+    return "; ".join(dict.fromkeys(names)) or None
+
+
 def _preferred_info(root: ET.Element) -> ET.Element:
     infos = _children(root, "info")
     if not infos:
@@ -133,7 +148,10 @@ def _lifecycle_identifier(
     return identifier
 
 
-def parse_bmkg_cap(xml_text: str) -> OfficialAlertInput:
+def parse_bmkg_cap(
+    xml_text: str,
+    source_url: str | None = None,
+) -> OfficialAlertInput:
     """Normalize one BMKG CAP document into the official alert lifecycle model."""
     root = ET.fromstring(xml_text)
     if _local_name(root.tag) != "alert":
@@ -157,6 +175,12 @@ def parse_bmkg_cap(xml_text: str) -> OfficialAlertInput:
     info = _preferred_info(root)
     effective_raw = _child_text(info, "effective")
     expires_raw = _child_text(info, "expires")
+    payload = {
+        "format": "CAP-XML",
+        "message_identifier": identifier,
+        "source_url": source_url,
+        "xml": xml_text,
+    }
 
     return OfficialAlertInput(
         source="bmkg_cap",
@@ -169,11 +193,11 @@ def parse_bmkg_cap(xml_text: str) -> OfficialAlertInput:
         headline=_child_text(info, "headline") or _child_text(info, "event") or None,
         description=_child_text(info, "description") or None,
         area_geojson=_area_geojson(info),
-        raw_payload={
-            "format": "CAP-XML",
-            "message_identifier": identifier,
-            "xml": xml_text,
-        },
+        peril_type="weather",
+        severity=CAP_SEVERITY.get((_child_text(info, "severity") or "").lower()),
+        area_name=_area_name(info),
+        source_url=source_url,
+        raw_payload=payload,
     )
 
 
@@ -213,8 +237,7 @@ class BMKGCAPConnector:
             try:
                 detail = await self._client.get(url)
                 detail.raise_for_status()
-                alert = parse_bmkg_cap(detail.text)
-                alert.raw_payload["source_url"] = url
+                alert = parse_bmkg_cap(detail.text, source_url=url)
                 alerts.append(alert)
             except Exception as exc:
                 logger.warning("BMKG CAP detail failed for %s: %s", url, exc)

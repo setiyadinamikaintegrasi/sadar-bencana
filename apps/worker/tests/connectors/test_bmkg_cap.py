@@ -1,6 +1,7 @@
 import unittest
 
 import httpx
+import pytest
 
 from connectors.bmkg_cap import (
     BMKG_CAP_RSS_URL,
@@ -50,6 +51,7 @@ def cap_xml(
     <event>Hujan Lebat</event>
     <effective>2026-06-30T10:00:00+07:00</effective>
     <expires>2026-06-30T13:00:00+07:00</expires>
+    <severity>Severe</severity>
     <headline>Peringatan Dini Cuaca Jawa Barat</headline>
     <description>Hujan lebat disertai angin kencang.</description>
     <area>
@@ -78,6 +80,10 @@ class BMKGCAPParserTests(unittest.TestCase):
         self.assertEqual(alert.message_type, "alert")
         self.assertEqual(alert.status, "active")
         self.assertEqual(alert.headline, "Peringatan Dini Cuaca Jawa Barat")
+        self.assertEqual(alert.peril_type, "weather")
+        self.assertEqual(alert.severity, "High")
+        self.assertEqual(alert.area_name, "Jawa Barat")
+        self.assertIsNone(alert.source_url)
         self.assertEqual(alert.sent_at.utcoffset().total_seconds(), 7 * 3600)
         self.assertEqual(
             alert.area_geojson,
@@ -118,6 +124,30 @@ class BMKGCAPParserTests(unittest.TestCase):
             parse_bmkg_cap(cap_xml().replace("+07:00</sent>", "</sent>"))
 
 
+@pytest.mark.parametrize(
+    ("cap_value", "expected"),
+    [
+        ("Minor", "Moderate"),
+        ("Moderate", "Moderate"),
+        ("Severe", "High"),
+        ("Extreme", "Critical"),
+    ],
+)
+def test_cap_severity_mapping(cap_value, expected):
+    alert = parse_bmkg_cap(
+        cap_xml().replace(
+            "<severity>Severe</severity>",
+            "<severity>" + cap_value + "</severity>",
+        )
+    )
+    assert alert.severity == expected
+
+
+def test_cap_missing_severity_is_not_deliverable():
+    alert = parse_bmkg_cap(cap_xml().replace("<severity>Severe</severity>", ""))
+    assert alert.severity is None
+
+
 class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_partial_detail_failure_keeps_successful_alerts(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -139,5 +169,9 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(errors), 1)
         self.assertEqual(
             alerts[0].raw_payload["source_url"],
+            "https://www.bmkg.go.id/cap/alert-1.xml",
+        )
+        self.assertEqual(
+            alerts[0].source_url,
             "https://www.bmkg.go.id/cap/alert-1.xml",
         )
