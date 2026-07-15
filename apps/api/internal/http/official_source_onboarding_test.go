@@ -1,16 +1,23 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	appdb "github.com/setiyadinamikaintegrasi/sadar-bencana/api/internal/db"
 )
 
 func validAirQualityPreviewPayload() map[string]any {
@@ -49,12 +56,9 @@ func validAirQualityPreviewPayload() map[string]any {
 	}
 }
 
-func executeAirQualityPreviewBody(t *testing.T, body []byte) (sourcePreviewResult, error) {
+func installOfficialSourceTLSServer(t *testing.T, handler stdhttp.Handler) {
 	t.Helper()
-	server := httptest.NewTLSServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
-	}))
+	server := httptest.NewTLSServer(handler)
 	t.Cleanup(server.Close)
 
 	originalLookup := lookupOfficialSourceIPs
@@ -75,6 +79,14 @@ func executeAirQualityPreviewBody(t *testing.T, body []byte) (sourcePreviewResul
 	officialSourceTLSConfig = func(host string) *tls.Config {
 		return &tls.Config{ServerName: host, InsecureSkipVerify: true} // test server certificate is self-signed.
 	}
+}
+
+func executeAirQualityPreviewBody(t *testing.T, body []byte) (sourcePreviewResult, error) {
+	t.Helper()
+	installOfficialSourceTLSServer(t, stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -82,6 +94,511 @@ func executeAirQualityPreviewBody(t *testing.T, body []byte) (sourcePreviewResul
 	return executeSourcePreview(ctx, sourceRuntimeConfig{
 		Source: "bmkg_air_quality", Endpoint: "https://iklim.bmkg.go.id/api/air-quality",
 		AdapterVersion: "v1", FieldMapping: map[string]string{},
+	})
+}
+
+const officialSourceOnboardingSchema = `
+CREATE TABLE ews_subscribers (
+    email TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL
+);
+
+CREATE TABLE official_source_settings (
+    source_name TEXT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL,
+    run_mode TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    default_api_url TEXT,
+    custom_api_url TEXT,
+    adapter_version TEXT NOT NULL,
+    field_mapping JSONB NOT NULL,
+    config_version INT NOT NULL,
+    api_token_encrypted BYTEA,
+    poll_interval_seconds INT NOT NULL,
+    expected_interval_seconds INT NOT NULL,
+    last_dry_run_at TIMESTAMPTZ,
+    last_dry_run_valid BOOLEAN,
+    last_dry_run_config_version INT,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE official_source_setting_versions (
+    source_name TEXT NOT NULL,
+    version INT NOT NULL,
+    configuration JSONB NOT NULL,
+    api_token_encrypted BYTEA,
+    changed_by TEXT NOT NULL,
+    change_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (source_name, version)
+);
+
+CREATE TABLE official_source_setting_audit (
+    source_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    actor_email TEXT NOT NULL,
+    config_version INT,
+    success BOOLEAN NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO ews_subscribers (email, role, is_active)
+VALUES ('admin@example.test', 'admin', TRUE);
+`
+
+func openOfficialSourceOnboardingPostgreSQL(t *testing.T) *sql.DB {
+	t.Helper()
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is required for PostgreSQL handler tests")
+	}
+	admin, err := appdb.New(databaseURL)
+	if err != nil {
+		t.Fatalf("open admin database: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	if err := admin.PingContext(ctx); err != nil {
+		admin.Close()
+		t.Fatalf("ping admin database: %v", err)
+	}
+	schema := fmt.Sprintf("task11_onboarding_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA "`+schema+`"`); err != nil {
+		admin.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+
+	scopedURL, err := url.Parse(databaseURL)
+	if err != nil {
+		admin.Close()
+		t.Fatalf("parse database URL: %v", err)
+	}
+	query := scopedURL.Query()
+	query.Set("search_path", schema+",public")
+	scopedURL.RawQuery = query.Encode()
+	db, err := appdb.New(scopedURL.String())
+	if err != nil {
+		_, _ = admin.Exec(`DROP SCHEMA IF EXISTS "` + schema + `" CASCADE`)
+		admin.Close()
+		t.Fatalf("open scoped database: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, officialSourceOnboardingSchema); err != nil {
+		db.Close()
+		_, _ = admin.Exec(`DROP SCHEMA IF EXISTS "` + schema + `" CASCADE`)
+		admin.Close()
+		t.Fatalf("create onboarding schema: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		if _, err := admin.Exec(`DROP SCHEMA IF EXISTS "` + schema + `" CASCADE`); err != nil {
+			t.Errorf("drop onboarding schema: %v", err)
+		}
+		admin.Close()
+	})
+	return db
+}
+
+func insertCurrentOfficialSource(t *testing.T, db *sql.DB, version int, runMode string, evidenceVersion any) {
+	t.Helper()
+	enabled := runMode != "disabled"
+	_, err := db.Exec(`
+		INSERT INTO official_source_settings (
+		  source_name, enabled, run_mode, mode, default_api_url, custom_api_url,
+		  adapter_version, field_mapping, config_version, poll_interval_seconds,
+		  expected_interval_seconds, last_dry_run_at, last_dry_run_valid,
+		  last_dry_run_config_version, updated_by
+		) VALUES (
+		  'bmkg_air_quality', $1, $2, 'custom_api', NULL,
+		  'https://iklim.bmkg.go.id/api/air-quality', 'v1', '{}'::jsonb, $3,
+		  3600, 3600, CASE WHEN $4::int IS NULL THEN NULL ELSE now() END,
+		  CASE WHEN $4::int IS NULL THEN NULL ELSE TRUE END, $4,
+		  'admin@example.test'
+		)`, enabled, runMode, version, evidenceVersion)
+	if err != nil {
+		t.Fatalf("insert current official source: %v", err)
+	}
+}
+
+func runAdminSourceHandler(
+	t *testing.T,
+	handler gin.HandlerFunc,
+	method, path, source string,
+	body []byte,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "source", Value: source}}
+	ctx.Set(ctxAuthEmail, "admin@example.test")
+	ctx.Request = httptest.NewRequest(method, path, bytes.NewReader(body))
+	if len(body) > 0 {
+		ctx.Request.Header.Set("Content-Type", "application/json")
+	}
+	handler(ctx)
+	return recorder
+}
+
+func installValidAirQualitySource(t *testing.T) {
+	t.Helper()
+	payload, err := json.Marshal(validAirQualityPreviewPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	installOfficialSourceTLSServer(t, stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+}
+
+func TestOfficialSourceDryRunRecordsOnlyTheValidatedCurrentVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("current version succeeds", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", nil)
+		installValidAirQualitySource(t)
+
+		response := runAdminSourceHandler(
+			t,
+			OfficialSourceDryRun(db, "test-key"),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/dry-run",
+			"bmkg_air_quality",
+			nil,
+		)
+
+		if response.Code != stdhttp.StatusOK {
+			t.Fatalf("current dry-run failed: status=%d body=%s", response.Code, response.Body.String())
+		}
+		var valid bool
+		var evidenceVersion int
+		if err := db.QueryRow(`
+			SELECT last_dry_run_valid, last_dry_run_config_version
+			FROM official_source_settings WHERE source_name='bmkg_air_quality'`,
+		).Scan(&valid, &evidenceVersion); err != nil {
+			t.Fatalf("read dry-run evidence: %v", err)
+		}
+		if !valid || evidenceVersion != 7 {
+			t.Fatalf("dry-run evidence is not tied to current version: valid=%v version=%d", valid, evidenceVersion)
+		}
+		var auditSuccess bool
+		var auditVersion int
+		if err := db.QueryRow(`
+			SELECT success, config_version FROM official_source_setting_audit
+			WHERE source_name='bmkg_air_quality' AND action='dry_run'`,
+		).Scan(&auditSuccess, &auditVersion); err != nil {
+			t.Fatalf("read dry-run audit: %v", err)
+		}
+		if !auditSuccess || auditVersion != 7 {
+			t.Fatalf("unexpected dry-run audit: success=%v version=%d", auditSuccess, auditVersion)
+		}
+	})
+
+	t.Run("version changed during validation is rejected", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", nil)
+		payload, err := json.Marshal(validAirQualityPreviewPayload())
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestStarted := make(chan struct{}, 1)
+		releaseResponse := make(chan struct{}, 1)
+		installOfficialSourceTLSServer(t, stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
+			requestStarted <- struct{}{}
+			select {
+			case <-releaseResponse:
+			case <-time.After(5 * time.Second):
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(payload)
+		}))
+
+		responseChannel := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			responseChannel <- runAdminSourceHandler(
+				t,
+				OfficialSourceDryRun(db, "test-key"),
+				stdhttp.MethodPost,
+				"/settings/official-sources/bmkg_air_quality/dry-run",
+				"bmkg_air_quality",
+				nil,
+			)
+		}()
+		select {
+		case <-requestStarted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("dry-run did not reach the source fixture")
+		}
+		if _, err := db.Exec(`
+			UPDATE official_source_settings
+			SET config_version=8, last_dry_run_at=NULL,
+			    last_dry_run_valid=NULL, last_dry_run_config_version=NULL
+			WHERE source_name='bmkg_air_quality'`,
+		); err != nil {
+			t.Fatalf("advance current config version: %v", err)
+		}
+		releaseResponse <- struct{}{}
+
+		var response *httptest.ResponseRecorder
+		select {
+		case response = <-responseChannel:
+		case <-time.After(10 * time.Second):
+			t.Fatal("dry-run handler did not complete")
+		}
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"stale_config_version"`) {
+			t.Fatalf("stale dry-run was not rejected: status=%d body=%s", response.Code, response.Body.String())
+		}
+		var dryRunAt sql.NullTime
+		var dryRunValid sql.NullBool
+		var evidenceVersion sql.NullInt64
+		if err := db.QueryRow(`
+			SELECT last_dry_run_at, last_dry_run_valid, last_dry_run_config_version
+			FROM official_source_settings WHERE source_name='bmkg_air_quality'`,
+		).Scan(&dryRunAt, &dryRunValid, &evidenceVersion); err != nil {
+			t.Fatalf("read stale dry-run evidence: %v", err)
+		}
+		if dryRunAt.Valid || dryRunValid.Valid || evidenceVersion.Valid {
+			t.Fatalf("stale validation wrote activation evidence: at=%v valid=%v version=%v", dryRunAt, dryRunValid, evidenceVersion)
+		}
+		var auditSuccess bool
+		var auditVersion int
+		if err := db.QueryRow(`
+			SELECT success, config_version FROM official_source_setting_audit
+			WHERE source_name='bmkg_air_quality' AND action='dry_run'`,
+		).Scan(&auditSuccess, &auditVersion); err != nil {
+			t.Fatalf("read stale dry-run audit: %v", err)
+		}
+		if auditSuccess || auditVersion != 7 {
+			t.Fatalf("stale dry-run audit is misleading: success=%v version=%d", auditSuccess, auditVersion)
+		}
+	})
+}
+
+func TestOfficialSourceActivateRequiresEvidenceForTheCurrentVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("current version succeeds", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 7)
+
+		response := runAdminSourceHandler(
+			t,
+			OfficialSourceActivate(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate",
+			"bmkg_air_quality",
+			nil,
+		)
+
+		if response.Code != stdhttp.StatusOK || !strings.Contains(response.Body.String(), `"config_version":8`) {
+			t.Fatalf("current-version activation failed: status=%d body=%s", response.Code, response.Body.String())
+		}
+		var enabled bool
+		var runMode string
+		var version int
+		if err := db.QueryRow(`
+			SELECT enabled, run_mode, config_version FROM official_source_settings
+			WHERE source_name='bmkg_air_quality'`,
+		).Scan(&enabled, &runMode, &version); err != nil {
+			t.Fatalf("read activated source: %v", err)
+		}
+		if !enabled || runMode != "active" || version != 8 {
+			t.Fatalf("unexpected activated state: enabled=%v mode=%s version=%d", enabled, runMode, version)
+		}
+	})
+
+	t.Run("stale evidence is rejected", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 7, "dry_run", 6)
+
+		response := runAdminSourceHandler(
+			t,
+			OfficialSourceActivate(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate",
+			"bmkg_air_quality",
+			nil,
+		)
+
+		if response.Code != stdhttp.StatusConflict || !strings.Contains(response.Body.String(), `"error":"successful_current_dry_run_required"`) {
+			t.Fatalf("stale activation evidence was accepted: status=%d body=%s", response.Code, response.Body.String())
+		}
+		var runMode string
+		var version int
+		if err := db.QueryRow(`
+			SELECT run_mode, config_version FROM official_source_settings
+			WHERE source_name='bmkg_air_quality'`,
+		).Scan(&runMode, &version); err != nil {
+			t.Fatalf("read rejected activation state: %v", err)
+		}
+		if runMode != "dry_run" || version != 7 {
+			t.Fatalf("rejected activation changed state: mode=%s version=%d", runMode, version)
+		}
+	})
+}
+
+func TestOfficialSourceRollbackFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("historical active target becomes dry-run and needs fresh evidence", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 10, "active", 10)
+		_, err := db.Exec(`
+			INSERT INTO official_source_setting_versions
+			  (source_name, version, configuration, changed_by, change_reason)
+			VALUES (
+			  'bmkg_air_quality', 2,
+			  '{"enabled":true,"run_mode":"active","mode":"custom_api","adapter_version":"v1","field_mapping":{},"custom_api_url":"https://data.bmkg.go.id/api/air-quality","poll_interval_seconds":900,"expected_interval_seconds":1200}'::jsonb,
+			  'prior-admin@example.test', 'Known active configuration'
+			)`,
+		)
+		if err != nil {
+			t.Fatalf("insert active rollback target: %v", err)
+		}
+
+		rollback := runAdminSourceHandler(
+			t,
+			OfficialSourceRollback(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/rollback",
+			"bmkg_air_quality",
+			[]byte(`{"version":2,"reason":"Restore known configuration"}`),
+		)
+		if rollback.Code != stdhttp.StatusOK || !strings.Contains(rollback.Body.String(), `"config_version":11`) {
+			t.Fatalf("active rollback failed: status=%d body=%s", rollback.Code, rollback.Body.String())
+		}
+		var enabled bool
+		var runMode, mode, adapterVersion, customURL string
+		var mapping []byte
+		var pollInterval, expectedInterval, version int
+		var dryRunAt sql.NullTime
+		var dryRunValid sql.NullBool
+		var evidenceVersion sql.NullInt64
+		if err := db.QueryRow(`
+			SELECT enabled, run_mode, mode, adapter_version, field_mapping,
+			       custom_api_url, poll_interval_seconds, expected_interval_seconds,
+			       config_version, last_dry_run_at, last_dry_run_valid,
+			       last_dry_run_config_version
+			FROM official_source_settings WHERE source_name='bmkg_air_quality'`,
+		).Scan(&enabled, &runMode, &mode, &adapterVersion, &mapping, &customURL,
+			&pollInterval, &expectedInterval, &version, &dryRunAt, &dryRunValid,
+			&evidenceVersion); err != nil {
+			t.Fatalf("read active rollback state: %v", err)
+		}
+		if !enabled || runMode != "dry_run" || mode != "custom_api" || adapterVersion != "v1" ||
+			string(mapping) != "{}" || customURL != "https://data.bmkg.go.id/api/air-quality" ||
+			pollInterval != 900 || expectedInterval != 1200 || version != 11 {
+			t.Fatalf("rollback did not restore config safely: enabled=%v run_mode=%s mode=%s adapter=%s mapping=%s url=%s poll=%d expected=%d version=%d",
+				enabled, runMode, mode, adapterVersion, mapping, customURL, pollInterval, expectedInterval, version)
+		}
+		if dryRunAt.Valid || dryRunValid.Valid || evidenceVersion.Valid {
+			t.Fatalf("rollback retained dry-run evidence: at=%v valid=%v version=%v", dryRunAt, dryRunValid, evidenceVersion)
+		}
+
+		rejected := runAdminSourceHandler(
+			t,
+			OfficialSourceActivate(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate",
+			"bmkg_air_quality",
+			nil,
+		)
+		if rejected.Code != stdhttp.StatusConflict {
+			t.Fatalf("rollback activated without fresh evidence: status=%d body=%s", rejected.Code, rejected.Body.String())
+		}
+
+		installValidAirQualitySource(t)
+		dryRun := runAdminSourceHandler(
+			t,
+			OfficialSourceDryRun(db, "test-key"),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/dry-run",
+			"bmkg_air_quality",
+			nil,
+		)
+		if dryRun.Code != stdhttp.StatusOK {
+			t.Fatalf("fresh dry-run after rollback failed: status=%d body=%s", dryRun.Code, dryRun.Body.String())
+		}
+		activated := runAdminSourceHandler(
+			t,
+			OfficialSourceActivate(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate",
+			"bmkg_air_quality",
+			nil,
+		)
+		if activated.Code != stdhttp.StatusOK || !strings.Contains(activated.Body.String(), `"config_version":12`) {
+			t.Fatalf("activation after fresh evidence failed: status=%d body=%s", activated.Code, activated.Body.String())
+		}
+		var rollbackAuditCount, rollbackVersionCount int
+		if err := db.QueryRow(`SELECT count(*) FROM official_source_setting_audit WHERE action='rollback' AND config_version=11`).Scan(&rollbackAuditCount); err != nil {
+			t.Fatalf("count rollback audit: %v", err)
+		}
+		if err := db.QueryRow(`SELECT count(*) FROM official_source_setting_versions WHERE version=11 AND configuration->>'run_mode'='dry_run'`).Scan(&rollbackVersionCount); err != nil {
+			t.Fatalf("count rollback history: %v", err)
+		}
+		if rollbackAuditCount != 1 || rollbackVersionCount != 1 {
+			t.Fatalf("rollback audit/history missing: audit=%d history=%d", rollbackAuditCount, rollbackVersionCount)
+		}
+	})
+
+	t.Run("historical disabled target remains disabled", func(t *testing.T) {
+		db := openOfficialSourceOnboardingPostgreSQL(t)
+		insertCurrentOfficialSource(t, db, 10, "active", 10)
+		_, err := db.Exec(`
+			INSERT INTO official_source_setting_versions
+			  (source_name, version, configuration, changed_by, change_reason)
+			VALUES (
+			  'bmkg_air_quality', 3,
+			  '{"enabled":false,"run_mode":"disabled","mode":"custom_api","adapter_version":"v1","field_mapping":{},"custom_api_url":"https://iklim.bmkg.go.id/api/air-quality","poll_interval_seconds":1800,"expected_interval_seconds":1800}'::jsonb,
+			  'prior-admin@example.test', 'Known disabled configuration'
+			)`,
+		)
+		if err != nil {
+			t.Fatalf("insert disabled rollback target: %v", err)
+		}
+
+		rollback := runAdminSourceHandler(
+			t,
+			OfficialSourceRollback(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/rollback",
+			"bmkg_air_quality",
+			[]byte(`{"version":3,"reason":"Restore disabled configuration"}`),
+		)
+		if rollback.Code != stdhttp.StatusOK || !strings.Contains(rollback.Body.String(), `"config_version":11`) {
+			t.Fatalf("disabled rollback failed: status=%d body=%s", rollback.Code, rollback.Body.String())
+		}
+		var enabled bool
+		var runMode string
+		var version int
+		var dryRunValid sql.NullBool
+		var evidenceVersion sql.NullInt64
+		if err := db.QueryRow(`
+			SELECT enabled, run_mode, config_version, last_dry_run_valid,
+			       last_dry_run_config_version
+			FROM official_source_settings WHERE source_name='bmkg_air_quality'`,
+		).Scan(&enabled, &runMode, &version, &dryRunValid, &evidenceVersion); err != nil {
+			t.Fatalf("read disabled rollback state: %v", err)
+		}
+		if enabled || runMode != "disabled" || version != 11 || dryRunValid.Valid || evidenceVersion.Valid {
+			t.Fatalf("disabled rollback is not fail-closed: enabled=%v mode=%s version=%d valid=%v evidence=%v",
+				enabled, runMode, version, dryRunValid, evidenceVersion)
+		}
+		rejected := runAdminSourceHandler(
+			t,
+			OfficialSourceActivate(db),
+			stdhttp.MethodPost,
+			"/settings/official-sources/bmkg_air_quality/activate",
+			"bmkg_air_quality",
+			nil,
+		)
+		if rejected.Code != stdhttp.StatusConflict {
+			t.Fatalf("disabled rollback activated: status=%d body=%s", rejected.Code, rejected.Body.String())
+		}
 	})
 }
 

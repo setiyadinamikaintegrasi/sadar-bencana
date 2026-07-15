@@ -1152,16 +1152,30 @@ func OfficialSourceDryRun(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 		}
 		result, previewErr := executeSourcePreview(c, config)
 		valid := previewErr == nil && result.ContractValid
-		_, updateErr := db.ExecContext(c.Request.Context(), `
+		updateResult, updateErr := db.ExecContext(c.Request.Context(), `
 			UPDATE official_source_settings SET last_dry_run_at=now(),
 			  last_dry_run_valid=$2, last_dry_run_config_version=config_version
-			WHERE source_name=$1`, source, valid)
-		writeSourceAudit(db, source, "dry_run", AuthEmail(c), config.ConfigVersion, valid,
+			WHERE source_name=$1 AND config_version=$3 AND run_mode='dry_run'`,
+			source, valid, config.ConfigVersion)
+		evidenceRecorded := false
+		if updateErr == nil {
+			rowsAffected, rowsErr := updateResult.RowsAffected()
+			if rowsErr != nil {
+				updateErr = rowsErr
+			} else {
+				evidenceRecorded = rowsAffected == 1
+			}
+		}
+		writeSourceAudit(db, source, "dry_run", AuthEmail(c), config.ConfigVersion, valid && evidenceRecorded,
 			gin.H{"record_count": result.RecordCount, "warning_count": result.WarningCount,
 				"observation_count": result.ObservationCount, "valid_count": result.ValidCount,
-				"invalid_count": result.InvalidCount})
+				"invalid_count": result.InvalidCount, "evidence_recorded": evidenceRecorded})
 		if updateErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "dry_run_state_failed"})
+			return
+		}
+		if !evidenceRecorded {
+			c.JSON(http.StatusConflict, gin.H{"error": "stale_config_version"})
 			return
 		}
 		if previewErr != nil {
@@ -1258,13 +1272,22 @@ func OfficialSourceRollback(db *sql.DB) gin.HandlerFunc {
 		var version int
 		err = tx.QueryRowContext(c.Request.Context(), `
 			WITH target AS (
-			  SELECT configuration, api_token_encrypted
+			  SELECT configuration, api_token_encrypted,
+			    COALESCE((configuration->>'enabled')::boolean,FALSE) AS target_enabled,
+			    COALESCE(
+			      configuration->>'run_mode',
+			      CASE WHEN COALESCE((configuration->>'enabled')::boolean,FALSE)
+			        THEN 'active' ELSE 'disabled' END
+			    ) AS target_run_mode
 			  FROM official_source_setting_versions
 			  WHERE source_name=$1 AND version=$2
 			), updated AS (
 			  UPDATE official_source_settings s SET
-			    enabled=COALESCE((t.configuration->>'enabled')::boolean,FALSE),
-			    run_mode=COALESCE(t.configuration->>'run_mode','disabled'),
+			    enabled=t.target_enabled AND t.target_run_mode <> 'disabled',
+			    run_mode=CASE
+			      WHEN t.target_enabled AND t.target_run_mode <> 'disabled' THEN 'dry_run'
+			      ELSE 'disabled'
+			    END,
 			    mode=COALESCE(t.configuration->>'mode','auto'),
 			    adapter_version=COALESCE(t.configuration->>'adapter_version','v1'),
 			    field_mapping=COALESCE(t.configuration->'field_mapping','{}'::jsonb),
@@ -1300,7 +1323,8 @@ func OfficialSourceRollback(db *sql.DB) gin.HandlerFunc {
 		_, err = tx.ExecContext(c.Request.Context(), `
 			INSERT INTO official_source_setting_audit
 			  (source_name,action,actor_email,config_version,success,metadata)
-			VALUES ($1,'rollback',$2,$3,TRUE,jsonb_build_object('target_version',$4,'reason',$5))`,
+			VALUES ($1,'rollback',$2,$3,TRUE,
+			  jsonb_build_object('target_version',$4::int,'reason',$5::text))`,
 			source, AuthEmail(c), version, body.Version, strings.TrimSpace(body.Reason))
 		if err != nil || tx.Commit() != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "rollback_audit_failed"})

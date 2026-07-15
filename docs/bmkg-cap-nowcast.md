@@ -4,7 +4,7 @@ Connector ini membaca daftar peringatan dini cuaca dan dokumen Common Alerting
 Protocol (CAP) BMKG. Setiap perubahan disimpan sebagai revision immutable pada
 `official_alerts`; payload mentah tetap untuk audit dan tidak dikirim ke browser.
 
-## Prasyarat dan aktivasi
+## Prasyarat
 
 Terapkan migration secara berurutan, termasuk `019`, `021`, `025`, `030`,
 `032`, `037`, dan `040`.
@@ -15,15 +15,52 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema/040_bmkg_warning_and_air_qu
 
 Pastikan URL indeks dan setiap redirect tetap memakai HTTPS pada `bmkg.go.id`
 atau subdomain resminya. Konfirmasi ketentuan penggunaan dan kapasitas request
-sebelum mengaktifkan `bmkg_cap` dari halaman **Sumber Resmi**. Fallback lama
-`CONNECTOR_BMKG_CAP_ENABLED=true` hanya dipakai bila tabel pengaturan belum
-tersedia.
+sebelum mengaktifkan `bmkg_cap` dari halaman **Sumber Resmi**.
 
 `run_mode=dry_run` mengambil dan memvalidasi CAP lalu memperbarui Source Health
 dengan jumlah alert dan detail error. Mode ini tidak menulis source record,
 evidence observation, official alert, atau antrean delivery. `run_mode=active`
-tetap menjalankan persistence dan delivery normal. Fallback environment
-`CONNECTOR_BMKG_CAP_ENABLED=true` tetap diperlakukan sebagai mode active.
+tetap menjalankan persistence dan delivery normal.
+
+Fallback environment `CONNECTOR_BMKG_CAP_ENABLED=true` dipakai ketika resolver
+pengaturan mengembalikan tidak ada config, termasuk row `bmkg_cap` hilang,
+query pengaturan gagal, atau dekripsi credential gagal. Fallback tersebut
+bersifat fail-open dan selalu diperlakukan sebagai `active`, bukan `dry_run`.
+Karena itu fallback harus dikonfigurasi dengan sengaja, dimonitor, dan sebaiknya
+tidak diaktifkan ketika database settings menjadi control plane. Row yang ada
+dengan `run_mode=disabled` tidak memakai fallback.
+
+## Urutan aktivasi terkontrol
+
+Preview, API Dry-run, dan worker shadow poll adalah tiga pemeriksaan terpisah;
+semuanya wajib berhasil dan diamati sebelum **Activate**:
+
+1. Jalankan **Preview** pada draft endpoint/mapping. Preview hanya mengambil,
+   memvalidasi, dan memetakan sample. Preview tidak memperbarui connector
+   health atau `last_dry_run_*`, dan tidak menulis row domain. Audit `preview`
+   bukan bukti aktivasi.
+2. Simpan konfigurasi dengan `run_mode=dry_run` sebagai version **N**. Simpan
+   nomor N dan snapshot count `source_records`,
+   `disaster_observability_events`, `official_alerts`, dan
+   `ews_notification_log` untuk `bmkg_cap`.
+3. Jalankan **API Dry-run** dan pastikan validasi sukses tepat untuk N. API ini
+   mencatat audit serta `last_dry_run_valid=true` dengan
+   `last_dry_run_config_version=N`, tetapi tidak memperbarui worker connector
+   health dan tidak menulis row domain.
+4. Tunggu scheduled worker shadow poll saat config masih N dan
+   `run_mode=dry_run`. Pastikan Source Health menunjukkan `last_polled_at` baru,
+   jumlah item/error yang benar, dan tidak ada perubahan pada seluruh snapshot
+   count. Hanya poll worker ini yang membuktikan jalur scheduler/connector untuk
+   config N tanpa persistence.
+5. Konfirmasi config masih version N dan seluruh count tetap nol perubahan,
+   lalu jalankan **Activate**. Aktivasi membuat version N+1 dengan
+   `run_mode=active`.
+
+Jika config berubah saat API Dry-run berjalan, hasil ditolak dengan
+`stale_config_version` dan tidak boleh menjadi bukti aktivasi. Bukti sukses dari
+version lama juga ditolak oleh Activate dengan
+`successful_current_dry_run_required`. Kembali ke Preview dan ulangi seluruh
+urutan untuk version current; jangan melewati gate melalui SQL.
 
 ## Sumber dan atribusi
 
@@ -82,3 +119,10 @@ GET /api/v1/official-alerts?source=bmkg_cap&status=active&limit=20
 
 Untuk menghentikan ingest, set sumber ke `disabled`. Catat alasan perubahan,
 pastikan tidak ada delivery baru, dan pertahankan revision lama untuk audit.
+
+Rollback ke version historical selalu membuat config version baru dan
+menghapus bukti dry-run lama. Target yang dahulu active/dry-run dipulihkan
+sebagai `enabled=true, run_mode=dry_run`; target coherent disabled tetap
+disabled. Rollback tidak pernah mengaktifkan ingest langsung. Untuk hasil
+dry-run, wajib ulangi Preview -> API Dry-run current version -> worker shadow
+poll sehat -> nol persistence -> Activate.
