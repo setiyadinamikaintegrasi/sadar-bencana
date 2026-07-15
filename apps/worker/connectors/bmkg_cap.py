@@ -192,10 +192,11 @@ def parse_bmkg_cap(
         raise ValueError("CAP document root must be alert")
 
     identifier = _child_text(root, "identifier")
+    sender = _child_text(root, "sender")
     sent_raw = _child_text(root, "sent")
     message_type_raw = (_child_text(root, "msgType") or "Alert").lower()
-    if not identifier or not sent_raw:
-        raise ValueError("CAP identifier and sent are required")
+    if not identifier or not sender or not sent_raw:
+        raise ValueError("CAP identifier, sender, and sent are required")
 
     cap_status = _child_text(root, "status")
     if cap_status.casefold() != "actual":
@@ -216,6 +217,10 @@ def parse_bmkg_cap(
     references = _parse_references(root)
     if message_type in {"update", "cancel"} and not references:
         raise ValueError(f"CAP {message_type} must contain a valid CAP reference")
+    if message_type in {"update", "cancel"} and any(
+        reference["sender"] != sender for reference in references
+    ):
+        raise ValueError(f"CAP {message_type} references must use the same CAP sender")
 
     info = _preferred_info(root)
     if info is None and message_type != "cancel":
@@ -224,6 +229,7 @@ def parse_bmkg_cap(
     expires_raw = _child_text(info, "expires") if info is not None else ""
     payload = {
         "format": "CAP-XML",
+        "sender": sender,
         "message_identifier": identifier,
         "references": references,
         "referenced_message_identifiers": [

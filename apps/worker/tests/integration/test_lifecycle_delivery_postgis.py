@@ -421,11 +421,13 @@ def cap_lifecycle_input(
     sent_at: datetime,
     message_type: str = "alert",
     referenced_identifier: str | None = None,
+    sender: str = "nowcast@bmkg.go.id",
+    referenced_sender: str | None = None,
 ) -> OfficialAlertInput:
     references = []
     if referenced_identifier is not None:
         references = [{
-            "sender": "nowcast@bmkg.go.id",
+            "sender": referenced_sender or sender,
             "identifier": referenced_identifier,
             "sent": (sent_at - timedelta(minutes=1)).isoformat(),
         }]
@@ -442,6 +444,7 @@ def cap_lifecycle_input(
         area_geojson=None if message_type == "cancel" else JAKARTA_POLYGON,
         raw_payload={
             "message_identifier": identifier,
+            "sender": sender,
             "references": references,
             "referenced_message_identifiers": (
                 [referenced_identifier] if referenced_identifier else []
@@ -482,6 +485,17 @@ async def test_geometry_validation_does_not_block_historical_alert_lifecycle():
                 sent_at=now - timedelta(minutes=10),
                 expires_at=now + timedelta(hours=1),
             )
+            await conn.execute(
+                "UPDATE official_alerts SET raw_payload=$2::jsonb WHERE id=$1",
+                superseded["id"],
+                json.dumps(
+                    {
+                        "sender": "nowcast@bmkg.go.id",
+                        "message_identifier": "historical-superseded",
+                        "references": [],
+                    }
+                ),
+            )
             expiring = await insert_alert(
                 conn,
                 source_alert_id="historical-expiring",
@@ -504,9 +518,11 @@ async def test_geometry_validation_does_not_block_historical_alert_lifecycle():
 
         replacement, created = await upsert_official_alert(
             pool,
-            official_alert_input(
-                source_alert_id="historical-superseded",
+            cap_lifecycle_input(
+                "historical-update",
                 sent_at=now,
+                message_type="update",
+                referenced_identifier="historical-superseded",
             ),
             now=now,
         )
@@ -1107,7 +1123,9 @@ async def test_cap_reference_chain_resolves_to_one_lifecycle_and_queue():
                 "FROM ews_notification_log ORDER BY alert_revision"
             )
 
-        assert [row["source_alert_id"] for row in alerts] == ["A"] * 4
+        lifecycle_ids = {row["source_alert_id"] for row in alerts}
+        assert len(lifecycle_ids) == 1
+        assert next(iter(lifecycle_ids)).startswith("cap:")
         assert [row["revision"] for row in alerts] == [1, 2, 3, 4]
         assert [row["message_identifier"] for row in alerts] == ["A", "B", "C", "D"]
         assert [row["is_current"] for row in alerts] == [False, False, False, True]

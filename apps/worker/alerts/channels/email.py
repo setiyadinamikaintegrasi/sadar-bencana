@@ -17,6 +17,29 @@ from alerts.channels.email_template import render_html_email
 logger = logging.getLogger(__name__)
 
 
+async def _await_bounded_smtp(task: asyncio.Task[None]) -> None:
+    """Do not abandon a bounded SMTP thread when its caller is cancelled."""
+    try:
+        await asyncio.shield(task)
+        return
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None:
+            current.uncancel()
+        logger.warning(
+            "Email delivery cancellation deferred until SMTP outcome is known"
+        )
+
+    while True:
+        try:
+            await asyncio.shield(task)
+            return
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None:
+                current.uncancel()
+
+
 class EmailChannel(BaseChannel):
     """Sends email notifications via SMTP."""
 
@@ -70,17 +93,21 @@ class EmailChannel(BaseChannel):
                 subtype="html",
             )
 
-            # Run blocking SMTP in thread executor for async compatibility.
-            await asyncio.to_thread(
-                self._smtp_send,
-                host,
-                port,
-                user,
-                password,
-                from_addr,
-                recipient,
-                msg.as_string(),
+            # The SMTP socket timeout bounds this thread. Keep observing it even
+            # during shutdown so the delivery transaction can record the result.
+            smtp_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self._smtp_send,
+                    host,
+                    port,
+                    user,
+                    password,
+                    from_addr,
+                    recipient,
+                    msg.as_string(),
+                )
             )
+            await _await_bounded_smtp(smtp_task)
             return {"success": True, "provider_id": None}
         except (TimeoutError, socket.timeout):
             logger.warning("Email delivery timed out with an ambiguous provider result")

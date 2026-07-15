@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
+import threading
 import unittest
 from email import message_from_string
 from email.policy import default
@@ -51,6 +53,13 @@ class EmailTemplateTests(unittest.TestCase):
 
 
 class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
+    async def _wait_for_thread_event(self, event: threading.Event) -> None:
+        for _ in range(100):
+            if event.is_set():
+                return
+            await asyncio.sleep(0.01)
+        self.fail("SMTP thread did not start")
+
     async def test_send_builds_plain_and_html_alternatives(self):
         channel = EmailChannel()
         environment = {
@@ -155,6 +164,97 @@ class EmailChannelTests(unittest.IsolatedAsyncioTestCase):
                 idempotency_key="delivery-timeout",
             )
 
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "provider_id": None,
+                "error": "email_delivery_ambiguous",
+                "ambiguous": True,
+                "retryable": False,
+            },
+        )
+
+    async def test_cancellation_waits_for_smtp_completion_and_returns_success(self):
+        channel = EmailChannel()
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+        }
+
+        def smtp_send(*_args):
+            started.set()
+            release.wait(timeout=2)
+            finished.set()
+
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch.object(channel, "_smtp_send", side_effect=smtp_send),
+        ):
+            task = asyncio.create_task(
+                channel.send(
+                    "recipient@example.com",
+                    "Test",
+                    idempotency_key="delivery-cancel-success",
+                )
+            )
+            await self._wait_for_thread_event(started)
+            task.cancel()
+            await asyncio.sleep(0.02)
+
+            self.assertFalse(task.done())
+            self.assertFalse(finished.is_set())
+            release.set()
+            result = await asyncio.wait_for(task, timeout=1)
+
+        self.assertTrue(finished.is_set())
+        self.assertEqual(result, {"success": True, "provider_id": None})
+
+    async def test_cancellation_waits_for_smtp_timeout_and_returns_ambiguous(self):
+        channel = EmailChannel()
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        environment = {
+            "SMTP_HOST": "smtp.example.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "resend",
+            "SMTP_PASSWORD": "secret",
+            "SMTP_FROM": "noreply@sadarbencana.id",
+        }
+
+        def smtp_send(*_args):
+            started.set()
+            release.wait(timeout=2)
+            finished.set()
+            raise socket.timeout
+
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch.object(channel, "_smtp_send", side_effect=smtp_send),
+        ):
+            task = asyncio.create_task(
+                channel.send(
+                    "recipient@example.com",
+                    "Test",
+                    idempotency_key="delivery-cancel-timeout",
+                )
+            )
+            await self._wait_for_thread_event(started)
+            task.cancel()
+            await asyncio.sleep(0.02)
+
+            self.assertFalse(task.done())
+            release.set()
+            result = await asyncio.wait_for(task, timeout=1)
+
+        self.assertTrue(finished.is_set())
         self.assertEqual(
             result,
             {

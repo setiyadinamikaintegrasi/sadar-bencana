@@ -10,7 +10,9 @@ import asyncpg
 
 from alerts.channels import CHANNELS
 from db.official_alerts import (
+    due_official_alert_sources,
     expire_official_alert_revisions,
+    lock_source_lifecycle,
     upsert_official_alert,
 )
 from db.evidence import create_source_record
@@ -109,37 +111,6 @@ WHERE source = $1
   AND status IN ('pending', 'failed')
 """
 
-_SKIP_DISABLED_SQL = """
-UPDATE ews_notification_log l
-SET status = 'skipped',
-    error_message = 'source_disabled_or_not_active',
-    next_attempt_at = NULL
-WHERE l.delivery_kind = 'official_lifecycle'
-  AND l.status IN ('pending', 'failed')
-  AND NOT EXISTS (
-    SELECT 1
-    FROM official_source_settings source_setting
-    WHERE source_setting.source_name = l.source
-      AND source_setting.enabled = TRUE
-      AND source_setting.run_mode = 'active'
-  )
-"""
-
-_SKIP_STALE_SQL = """
-UPDATE ews_notification_log l
-SET status = 'skipped',
-    error_message = 'official_alert_revision_not_current',
-    next_attempt_at = NULL
-WHERE l.delivery_kind = 'official_lifecycle'
-  AND l.status IN ('pending', 'failed')
-  AND NOT EXISTS (
-    SELECT 1
-    FROM official_alerts current_alert
-    WHERE current_alert.id = l.official_alert_id
-      AND current_alert.is_current = TRUE
-  )
-"""
-
 _CLAIM_DUE_SQL = """
 WITH due AS (
     SELECT l.id
@@ -149,19 +120,6 @@ WITH due AS (
     WHERE l.status IN ('pending', 'failed')
       AND l.next_attempt_at <= now()
       AND l.attempt_count < $1
-      AND (
-        l.delivery_kind <> 'official_lifecycle'
-        OR EXISTS (
-          SELECT 1
-          FROM official_alerts current_alert
-          JOIN official_source_settings source_setting
-            ON source_setting.source_name = current_alert.source
-          WHERE current_alert.id = l.official_alert_id
-            AND current_alert.is_current = TRUE
-            AND source_setting.enabled = TRUE
-            AND source_setting.run_mode = 'active'
-        )
-      )
     ORDER BY l.next_attempt_at
     LIMIT $2
     FOR UPDATE SKIP LOCKED
@@ -186,21 +144,27 @@ LEFT JOIN official_alerts oa ON oa.id = c.official_alert_id
 LEFT JOIN alerts a ON a.id = c.alert_id
 """
 
-_LOCK_ACTIVE_SOURCE_SQL = """
-SELECT source_name
+_LOCK_SOURCE_SETTING_SQL = """
+SELECT enabled, run_mode
 FROM official_source_settings
 WHERE source_name = $1
-  AND enabled = TRUE
-  AND run_mode = 'active'
 FOR SHARE
 """
 
-_LOCK_CURRENT_ALERT_SQL = """
-SELECT id
+_LOCK_ALERT_REVISION_SQL = """
+SELECT is_current
 FROM official_alerts
 WHERE id = $1
-  AND is_current = TRUE
 FOR SHARE
+"""
+
+_SKIP_CLAIMED_DELIVERY_SQL = """
+UPDATE ews_notification_log
+SET status = 'skipped', error_message = $3, next_attempt_at = NULL
+WHERE id = $1
+  AND attempt_count = $2
+  AND status IN ('pending', 'failed')
+RETURNING id
 """
 
 _LOCK_QUEUE_FOR_SEND_SQL = """
@@ -313,6 +277,7 @@ async def enqueue_official_alert_revision(
         else _ENQUEUE_ACTIVE_SQL
     )
     async def enqueue(conn: asyncpg.Connection) -> int:
+        await lock_source_lifecycle(conn, str(alert["source"]))
         if action == "alert":
             rows = await conn.fetch(sql, alert["id"], action, correlation_id)
         else:
@@ -336,7 +301,8 @@ async def enqueue_official_alert_revision(
     if connection is not None:
         return await enqueue(connection)
     async with pool.acquire() as conn:
-        return await enqueue(conn)
+        async with conn.transaction():
+            return await enqueue(conn)
 
 
 async def persist_official_alert_revision(
@@ -355,6 +321,7 @@ async def persist_official_alert_revision(
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await lock_source_lifecycle(conn, alert.source)
             if source_name is not None and expected_config_version is not None:
                 allowed = await source_write_is_allowed(
                     conn,
@@ -392,12 +359,24 @@ async def expire_and_enqueue_official_alert_revisions(
     """Expire current alerts and enqueue lifecycle delivery in one transaction."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            expired = await expire_official_alert_revisions(
+            sources = await due_official_alert_sources(
                 pool,
                 now=now,
                 connection=conn,
+            ) if now is not None else await due_official_alert_sources(
+                pool,
+                connection=conn,
+            )
+            for source in sorted(sources):
+                await lock_source_lifecycle(conn, source)
+            expired = await expire_official_alert_revisions(
+                pool,
+                now=now,
+                sources=sources,
+                connection=conn,
             ) if now is not None else await expire_official_alert_revisions(
                 pool,
+                sources=sources,
                 connection=conn,
             )
             if delivery_enabled:
@@ -426,23 +405,37 @@ async def _lock_delivery_for_send(
 ) -> Any | None:
     """Linearize source/revision containment with one external send.
 
-    Locks follow control-plane order: source setting, official alert, then queue
-    row. Supersession paths update the alert and queue row; disable updates the
-    source setting. Once these locks are held, neither can commit until this
-    delivery records its terminal result.
+    Every official lifecycle path follows advisory source, source setting,
+    official alert, then queue row. Once held, reconciliation cannot invert the
+    alert/queue order and containment cannot overtake an external send.
     """
     if row.get("delivery_kind") == "official_lifecycle":
-        source_name = await conn.fetchval(
-            _LOCK_ACTIVE_SOURCE_SQL,
-            row.get("source"),
-        )
-        if source_name is None:
+        source = str(row.get("source") or "")
+        await lock_source_lifecycle(conn, source)
+        setting = await conn.fetchrow(_LOCK_SOURCE_SETTING_SQL, source)
+        if (
+            setting is None
+            or setting["enabled"] is not True
+            or setting["run_mode"] != "active"
+        ):
+            await conn.fetchval(
+                _SKIP_CLAIMED_DELIVERY_SQL,
+                row["id"],
+                row["attempt_count"],
+                "source_disabled_or_not_active",
+            )
             return None
-        alert_id = await conn.fetchval(
-            _LOCK_CURRENT_ALERT_SQL,
+        alert = await conn.fetchrow(
+            _LOCK_ALERT_REVISION_SQL,
             row.get("official_alert_id"),
         )
-        if alert_id is None:
+        if alert is None or alert["is_current"] is not True:
+            await conn.fetchval(
+                _SKIP_CLAIMED_DELIVERY_SQL,
+                row["id"],
+                row["attempt_count"],
+                "official_alert_revision_not_current",
+            )
             return None
     return await conn.fetchval(
         _LOCK_QUEUE_FOR_SEND_SQL,
@@ -479,8 +472,6 @@ async def process_due_deliveries(
     for _ in range(batch_size):
         async with pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(_SKIP_DISABLED_SQL)
-                await conn.execute(_SKIP_STALE_SQL)
                 rows = await conn.fetch(
                     _CLAIM_DUE_SQL,
                     MAX_DELIVERY_ATTEMPTS,
@@ -510,8 +501,6 @@ async def process_due_deliveries(
         current = now or datetime.now(timezone.utc)
         async with pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(_SKIP_DISABLED_SQL)
-                await conn.execute(_SKIP_STALE_SQL)
                 locked_id = await _lock_delivery_for_send(
                     conn,
                     row,

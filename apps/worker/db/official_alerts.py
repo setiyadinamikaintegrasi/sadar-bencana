@@ -81,8 +81,29 @@ WHERE source_settings.source_name = alerts.source
   AND alerts.status = 'active'
   AND alerts.expires_at IS NOT NULL
   AND alerts.expires_at <= $1
+  AND ($2::varchar[] IS NULL OR alerts.source = ANY($2::varchar[]))
 RETURNING {_RETURNING_COLUMNS}
 """
+
+_DUE_EXPIRY_SOURCES_SQL = """
+SELECT DISTINCT alerts.source
+FROM official_alerts alerts
+JOIN official_source_settings source_settings
+  ON source_settings.source_name = alerts.source
+WHERE source_settings.enabled = TRUE
+  AND source_settings.run_mode = 'active'
+  AND alerts.is_current = TRUE
+  AND alerts.status = 'active'
+  AND alerts.expires_at IS NOT NULL
+  AND alerts.expires_at <= $1
+ORDER BY alerts.source
+"""
+
+_SOURCE_LIFECYCLE_LOCK_SQL = (
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
+)
+_LEGACY_CAP_SENDER = "__legacy_cap_sender__"
+CAPIdentity = tuple[str, str]
 
 
 def payload_checksum(payload: dict[str, Any]) -> str:
@@ -112,23 +133,22 @@ def _current_status(alert: OfficialAlertInput, now: datetime) -> str:
     return "active"
 
 
-def _referenced_message_identifiers(payload: dict[str, Any]) -> list[str]:
-    raw_identifiers = payload.get("referenced_message_identifiers")
-    if isinstance(raw_identifiers, list):
-        return [
-            str(identifier).strip()
-            for identifier in raw_identifiers
-            if str(identifier).strip()
-        ]
-    references = payload.get("references")
-    if not isinstance(references, list):
-        return []
-    return [
-        str(reference.get("identifier") or "").strip()
-        for reference in references
-        if isinstance(reference, dict)
-        and str(reference.get("identifier") or "").strip()
-    ]
+def source_lifecycle_lock_key(source: str) -> str:
+    return f"{source}:lifecycle-graph"
+
+
+async def lock_source_lifecycle(conn: asyncpg.Connection, source: str) -> None:
+    """Acquire the first lock in the source -> alert -> queue lock order."""
+    await conn.execute(
+        _SOURCE_LIFECYCLE_LOCK_SQL,
+        source_lifecycle_lock_key(source),
+    )
+
+
+def _cap_identity_key(identity: CAPIdentity) -> str:
+    sender, identifier = identity
+    digest = hashlib.sha256(f"{sender}\0{identifier}".encode("utf-8")).hexdigest()
+    return f"cap:{digest}"
 
 
 def _payload_dict(value: Any) -> dict[str, Any]:
@@ -140,18 +160,53 @@ def _payload_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _cap_message_identifier(row: dict[str, Any]) -> str:
+def _cap_sender(payload: dict[str, Any]) -> str:
+    return str(payload.get("sender") or _LEGACY_CAP_SENDER).strip()
+
+
+def _cap_message_identity(row: dict[str, Any]) -> CAPIdentity:
     payload = _payload_dict(row.get("raw_payload"))
-    return str(
+    identifier = str(
         payload.get("message_identifier")
         or payload.get("identifier")
         or payload.get("source_alert_id")
         or row["source_alert_id"]
     ).strip()
+    return _cap_sender(payload), identifier
 
 
-def _reference_sent_times(payload: dict[str, Any]) -> dict[str, datetime]:
-    result: dict[str, datetime] = {}
+def _referenced_message_identities(
+    payload: dict[str, Any],
+    *,
+    current_sender: str,
+) -> list[CAPIdentity]:
+    references = payload.get("references")
+    if isinstance(references, list):
+        identities: list[CAPIdentity] = []
+        for reference in references:
+            if not isinstance(reference, dict):
+                continue
+            identifier = str(reference.get("identifier") or "").strip()
+            sender = str(reference.get("sender") or current_sender).strip()
+            if identifier and sender:
+                identities.append((sender, identifier))
+        return identities
+    raw_identifiers = payload.get("referenced_message_identifiers")
+    if not isinstance(raw_identifiers, list):
+        return []
+    return [
+        (current_sender, str(identifier).strip())
+        for identifier in raw_identifiers
+        if str(identifier).strip()
+    ]
+
+
+def _reference_sent_times(
+    payload: dict[str, Any],
+    *,
+    current_sender: str,
+) -> dict[CAPIdentity, datetime]:
+    result: dict[CAPIdentity, datetime] = {}
     references = payload.get("references")
     if not isinstance(references, list):
         return result
@@ -159,8 +214,9 @@ def _reference_sent_times(payload: dict[str, Any]) -> dict[str, datetime]:
         if not isinstance(reference, dict):
             continue
         identifier = str(reference.get("identifier") or "").strip()
+        sender = str(reference.get("sender") or current_sender).strip()
         raw_sent = str(reference.get("sent") or "").strip()
-        if not identifier or not raw_sent:
+        if not identifier or not sender or not raw_sent:
             continue
         try:
             sent = datetime.fromisoformat(raw_sent.replace("Z", "+00:00"))
@@ -169,59 +225,59 @@ def _reference_sent_times(payload: dict[str, Any]) -> dict[str, datetime]:
         if sent.tzinfo is None:
             continue
         sent = sent.astimezone(timezone.utc)
-        current = result.get(identifier)
+        identity = (sender, identifier)
+        current = result.get(identity)
         if current is None or sent < current:
-            result[identifier] = sent
+            result[identity] = sent
     return result
 
 
 def _cap_component(
     rows: list[dict[str, Any]],
     alert: OfficialAlertInput,
-) -> tuple[set[str], str]:
+) -> tuple[set[CAPIdentity], CAPIdentity]:
     """Return the connected CAP component and its deterministic root."""
-    adjacency: dict[str, set[str]] = {}
-    predecessors: dict[str, set[str]] = {}
-    sent_times: dict[str, datetime] = {}
+    adjacency: dict[CAPIdentity, set[CAPIdentity]] = {}
+    predecessors: dict[CAPIdentity, set[CAPIdentity]] = {}
+    sent_times: dict[CAPIdentity, datetime] = {}
 
-    def add_node(identifier: str, sent_at: datetime | None = None) -> None:
-        adjacency.setdefault(identifier, set())
-        predecessors.setdefault(identifier, set())
+    def add_node(identity: CAPIdentity, sent_at: datetime | None = None) -> None:
+        adjacency.setdefault(identity, set())
+        predecessors.setdefault(identity, set())
         if sent_at is not None:
             normalized = sent_at.astimezone(timezone.utc)
-            current = sent_times.get(identifier)
+            current = sent_times.get(identity)
             if current is None or normalized < current:
-                sent_times[identifier] = normalized
+                sent_times[identity] = normalized
 
     def add_message(
-        identifier: str,
+        identity: CAPIdentity,
         payload: dict[str, Any],
         sent_at: datetime,
-        persisted_lifecycle: str | None = None,
     ) -> None:
-        add_node(identifier, sent_at)
-        if (
-            persisted_lifecycle
-            and persisted_lifecycle != identifier
-            and not persisted_lifecycle.startswith("__cap_")
+        add_node(identity, sent_at)
+        current_sender = identity[0]
+        reference_times = _reference_sent_times(
+            payload,
+            current_sender=current_sender,
+        )
+        for referenced in _referenced_message_identities(
+            payload,
+            current_sender=current_sender,
         ):
-            add_node(persisted_lifecycle, sent_at)
-            adjacency[identifier].add(persisted_lifecycle)
-            adjacency[persisted_lifecycle].add(identifier)
-        reference_times = _reference_sent_times(payload)
-        for referenced in _referenced_message_identifiers(payload):
             add_node(referenced, reference_times.get(referenced))
-            predecessors[identifier].add(referenced)
-            adjacency[identifier].add(referenced)
-            adjacency[referenced].add(identifier)
+            if referenced[0] != current_sender:
+                continue
+            predecessors[identity].add(referenced)
+            adjacency[identity].add(referenced)
+            adjacency[referenced].add(identity)
 
     for row in rows:
-        identifier = _cap_message_identifier(row)
+        identity = _cap_message_identity(row)
         add_message(
-            identifier,
+            identity,
             _payload_dict(row.get("raw_payload")),
             row["sent_at"],
-            str(row["source_alert_id"]),
         )
 
     incoming_payload = _payload_dict(alert.raw_payload)
@@ -231,27 +287,28 @@ def _cap_component(
         or incoming_payload.get("source_alert_id")
         or alert.source_alert_id
     ).strip()
-    add_message(incoming_identifier, incoming_payload, alert.sent_at)
+    incoming_identity = (_cap_sender(incoming_payload), incoming_identifier)
+    add_message(incoming_identity, incoming_payload, alert.sent_at)
 
-    component: set[str] = set()
-    pending = [incoming_identifier]
+    component: set[CAPIdentity] = set()
+    pending = [incoming_identity]
     while pending:
-        identifier = pending.pop()
-        if identifier in component:
+        identity = pending.pop()
+        if identity in component:
             continue
-        component.add(identifier)
-        pending.extend(adjacency.get(identifier, ()))
+        component.add(identity)
+        pending.extend(adjacency.get(identity, ()))
 
     roots = [
-        identifier
-        for identifier in component
-        if not (predecessors.get(identifier, set()) & component)
+        identity
+        for identity in component
+        if not (predecessors.get(identity, set()) & component)
     ]
     candidates = roots or list(component)
     missing_time = datetime.max.replace(tzinfo=timezone.utc)
     canonical = min(
         candidates,
-        key=lambda identifier: (sent_times.get(identifier, missing_time), identifier),
+        key=lambda identity: (sent_times.get(identity, missing_time), identity),
     )
     return component, canonical
 
@@ -278,11 +335,11 @@ async def _reconcile_cap_lifecycle(
     now: datetime,
 ) -> list[dict[str, Any]]:
     component, canonical = _cap_component(rows, alert)
-    component_rows = [row for row in rows if _cap_message_identifier(row) in component]
+    component_rows = [row for row in rows if _cap_message_identity(row) in component]
     component_rows.sort(
         key=lambda row: (
             row["sent_at"],
-            _cap_message_identifier(row),
+            _cap_message_identity(row),
             str(row["id"]),
         )
     )
@@ -313,7 +370,7 @@ async def _reconcile_cap_lifecycle(
             RETURNING {_RETURNING_COLUMNS}
             """,
             row["id"],
-            canonical,
+            _cap_identity_key(canonical),
             revision,
             previous_id,
             is_current,
@@ -341,7 +398,7 @@ async def _reconcile_cap_lifecycle(
                 WHERE official_alert_id = $1
                 """,
                 row["id"],
-                canonical,
+                _cap_identity_key(canonical),
                 row["revision"],
             )
     return final_rows
@@ -354,10 +411,7 @@ async def _upsert_cap_alert(
     checksum: str,
     now: datetime,
 ) -> tuple[dict[str, Any], bool]:
-    await conn.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        f"{alert.source}:lifecycle-graph",
-    )
+    await lock_source_lifecycle(conn, alert.source)
     rows = [dict(row) for row in await conn.fetch(_LOCK_CAP_ROWS_SQL, alert.source)]
     message_identifier = str(
         alert.raw_payload.get("message_identifier")
@@ -365,12 +419,12 @@ async def _upsert_cap_alert(
         or alert.raw_payload.get("source_alert_id")
         or alert.source_alert_id
     ).strip()
+    message_identity = (_cap_sender(alert.raw_payload), message_identifier)
     duplicate = next(
         (
             row
             for row in rows
-            if _cap_message_identifier(row) == message_identifier
-            and row["payload_checksum"] == checksum
+            if _cap_message_identity(row) == message_identity
         ),
         None,
     )
@@ -520,29 +574,49 @@ async def expire_official_alerts(
     """Mark current active alerts expired after their explicit expiry."""
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_EXPIRE_SQL, current_time)
+        rows = await conn.fetch(_EXPIRE_SQL, current_time, None)
     return len(rows)
+
+
+async def due_official_alert_sources(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+    connection: asyncpg.Connection | None = None,
+) -> list[str]:
+    """Return due source names without taking alert or queue row locks."""
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if connection is not None:
+        rows = await connection.fetch(_DUE_EXPIRY_SOURCES_SQL, current_time)
+    else:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_DUE_EXPIRY_SOURCES_SQL, current_time)
+    return [str(row["source"]) for row in rows]
 
 
 async def expire_official_alert_revisions(
     pool: asyncpg.Pool,
     *,
     now: datetime | None = None,
+    sources: list[str] | None = None,
     connection: asyncpg.Connection | None = None,
 ) -> list[dict[str, Any]]:
     """Expire due current revisions and return their lifecycle payloads."""
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if connection is not None:
-        rows = await connection.fetch(_EXPIRE_SQL, current_time)
+        rows = await connection.fetch(_EXPIRE_SQL, current_time, sources)
     else:
         async with pool.acquire() as conn:
-            rows = await conn.fetch(_EXPIRE_SQL, current_time)
+            rows = await conn.fetch(_EXPIRE_SQL, current_time, sources)
     return [dict(row) for row in rows]
 
 
 __all__ = [
+    "due_official_alert_sources",
     "expire_official_alerts",
     "expire_official_alert_revisions",
+    "lock_source_lifecycle",
     "payload_checksum",
+    "source_lifecycle_lock_key",
     "upsert_official_alert",
 ]

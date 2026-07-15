@@ -31,6 +31,7 @@ RSS_XML = """\
 def cap_xml(
     *,
     identifier: str = "BMKG-001",
+    sender: str = "nowcast@bmkg.go.id",
     message_type: str = "Alert",
     references: str = "",
     status: str = "Actual",
@@ -62,7 +63,7 @@ def cap_xml(
     return f"""\
 <alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
   <identifier>{identifier}</identifier>
-  <sender>nowcast@bmkg.go.id</sender>
+  <sender>{sender}</sender>
   <sent>2026-06-30T10:00:00+07:00</sent>
   <status>{status}</status>
   <msgType>{message_type}</msgType>
@@ -304,6 +305,7 @@ class BMKGCAPParserTests(unittest.TestCase):
         self.assertEqual(alert.severity, "High")
         self.assertEqual(alert.area_name, "Jawa Barat")
         self.assertIsNone(alert.source_url)
+        self.assertEqual(alert.raw_payload["sender"], "nowcast@bmkg.go.id")
         self.assertEqual(alert.sent_at.utcoffset().total_seconds(), 7 * 3600)
         self.assertEqual(
             alert.area_geojson,
@@ -405,6 +407,23 @@ class BMKGCAPParserTests(unittest.TestCase):
                         )
                     )
 
+    def test_rejects_cross_sender_update_and_cancellation(self) -> None:
+        for message_type in ("Update", "Cancel"):
+            with self.subTest(message_type=message_type):
+                with self.assertRaisesRegex(ValueError, "same CAP sender"):
+                    parse_bmkg_cap(
+                        cap_xml(
+                            identifier=f"FOREIGN-{message_type}",
+                            sender="publisher-b@bmkg.go.id",
+                            message_type=message_type,
+                            references=(
+                                "publisher-a@bmkg.go.id,SHARED-ID,"
+                                "2026-06-30T10:00:00+07:00"
+                            ),
+                            include_info=message_type != "Cancel",
+                        )
+                    )
+
     def test_rejects_non_production_cancel_without_info(self) -> None:
         reference = "nowcast@bmkg.go.id,BMKG-001,2026-06-30T10:00:00+07:00"
         for field, value, expected_error in (
@@ -426,7 +445,7 @@ class BMKGCAPParserTests(unittest.TestCase):
                     parse_bmkg_cap(cap_xml(**arguments))
 
     def test_rejects_missing_required_fields_and_naive_timestamp(self) -> None:
-        with self.assertRaisesRegex(ValueError, "identifier and sent"):
+        with self.assertRaisesRegex(ValueError, "identifier, sender, and sent"):
             parse_bmkg_cap("<alert><sent>2026-06-30T10:00:00Z</sent></alert>")
         with self.assertRaisesRegex(ValueError, "include a timezone"):
             parse_bmkg_cap(cap_xml().replace("+07:00</sent>", "</sent>"))

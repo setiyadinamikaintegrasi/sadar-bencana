@@ -1,4 +1,5 @@
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -177,36 +178,37 @@ async def test_lifecycle_changes_use_latest_successful_prior_recipient_and_zone(
     assert "alert_revision < $3" in supersede_call[0]
 
 
-def test_claim_only_dispatches_the_current_official_alert_revision():
+def test_claim_does_not_lock_source_or_alert_before_source_advisory_lock():
     sql = " ".join(lifecycle_delivery._CLAIM_DUE_SQL.split())
 
-    assert "current_alert.is_current = TRUE" in sql
-    assert "current_alert.id = l.official_alert_id" in sql
+    assert "official_source_settings" not in sql
+    assert "current_alert.is_current = TRUE" not in sql
+    assert "FOR UPDATE SKIP LOCKED" in sql
 
 
-def test_claim_uses_lease_and_active_source_barrier():
+def test_claim_only_reserves_one_due_queue_row_with_a_lease():
     sql = " ".join(lifecycle_delivery._CLAIM_DUE_SQL.split())
 
     assert "next_attempt_at = now() +" in sql
-    assert "official_source_settings" in sql
-    assert "source_setting.enabled = TRUE" in sql
-    assert "source_setting.run_mode = 'active'" in sql
+    assert "LIMIT $2" in sql
 
 
 def test_pre_send_lock_revalidates_source_revision_lease_and_claim():
-    source_sql = " ".join(lifecycle_delivery._LOCK_ACTIVE_SOURCE_SQL.split())
-    alert_sql = " ".join(lifecycle_delivery._LOCK_CURRENT_ALERT_SQL.split())
+    source_sql = " ".join(lifecycle_delivery._LOCK_SOURCE_SETTING_SQL.split())
+    alert_sql = " ".join(lifecycle_delivery._LOCK_ALERT_REVISION_SQL.split())
     queue_sql = " ".join(lifecycle_delivery._LOCK_QUEUE_FOR_SEND_SQL.split())
+    skip_sql = " ".join(lifecycle_delivery._SKIP_CLAIMED_DELIVERY_SQL.split())
 
-    assert "enabled = TRUE" in source_sql
-    assert "run_mode = 'active'" in source_sql
+    assert "SELECT enabled, run_mode" in source_sql
     assert "FOR SHARE" in source_sql
-    assert "is_current = TRUE" in alert_sql
+    assert "SELECT is_current" in alert_sql
     assert "FOR SHARE" in alert_sql
     assert "attempt_count = $2" in queue_sql
     assert "status IN ('pending', 'failed')" in queue_sql
     assert "next_attempt_at > now()" in queue_sql
     assert "RETURNING id" in queue_sql
+    assert "attempt_count = $2" in skip_sql
+    assert "status = 'skipped'" in skip_sql
 
 
 def test_delivery_callbacks_compare_and_set_the_claim_attempt():
@@ -220,24 +222,6 @@ def test_delivery_callbacks_compare_and_set_the_claim_attempt():
         assert "source_setting.enabled = TRUE" in sql
         assert "source_setting.run_mode = 'active'" in sql
         assert "RETURNING id" in sql
-
-
-def test_disabled_official_source_rows_are_deterministically_skipped():
-    sql = " ".join(lifecycle_delivery._SKIP_DISABLED_SQL.split())
-
-    assert "status = 'skipped'" in sql
-    assert "source_disabled_or_not_active" in sql
-    assert "official_source_settings" in sql
-    assert "source_setting.enabled = TRUE" in sql
-    assert "source_setting.run_mode = 'active'" in sql
-
-
-def test_stale_official_delivery_is_deterministically_skipped():
-    sql = " ".join(lifecycle_delivery._SKIP_STALE_SQL.split())
-
-    assert "status = 'skipped'" in sql
-    assert "official_alert_revision_not_current" in sql
-    assert "current_alert.is_current = TRUE" in sql
 
 
 def test_claimed_official_delivery_prefers_official_severity_and_peril_type():
@@ -256,7 +240,7 @@ async def test_duplicate_revision_recovers_missing_enqueue_in_same_transaction(
 ):
     pool, conn = fake_pool([])
     row = official_alert(is_current=True)
-    input_alert = object()
+    input_alert = SimpleNamespace(source="bmkg_cap")
     source_record = object()
     upsert = AsyncMock(return_value=(row, False))
     enqueue = AsyncMock(return_value=1)
@@ -291,7 +275,7 @@ async def test_current_config_barrier_blocks_revision_and_enqueue(monkeypatch):
 
     result = await persist_official_alert_revision(
         pool,
-        object(),
+        SimpleNamespace(source="bmkg_air_quality"),
         source_name="bmkg_air_quality",
         expected_config_version=7,
         delivery_enabled=True,
@@ -307,8 +291,12 @@ async def test_current_config_barrier_blocks_revision_and_enqueue(monkeypatch):
 async def test_expiry_and_enqueue_share_one_transaction(monkeypatch):
     pool, conn = fake_pool([])
     expired = [official_alert(status="expired")]
+    due_sources = AsyncMock(return_value=["bmkg_cap"])
+    source_lock = AsyncMock()
     expire = AsyncMock(return_value=expired)
     enqueue = AsyncMock(return_value=1)
+    monkeypatch.setattr(lifecycle_delivery, "due_official_alert_sources", due_sources)
+    monkeypatch.setattr(lifecycle_delivery, "lock_source_lifecycle", source_lock)
     monkeypatch.setattr(lifecycle_delivery, "expire_official_alert_revisions", expire)
     monkeypatch.setattr(lifecycle_delivery, "enqueue_official_alert_revision", enqueue)
 
@@ -318,5 +306,7 @@ async def test_expiry_and_enqueue_share_one_transaction(monkeypatch):
     )
 
     assert result == expired
-    expire.assert_awaited_once_with(pool, connection=conn)
+    due_sources.assert_awaited_once_with(pool, connection=conn)
+    source_lock.assert_awaited_once_with(conn, "bmkg_cap")
+    expire.assert_awaited_once_with(pool, sources=["bmkg_cap"], connection=conn)
     enqueue.assert_awaited_once_with(pool, expired[0], connection=conn)

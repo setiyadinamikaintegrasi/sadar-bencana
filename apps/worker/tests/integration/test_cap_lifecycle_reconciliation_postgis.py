@@ -7,12 +7,15 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from unittest.mock import AsyncMock
 
+from alerts import lifecycle_delivery
 from alerts.lifecycle_delivery import (
     enqueue_official_alert_revision,
     persist_official_alert_revision,
+    process_due_deliveries,
 )
-from db.official_alerts import upsert_official_alert
+from db.official_alerts import lock_source_lifecycle, upsert_official_alert
 from tests.integration.test_lifecycle_delivery_postgis import (
     cap_lifecycle_input,
     insert_recipient,
@@ -62,7 +65,9 @@ async def lifecycle_rows(pool):
 
 
 def assert_reconciled_chain(rows):
-    assert [row["source_alert_id"] for row in rows] == ["A"] * 4
+    lifecycle_ids = {row["source_alert_id"] for row in rows}
+    assert len(lifecycle_ids) == 1
+    assert next(iter(lifecycle_ids)).startswith("cap:")
     assert [row["revision"] for row in rows] == [1, 2, 3, 4]
     assert [row["message_identifier"] for row in rows] == ["A", "B", "C", "D"]
     assert [row["is_current"] for row in rows] == [False, False, False, True]
@@ -98,17 +103,17 @@ async def test_missing_predecessor_reconciles_existing_descendants_when_it_arriv
         await upsert_official_alert(pool, inputs["C"], now=NOW)
 
         partial = await lifecycle_rows(pool)
-        assert [row["source_alert_id"] for row in partial] == ["B", "B"]
+        assert len({row["source_alert_id"] for row in partial}) == 1
         assert [row["message_identifier"] for row in partial] == ["C", "D"]
         assert [row["is_current"] for row in partial] == [False, True]
 
         await upsert_official_alert(pool, inputs["B"], now=NOW)
         before_root = await lifecycle_rows(pool)
-        assert [row["source_alert_id"] for row in before_root] == ["A"] * 3
+        assert len({row["source_alert_id"] for row in before_root}) == 1
 
         root, created = await upsert_official_alert(pool, inputs["A"], now=NOW)
         assert created is True
-        assert root["source_alert_id"] == "A"
+        assert root["source_alert_id"].startswith("cap:")
         assert root["revision"] == 4
         assert root["message_type"] == "cancel"
         assert root["is_current"] is True
@@ -160,15 +165,17 @@ async def test_newest_first_bridge_enqueues_reconciled_cancellation_once():
                 ORDER BY alert_revision
                 """
             )
-        assert [dict(row) for row in deliveries] == [
+        assert len({row["source_alert_id"] for row in deliveries}) == 1
+        assert [
+            {key: row[key] for key in ("alert_revision", "lifecycle_action", "status")}
+            for row in deliveries
+        ] == [
             {
-                "source_alert_id": "A",
                 "alert_revision": 1,
                 "lifecycle_action": "alert",
                 "status": "sent",
             },
             {
-                "source_alert_id": "A",
                 "alert_revision": 4,
                 "lifecycle_action": "cancellation",
                 "status": "pending",
@@ -209,7 +216,169 @@ async def test_multiple_references_choose_oldest_root_not_first_list_entry():
         row, created = await upsert_official_alert(pool, candidate, now=NOW)
 
     assert created is True
-    assert row["source_alert_id"] == "original-a"
+    assert row["source_alert_id"].startswith("cap:")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ingestion_order", [("A", "B"), ("B", "A")])
+async def test_equal_message_identifiers_from_two_senders_never_share_lifecycle(
+    ingestion_order,
+):
+    inputs = {
+        sender: cap_lifecycle_input(
+            "SHARED-ID",
+            sender=sender,
+            sent_at=NOW + timedelta(minutes=index),
+        )
+        for index, sender in enumerate(ingestion_order)
+    }
+    async with isolated_lifecycle_database() as pool:
+        for sender in ingestion_order:
+            await upsert_official_alert(pool, inputs[sender], now=NOW)
+        rows = await lifecycle_rows(pool)
+
+    assert len(rows) == 2
+    assert len({row["source_alert_id"] for row in rows}) == 2
+    assert all(row["source_alert_id"].startswith("cap:") for row in rows)
+    assert [row["message_identifier"] for row in rows] == ["SHARED-ID", "SHARED-ID"]
+    assert all(row["revision"] == 1 and row["is_current"] for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_same_sender_and_identifier_is_one_message_even_if_payload_changes():
+    original = cap_lifecycle_input("IMMUTABLE-ID", sender="publisher-a", sent_at=NOW)
+    conflicting_replay = original.model_copy(
+        update={
+            "headline": "Conflicting replay",
+            "raw_payload": {**original.raw_payload, "unexpected_change": True},
+        }
+    )
+    async with isolated_lifecycle_database() as pool:
+        first, first_created = await upsert_official_alert(pool, original, now=NOW)
+        replay, replay_created = await upsert_official_alert(
+            pool,
+            conflicting_replay,
+            now=NOW,
+        )
+        rows = await lifecycle_rows(pool)
+
+    assert first_created is True
+    assert replay_created is False
+    assert replay["id"] == first["id"]
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_sender_reference_does_not_supersede_other_publishers_alert():
+    original = cap_lifecycle_input("SHARED-ID", sender="publisher-a", sent_at=NOW)
+    foreign_cancel = cap_lifecycle_input(
+        "CANCEL-ID",
+        sender="publisher-b",
+        sent_at=NOW + timedelta(minutes=1),
+        message_type="cancel",
+        referenced_identifier="SHARED-ID",
+        referenced_sender="publisher-a",
+    )
+    async with isolated_lifecycle_database() as pool:
+        await upsert_official_alert(pool, original, now=NOW)
+        await upsert_official_alert(pool, foreign_cancel, now=NOW)
+        rows = await lifecycle_rows(pool)
+
+    assert len({row["source_alert_id"] for row in rows}) == 2
+    original_row = next(row for row in rows if row["message_identifier"] == "SHARED-ID")
+    cancel_row = next(row for row in rows if row["message_identifier"] == "CANCEL-ID")
+    assert original_row["is_current"] is True
+    assert original_row["status"] == "active"
+    assert cancel_row["is_current"] is True
+    assert cancel_row["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cap_reconciliation_and_delivery_use_one_source_lock_order(monkeypatch):
+    inputs = cap_chain()
+    cancellation = cap_lifecycle_input(
+        "C",
+        sent_at=NOW + timedelta(minutes=2),
+        message_type="cancel",
+        referenced_identifier="B",
+    )
+    adapter = AsyncMock()
+    adapter.send.return_value = {"success": True, "provider_id": "unexpected"}
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+
+    process_reached_final_lock = asyncio.Event()
+    release_process = asyncio.Event()
+    original_lock_delivery = lifecycle_delivery._lock_delivery_for_send
+
+    async def pause_before_final_lock(conn, row, lease_seconds):
+        process_reached_final_lock.set()
+        await release_process.wait()
+        return await original_lock_delivery(conn, row, lease_seconds)
+
+    monkeypatch.setattr(
+        lifecycle_delivery,
+        "_lock_delivery_for_send",
+        pause_before_final_lock,
+    )
+
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+
+        initial, _ = await upsert_official_alert(pool, inputs["A"], now=NOW)
+        await enqueue_official_alert_revision(pool, initial)
+        update, _ = await upsert_official_alert(pool, inputs["B"], now=NOW)
+        await enqueue_official_alert_revision(pool, update)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ews_notification_log SET status='pending', next_attempt_at=now()"
+            )
+
+        cap_holds_source_and_alert = asyncio.Event()
+        release_cap_enqueue = asyncio.Event()
+
+        async def persist_cancellation():
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await lock_source_lifecycle(conn, "bmkg_cap")
+                    await conn.fetch(
+                        "SELECT id FROM official_alerts "
+                        "WHERE source='bmkg_cap' FOR UPDATE"
+                    )
+                    cap_holds_source_and_alert.set()
+                    await release_cap_enqueue.wait()
+                    current, _ = await upsert_official_alert(
+                        pool,
+                        cancellation,
+                        now=NOW,
+                        connection=conn,
+                    )
+                    await enqueue_official_alert_revision(
+                        pool,
+                        current,
+                        connection=conn,
+                    )
+
+        cap_task = asyncio.create_task(persist_cancellation())
+        await asyncio.wait_for(cap_holds_source_and_alert.wait(), timeout=2)
+        delivery_task = asyncio.create_task(process_due_deliveries(pool, batch_size=1))
+        await asyncio.wait_for(process_reached_final_lock.wait(), timeout=2)
+        release_cap_enqueue.set()
+        await asyncio.sleep(0.05)
+        release_process.set()
+        await asyncio.wait_for(asyncio.gather(cap_task, delivery_task), timeout=3)
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT alert_revision, lifecycle_action, status "
+                "FROM ews_notification_log ORDER BY alert_revision"
+            )
+
+    adapter.send.assert_not_awaited()
+    assert rows[-1]["lifecycle_action"] == "cancellation"
+    assert rows[-1]["status"] == "pending"
+    assert all(row["status"] == "skipped" for row in rows[:-1])
 
 
 @pytest.mark.asyncio
@@ -274,15 +443,17 @@ async def test_adjacent_revisions_from_two_replicas_serialize_and_keep_prior_rec
                 ORDER BY alert_revision
                 """
             )
-        assert [dict(row) for row in deliveries] == [
+        assert len({row["source_alert_id"] for row in deliveries}) == 1
+        assert [
+            {key: row[key] for key in ("alert_revision", "lifecycle_action", "status")}
+            for row in deliveries
+        ] == [
             {
-                "source_alert_id": "A",
                 "alert_revision": 1,
                 "lifecycle_action": "alert",
                 "status": "sent",
             },
             {
-                "source_alert_id": "A",
                 "alert_revision": 4,
                 "lifecycle_action": "cancellation",
                 "status": "pending",
