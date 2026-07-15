@@ -59,7 +59,7 @@ Verify tools, environment, hosted-mode baseline, Compose interpolation, service
 health, disk space, current commit, and the production URL:
 
 ```bash
-for command in git docker curl psql pg_dump pg_restore awk df jq rg ss getent; do
+for command in git docker curl psql pg_dump pg_restore awk df jq rg ss getent caddy python3; do
   command -v "$command" >/dev/null
 done
 docker compose version
@@ -107,17 +107,122 @@ if [[ "${RETIRED_WORKER_HOSTS+x}" != x || "${RETIRED_MASTRA_HOSTS+x}" != x ]]; t
   exit 1
 fi
 
-printf '%s\n' 'Inspect all Worker/Mastra blocks and upstream targets:'
-rg -n -i 'worker|mastra|:8002|:4111|reverse_proxy' "$REVERSE_PROXY_CONFIG" || true
-if rg -n -i '(reverse_proxy|proxy_pass).*(worker|mastra|:8002|:4111)' \
-  "$REVERSE_PROXY_CONFIG"; then
-  printf '%s\n' 'public Worker or Mastra reverse-proxy target is forbidden' >&2
+normalize_and_reject_private_upstreams() {
+  local config_path="$1"
+  local normalized_path="$2"
+  local config_dir config_name
+
+  config_dir="$(cd "$(dirname "$config_path")" && pwd)"
+  config_name="$(basename "$config_path")"
+  (
+    cd "$config_dir"
+    caddy adapt --config "$config_name" --adapter caddyfile --pretty
+  ) > "$normalized_path"
+
+  python3 - "$normalized_path" <<'PY'
+import json
+import re
+import sys
+
+MAX_DEPTH = 64
+MAX_NODES = 100000
+UPSTREAM_PORT = re.compile(r"(?:^|[/:\\[])(8002|4111)(?=$|[/?\\],\s])")
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    config = json.load(source)
+
+nodes_seen = 0
+bad_upstreams = []
+
+def fail_if_unbounded(depth):
+    global nodes_seen
+    nodes_seen += 1
+    if depth > MAX_DEPTH or nodes_seen > MAX_NODES:
+        raise RuntimeError("normalized Caddy configuration exceeds inspection bounds")
+
+def strings_below(node, path, depth):
+    fail_if_unbounded(depth)
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from strings_below(value, path + (str(key),), depth + 1)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from strings_below(value, path + (str(index),), depth + 1)
+    elif isinstance(node, str):
+        yield path, node
+
+def inspect(node, path=(), depth=0):
+    fail_if_unbounded(depth)
+    if isinstance(node, dict):
+        if node.get("handler") == "reverse_proxy":
+            for value_path, value in strings_below(node, path, depth + 1):
+                for match in UPSTREAM_PORT.finditer(value):
+                    bad_upstreams.append((".".join(value_path), value, match.group(1)))
+        for key, value in node.items():
+            inspect(value, path + (str(key),), depth + 1)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            inspect(value, path + (str(index),), depth + 1)
+
+inspect(config)
+if bad_upstreams:
+    for path, value, port in bad_upstreams:
+        print("forbidden normalized reverse_proxy upstream port " + port + " at " + path + ": " + value, file=sys.stderr)
+    raise SystemExit(1)
+
+print("normalized Caddy proxy inspection: no Worker/Mastra upstreams")
+PY
+}
+
+SYNTHETIC_PROXY_DIR="$(mktemp -d "$BACKUP_DIR/caddy-private-route-gate.XXXXXX")"
+cat > "$SYNTHETIC_PROXY_DIR/bad.Caddyfile" <<'CADDY'
+:443 {
+  reverse_proxy {
+    to 127.0.0.1:8002
+  }
+}
+CADDY
+cat > "$SYNTHETIC_PROXY_DIR/bad-mastra.Caddyfile" <<'CADDY'
+:443 {
+  reverse_proxy {
+    to 127.0.0.1:4111
+  }
+}
+CADDY
+cat > "$SYNTHETIC_PROXY_DIR/web-only.Caddyfile" <<'CADDY'
+:443 {
+  reverse_proxy 127.0.0.1:3001
+}
+CADDY
+
+if normalize_and_reject_private_upstreams \
+  "$SYNTHETIC_PROXY_DIR/bad.Caddyfile" "$SYNTHETIC_PROXY_DIR/bad.json"; then
+  printf '%s\n' 'synthetic multiline Worker proxy unexpectedly passed' >&2
+  rm -rf "$SYNTHETIC_PROXY_DIR"
   exit 1
 fi
+if normalize_and_reject_private_upstreams \
+  "$SYNTHETIC_PROXY_DIR/bad-mastra.Caddyfile" "$SYNTHETIC_PROXY_DIR/bad-mastra.json"; then
+  printf '%s\n' 'synthetic multiline Mastra proxy unexpectedly passed' >&2
+  rm -rf "$SYNTHETIC_PROXY_DIR"
+  exit 1
+fi
+normalize_and_reject_private_upstreams \
+  "$SYNTHETIC_PROXY_DIR/web-only.Caddyfile" "$SYNTHETIC_PROXY_DIR/web-only.json"
+rm -rf "$SYNTHETIC_PROXY_DIR"
+
+NORMALIZED_PROXY_CONFIG="$BACKUP_DIR/reverse-proxy-adapted.json"
+normalize_and_reject_private_upstreams "$REVERSE_PROXY_CONFIG" "$NORMALIZED_PROXY_CONFIG"
 ```
 
-The proxy inspection must show no public `reverse_proxy` target for Worker or
-Mastra. Existing hostname blocks may respond only with `404`. Set
+`REVERSE_PROXY_CONFIG` must name the active Caddyfile, including its active
+imports. The command runs `caddy adapt` from that file's directory so Caddy
+normalizes multiline blocks and imports before inspection. The bounded Python
+check examines every string under each normalized `reverse_proxy` handler and
+fails on an upstream endpoint using Worker port `8002` or Mastra port `4111`.
+It retains the adapted JSON in `BACKUP_DIR` for the deployment record. The
+synthetic multiline Worker and Mastra blocks must fail, while the web-only
+block must pass. Existing hostname blocks may respond only with `404`. Set
 `RETIRED_WORKER_HOSTS` and `RETIRED_MASTRA_HOSTS` to space-separated, actual
 hostnames from the production DNS and proxy history; explicitly set either to
 an empty string only when that service has never had a public hostname.
