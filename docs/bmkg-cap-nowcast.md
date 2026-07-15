@@ -19,11 +19,11 @@ sebelum mengaktifkan `bmkg_cap` dari halaman **Sumber Resmi**. Fallback lama
 `CONNECTOR_BMKG_CAP_ENABLED=true` hanya dipakai bila tabel pengaturan belum
 tersedia.
 
-> **Batas operasi saat ini:** `run_mode=dry_run` belum menjadi boundary
-> non-persisting pada worker `bmkg_cap`. Probe Task 11 menunjukkan mode
-> `dry_run` dan `active` sama-sama menulis source record dan official alert.
-> Biarkan sumber `disabled` untuk uji non-persisting sampai worker diperbaiki;
-> jangan mengandalkan dry-run CAP sebagai kontrol perubahan data.
+`run_mode=dry_run` mengambil dan memvalidasi CAP lalu memperbarui Source Health
+dengan jumlah alert dan detail error. Mode ini tidak menulis source record,
+evidence observation, official alert, atau antrean delivery. `run_mode=active`
+tetap menjalankan persistence dan delivery normal. Fallback environment
+`CONNECTOR_BMKG_CAP_ENABLED=true` tetap diperlakukan sebagai mode active.
 
 ## Sumber dan atribusi
 

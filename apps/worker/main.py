@@ -348,14 +348,26 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         if not setting.enabled or not setting.api_url:
             return 0
         rss_url, api_token = setting.api_url, setting.api_token
+        run_mode = setting.run_mode
     else:
         if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
             return 0
         rss_url, api_token = "https://www.bmkg.go.id/alerts/nowcast/id", None
+        run_mode = "active"
 
     connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
     try:
         alerts, detail_errors = await connector.fetch_active()
+        error_message = "; ".join(detail_errors[:3]) if detail_errors else None
+        await upsert_connector_health(
+            pool,
+            "bmkg_cap",
+            len(alerts),
+            error_message,
+        )
+        if run_mode == "dry_run":
+            return 0
+
         created = 0
         for alert in alerts:
             source_url = str(alert.raw_payload.get("source_url") or "")
@@ -399,13 +411,6 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
             if was_created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
                 await enqueue_official_alert_revision(pool, official_row)
 
-        error_message = "; ".join(detail_errors[:3]) if detail_errors else None
-        await upsert_connector_health(
-            pool,
-            "bmkg_cap",
-            len(alerts),
-            error_message,
-        )
         return created
     except Exception as exc:
         await upsert_connector_health(pool, "bmkg_cap", 0, str(exc))

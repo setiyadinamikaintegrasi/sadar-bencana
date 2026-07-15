@@ -1,8 +1,11 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
+import main as worker_main
 from connectors.bmkg_cap import (
     BMKG_CAP_RSS_URL,
     BMKGCAPConnector,
@@ -61,6 +64,191 @@ def cap_xml(
   </info>
 </alert>
 """
+
+
+def _setting(**overrides):
+    values = {
+        "enabled": True,
+        "api_url": BMKG_CAP_RSS_URL,
+        "api_token": "cap-token",
+        "run_mode": "active",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+class _CycleConnector:
+    def __init__(self, alerts=None, errors=None, fetch_error=None):
+        self.alerts = alerts or []
+        self.errors = errors or []
+        self.fetch_error = fetch_error
+        self.closed = False
+
+    async def fetch_active(self):
+        if self.fetch_error is not None:
+            raise self.fetch_error
+        return self.alerts, self.errors
+
+    async def close(self):
+        self.closed = True
+
+
+def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
+    dependencies = {
+        "resolve_source_setting": AsyncMock(return_value=setting),
+        "BMKGCAPConnector": MagicMock(return_value=connector),
+        "create_source_record": AsyncMock(return_value=({"id": "source-1"}, True)),
+        "record_observation": AsyncMock(),
+        "upsert_official_alert": AsyncMock(
+            return_value=({"id": "alert-1", "revision": 1}, True),
+        ),
+        "enqueue_official_alert_revision": AsyncMock(),
+        "upsert_connector_health": AsyncMock(),
+    }
+    for name, value in dependencies.items():
+        monkeypatch.setattr(worker_main, name, value)
+    return dependencies
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "setting",
+    [_setting(enabled=False), _setting(api_url=None)],
+    ids=["disabled", "endpoint-missing"],
+)
+async def test_cycle_does_nothing_without_an_enabled_configured_source(
+    monkeypatch,
+    setting,
+):
+    connector = _CycleConnector()
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=setting,
+        connector=connector,
+    )
+
+    result = await worker_main._bmkg_cap_cycle(object())
+
+    assert result == 0
+    dependencies["BMKGCAPConnector"].assert_not_called()
+    dependencies["upsert_connector_health"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_updates_health_without_persistence_or_delivery(monkeypatch):
+    monkeypatch.setenv("EWS_LIFECYCLE_DELIVERY_ENABLED", "true")
+    alert = parse_bmkg_cap(cap_xml())
+    connector = _CycleConnector(
+        alerts=[alert],
+        errors=["detail alert-2: upstream unavailable"],
+    )
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(run_mode="dry_run"),
+        connector=connector,
+    )
+    pool = object()
+
+    result = await worker_main._bmkg_cap_cycle(pool)
+
+    assert result == 0
+    dependencies["upsert_connector_health"].assert_awaited_once_with(
+        pool,
+        "bmkg_cap",
+        1,
+        "detail alert-2: upstream unavailable",
+    )
+    for name in (
+        "create_source_record",
+        "record_observation",
+        "upsert_official_alert",
+        "enqueue_official_alert_revision",
+    ):
+        dependencies[name].assert_not_awaited()
+    assert connector.closed
+
+
+@pytest.mark.asyncio
+async def test_active_cycle_persists_observations_and_enqueues_new_alert(monkeypatch):
+    monkeypatch.setenv("EWS_LIFECYCLE_DELIVERY_ENABLED", "true")
+    alert = parse_bmkg_cap(cap_xml())
+    connector = _CycleConnector(alerts=[alert])
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(),
+        connector=connector,
+    )
+    pool = object()
+
+    result = await worker_main._bmkg_cap_cycle(pool)
+
+    assert result == 1
+    dependencies["create_source_record"].assert_awaited_once()
+    assert dependencies["record_observation"].await_count == 2
+    dependencies["upsert_official_alert"].assert_awaited_once_with(pool, alert)
+    dependencies["enqueue_official_alert_revision"].assert_awaited_once_with(
+        pool,
+        {"id": "alert-1", "revision": 1},
+    )
+    dependencies["upsert_connector_health"].assert_awaited_once_with(
+        pool,
+        "bmkg_cap",
+        1,
+        None,
+    )
+    assert connector.closed
+
+
+@pytest.mark.asyncio
+async def test_environment_fallback_remains_active_compatible(monkeypatch):
+    monkeypatch.setenv("CONNECTOR_BMKG_CAP_ENABLED", "true")
+    alert = parse_bmkg_cap(cap_xml())
+    connector = _CycleConnector(alerts=[alert])
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=None,
+        connector=connector,
+    )
+
+    result = await worker_main._bmkg_cap_cycle(object())
+
+    assert result == 1
+    dependencies["BMKGCAPConnector"].assert_called_once_with(
+        rss_url="https://www.bmkg.go.id/alerts/nowcast/id",
+        api_token=None,
+    )
+    dependencies["create_source_record"].assert_awaited_once()
+    dependencies["upsert_official_alert"].assert_awaited_once()
+    assert connector.closed
+
+
+@pytest.mark.asyncio
+async def test_cycle_fetch_failure_updates_health_without_persistence(monkeypatch):
+    connector = _CycleConnector(fetch_error=RuntimeError("upstream unavailable"))
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(),
+        connector=connector,
+    )
+    pool = object()
+
+    result = await worker_main._bmkg_cap_cycle(pool)
+
+    assert result == 0
+    dependencies["upsert_connector_health"].assert_awaited_once_with(
+        pool,
+        "bmkg_cap",
+        0,
+        "upstream unavailable",
+    )
+    for name in (
+        "create_source_record",
+        "record_observation",
+        "upsert_official_alert",
+        "enqueue_official_alert_revision",
+    ):
+        dependencies[name].assert_not_awaited()
+    assert connector.closed
 
 
 class BMKGCAPParserTests(unittest.TestCase):
