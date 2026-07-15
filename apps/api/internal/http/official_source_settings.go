@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -109,6 +110,32 @@ type sourceSettingUpdate struct {
 	ChangeReason            string            `json:"change_reason"`
 }
 
+type currentSourceIngestionConfig struct {
+	RunMode                 string
+	Mode                    string
+	AdapterVersion          string
+	FieldMapping            map[string]string
+	CustomAPIURL            string
+	PollIntervalSeconds     int
+	ExpectedIntervalSeconds int
+}
+
+func ingestionConfigChanged(
+	current currentSourceIngestionConfig,
+	mode, adapterVersion string,
+	fieldMapping map[string]string,
+	customURL, token string,
+	pollInterval, expectedInterval int,
+) bool {
+	return current.Mode != mode ||
+		current.AdapterVersion != adapterVersion ||
+		!reflect.DeepEqual(current.FieldMapping, fieldMapping) ||
+		strings.TrimSpace(current.CustomAPIURL) != customURL ||
+		token != "" ||
+		current.PollIntervalSeconds != pollInterval ||
+		current.ExpectedIntervalSeconds != expectedInterval
+}
+
 func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if db == nil || !requireSettingsAdmin(c, db) {
@@ -178,9 +205,16 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_expected_interval"})
 			return
 		}
-		currentMode := ""
-		if err := db.QueryRowContext(c.Request.Context(),
-			`SELECT run_mode FROM official_source_settings WHERE source_name=$1`, source).Scan(&currentMode); err != nil {
+		current := currentSourceIngestionConfig{FieldMapping: map[string]string{}}
+		var currentMapping []byte
+		var currentCustomURL sql.NullString
+		if err := db.QueryRowContext(c.Request.Context(), `
+			SELECT run_mode, mode, adapter_version, field_mapping,
+			       custom_api_url, poll_interval_seconds, expected_interval_seconds
+			FROM official_source_settings WHERE source_name=$1`, source).Scan(
+			&current.RunMode, &current.Mode, &current.AdapterVersion, &currentMapping,
+			&currentCustomURL, &current.PollIntervalSeconds, &current.ExpectedIntervalSeconds,
+		); err != nil {
 			if err == sql.ErrNoRows {
 				c.JSON(http.StatusNotFound, gin.H{"error": "source_not_found"})
 			} else {
@@ -188,9 +222,20 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			}
 			return
 		}
-		if runMode == "active" && currentMode != "active" {
+		if err := json.Unmarshal(currentMapping, &current.FieldMapping); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_query_failed"})
+			return
+		}
+		current.CustomAPIURL = currentCustomURL.String
+		if runMode == "active" && current.RunMode != "active" {
 			c.JSON(http.StatusConflict, gin.H{"error": "dry_run_required", "message": "save as dry_run, run validation, then activate"})
 			return
+		}
+		if current.RunMode == "active" && runMode == "active" && ingestionConfigChanged(
+			current, body.Mode, adapterVersion, body.FieldMapping, customURL, token,
+			interval, expectedInterval,
+		) {
+			runMode = "dry_run"
 		}
 		mappingJSON, _ := json.Marshal(body.FieldMapping)
 		tx, err := db.BeginTx(c.Request.Context(), nil)
@@ -244,7 +289,9 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_audit_failed"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": gin.H{"source_name": source, "updated": true, "config_version": version}})
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{
+			"source_name": source, "updated": true, "config_version": version, "run_mode": runMode,
+		}})
 	}
 }
 
@@ -283,13 +330,11 @@ func OfficialSourceSettingTest(db *sql.DB, encryptionKey string) gin.HandlerFunc
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "official_api_not_configured"})
 			return
 		}
-		request, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, endpoint, nil)
-		request.Header.Set("User-Agent", "SadarBencana/0.4 source-validation")
-		if token.Valid {
-			request.Header.Set("Authorization", "Bearer "+token.String)
-		}
 		started := time.Now()
-		response, err := (&http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
+		response, err := fetchOfficialSource(
+			c.Request.Context(), source, endpoint,
+			"SadarBencana/0.4 source-validation", token.String,
+		)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"data": gin.H{"reachable": false, "contract_valid": false, "error": err.Error()}})
 			return

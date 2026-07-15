@@ -420,8 +420,9 @@ async def _bmkg_air_quality_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     if setting is None or not setting.enabled or not setting.api_url:
         return {"warnings": 0, "observations": 0}
 
-    connector = BMKGAirQualityConnector(setting.api_url)
+    connector = None
     try:
+        connector = BMKGAirQualityConnector(setting.api_url)
         payload = await connector.fetch_payload()
         warnings, observations, record_errors = parse_air_quality_payload(
             payload,
@@ -470,7 +471,8 @@ async def _bmkg_air_quality_cycle(pool: asyncpg.Pool) -> dict[str, int]:
         logger.warning("BMKG air-quality fetch failed: %s", exc)
         return {"warnings": 0, "observations": 0}
     finally:
-        await connector.close()
+        if connector is not None:
+            await connector.close()
 
 
 async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:

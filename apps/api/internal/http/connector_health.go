@@ -12,16 +12,18 @@ import (
 // seconds. Threshold = 2× the scheduler's poll interval for that source type.
 var connectorThresholds = map[string]int{
 	// Hazard — IngestScheduler every 5 min (300s) × 2
-	"bmkg":       600,
-	"bmkg_cap":   600,
-	"inatews":    600,
-	"pvmbg":      600,
-	"bnpb":       1800,
-	"inarisk":    86400,
-	"usgs":       600,
-	"gdacs_fl":   600,
-	"gdacs_vo":   600,
-	"nasa_firms": 600,
+	"bmkg":     600,
+	"bmkg_cap": 600,
+	// BMKG air quality is expected hourly (3600s) × 2.
+	"bmkg_air_quality": 7200,
+	"inatews":          600,
+	"pvmbg":            600,
+	"bnpb":             1800,
+	"inarisk":          86400,
+	"usgs":             600,
+	"gdacs_fl":         600,
+	"gdacs_vo":         600,
+	"nasa_firms":       600,
 	// News — NewsScheduler every 15 min (900s) × 2
 	"antara":    1800,
 	"detik":     1800,

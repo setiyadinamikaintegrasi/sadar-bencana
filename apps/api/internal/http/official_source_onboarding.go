@@ -2,16 +2,24 @@ package http
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +35,110 @@ var adapterContracts = map[string]map[string][]string{
 }
 
 const maxCAPPreviewLinks = 50
+
+var (
+	lookupOfficialSourceIPs   = net.DefaultResolver.LookupIPAddr
+	dialOfficialSourceContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+	officialSourceTLSConfig   = func(host string) *tls.Config {
+		return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	}
+)
+
+var nonPublicAddressRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("2001:2::/48"),
+	netip.MustParsePrefix("2001:10::/28"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("3fff::/20"),
+}
+
+func isPublicSourceIP(ip net.IP) bool {
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	address = address.Unmap()
+	if !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() ||
+		address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() ||
+		address.IsUnspecified() {
+		return false
+	}
+	for _, blocked := range nonPublicAddressRanges {
+		if blocked.Contains(address) {
+			return false
+		}
+	}
+	return true
+}
+
+func fetchOfficialSource(
+	ctx context.Context,
+	source, endpoint, userAgent, token string,
+) (*http.Response, error) {
+	if !approvedSourceEndpoint(source, endpoint) {
+		return nil, errors.New("official API URL is missing or not approved")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return nil, errors.New("official API URL is invalid")
+	}
+	hostname := parsed.Hostname()
+	addresses, err := lookupOfficialSourceIPs(ctx, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("DNS resolution failed for %s: %w", hostname, err)
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("DNS resolution returned no addresses for %s", hostname)
+	}
+	for _, address := range addresses {
+		if !isPublicSourceIP(address.IP) {
+			return nil, fmt.Errorf("hostname %s resolves to blocked IP %s", hostname, address.IP.String())
+		}
+	}
+	pinnedIP := addresses[0].IP.String()
+	port := parsed.Port()
+	if port == "" {
+		port = "443"
+	}
+	pinnedAddress := net.JoinHostPort(pinnedIP, port)
+	transport := &http.Transport{
+		Proxy:             nil,
+		DisableKeepAlives: true,
+		TLSClientConfig:   officialSourceTLSConfig(hostname),
+		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
+			return dialOfficialSourceContext(dialCtx, network, pinnedAddress)
+		},
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Host = parsed.Host
+	request.Header.Set("User-Agent", userAgent)
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	return client.Do(request)
+}
 
 func validateAdapterConfiguration(source, version string, mapping map[string]string) error {
 	versions, ok := adapterContracts[source]
@@ -112,14 +224,33 @@ func payloadRecords(payload any, mapping map[string]string) []map[string]any {
 	return records
 }
 
+func sensitivePreviewKey(key string) bool {
+	normalized := strings.Map(func(character rune) rune {
+		if unicode.IsLetter(character) || unicode.IsDigit(character) {
+			return unicode.ToLower(character)
+		}
+		return -1
+	}, key)
+	if normalized == "auth" || normalized == "cookie" || normalized == "cookies" || normalized == "setcookie" {
+		return true
+	}
+	for _, suffix := range []string{
+		"apikey", "credential", "credentials", "authorization", "secret",
+		"token", "password", "passwd", "cookie",
+	} {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func sanitizePreview(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		result := make(map[string]any, len(typed))
 		for key, item := range typed {
-			lower := strings.ToLower(key)
-			if strings.Contains(lower, "token") || strings.Contains(lower, "secret") ||
-				strings.Contains(lower, "password") || strings.Contains(lower, "authorization") {
+			if sensitivePreviewKey(key) {
 				result[key] = "[REDACTED]"
 			} else {
 				result[key] = sanitizePreview(item)
@@ -261,6 +392,258 @@ func mapAirQualityRecord(record map[string]any, prefix string, mapping map[strin
 	return result
 }
 
+var airQualitySeverity = map[string]string{
+	"Tidak Sehat":        "Moderate",
+	"Sangat Tidak Sehat": "High",
+	"Berbahaya":          "Critical",
+}
+
+var airQualityObservationCategories = map[string]struct{}{
+	"Baik": {}, "Sedang": {}, "Tidak Sehat": {}, "Sangat Tidak Sehat": {}, "Berbahaya": {},
+}
+
+func requiredAirQualityString(record map[string]any, field string) (string, error) {
+	value, ok := record[field]
+	if !ok {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("%s must be a non-empty string", field)
+	}
+	return strings.TrimSpace(text), nil
+}
+
+func requiredAirQualityIdentifier(record map[string]any, field string) (string, error) {
+	value, err := requiredAirQualityString(record, field)
+	if err != nil {
+		return "", err
+	}
+	if utf8.RuneCountInString(value) > 255 {
+		return "", fmt.Errorf("%s must be at most 255 characters", field)
+	}
+	return value, nil
+}
+
+func validateOptionalAirQualityStrings(record map[string]any, fields ...string) error {
+	for _, field := range fields {
+		if value, exists := record[field]; exists && value != nil {
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("%s must be a string or null", field)
+			}
+		}
+	}
+	return nil
+}
+
+func airQualityNumber(value any) (float64, bool) {
+	var number float64
+	switch typed := value.(type) {
+	case float64:
+		number = typed
+	case float32:
+		number = float64(typed)
+	case int:
+		number = float64(typed)
+	case int8:
+		number = float64(typed)
+	case int16:
+		number = float64(typed)
+	case int32:
+		number = float64(typed)
+	case int64:
+		number = float64(typed)
+	case uint:
+		number = float64(typed)
+	case uint8:
+		number = float64(typed)
+	case uint16:
+		number = float64(typed)
+	case uint32:
+		number = float64(typed)
+	case uint64:
+		number = float64(typed)
+	default:
+		return 0, false
+	}
+	return number, !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func validateAirQualityCoordinates(record map[string]any) error {
+	latitude, hasLatitude := record["latitude"]
+	longitude, hasLongitude := record["longitude"]
+	latitudeSet := hasLatitude && latitude != nil
+	longitudeSet := hasLongitude && longitude != nil
+	if latitudeSet != longitudeSet {
+		return errors.New("latitude and longitude must both be set or both be null")
+	}
+	if !latitudeSet {
+		return nil
+	}
+	latitudeNumber, latitudeOK := airQualityNumber(latitude)
+	longitudeNumber, longitudeOK := airQualityNumber(longitude)
+	if !latitudeOK || latitudeNumber < -90 || latitudeNumber > 90 {
+		return errors.New("latitude must be a number between -90 and 90")
+	}
+	if !longitudeOK || longitudeNumber < -180 || longitudeNumber > 180 {
+		return errors.New("longitude must be a number between -180 and 180")
+	}
+	return nil
+}
+
+func validateAirQualityTime(record map[string]any, field string) error {
+	value, err := requiredAirQualityString(record, field)
+	if err != nil {
+		return err
+	}
+	if _, err := time.Parse(time.RFC3339, value); err != nil {
+		return fmt.Errorf("%s must be a timezone-aware ISO timestamp", field)
+	}
+	return nil
+}
+
+func validateAirQualityBMKGURL(record map[string]any, field string) error {
+	value, err := requiredAirQualityString(record, field)
+	if err != nil {
+		return err
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Hostname() == "" ||
+		(parsed.Port() != "" && parsed.Port() != "443") ||
+		!approvedSourceHost("bmkg_air_quality", strings.TrimSuffix(parsed.Hostname(), ".")) {
+		return fmt.Errorf("%s must use an official BMKG HTTPS URL", field)
+	}
+	return nil
+}
+
+func validateAirQualityGeometry(value any) error {
+	geometry, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("area_geojson must be an object or null")
+	}
+	geometryType, ok := geometry["type"].(string)
+	if !ok || (geometryType != "Polygon" && geometryType != "MultiPolygon") {
+		return errors.New("area_geojson must be a Polygon or MultiPolygon")
+	}
+	coordinates, ok := geometry["coordinates"].([]any)
+	if !ok {
+		return errors.New("area_geojson coordinates must be an array")
+	}
+	polygons := coordinates
+	if geometryType == "Polygon" {
+		polygons = []any{coordinates}
+	}
+	for _, rawPolygon := range polygons {
+		polygon, ok := rawPolygon.([]any)
+		if !ok || len(polygon) == 0 {
+			return errors.New("area_geojson polygon must contain rings")
+		}
+		for _, rawRing := range polygon {
+			ring, ok := rawRing.([]any)
+			if !ok || len(ring) < 4 || !reflect.DeepEqual(ring[0], ring[len(ring)-1]) {
+				return errors.New("area_geojson rings must be closed")
+			}
+			for _, rawPoint := range ring {
+				point, ok := rawPoint.([]any)
+				if !ok || len(point) < 2 {
+					return errors.New("area_geojson positions must contain longitude and latitude")
+				}
+				longitude, longitudeOK := airQualityNumber(point[0])
+				latitude, latitudeOK := airQualityNumber(point[1])
+				if !longitudeOK || !latitudeOK {
+					return errors.New("area_geojson positions must be numeric")
+				}
+				if longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90 {
+					return errors.New("area_geojson position is outside valid bounds")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateAirQualityRecord(record map[string]any, kind string) error {
+	if err := validateAirQualityCoordinates(record); err != nil {
+		return err
+	}
+	if err := validateAirQualityBMKGURL(record, "source_url"); err != nil {
+		return err
+	}
+	if kind == "warning" {
+		if _, err := requiredAirQualityIdentifier(record, "source_alert_id"); err != nil {
+			return err
+		}
+		for field, allowed := range map[string]map[string]struct{}{
+			"message_type": {"alert": {}, "update": {}, "cancel": {}},
+			"status":       {"active": {}, "expired": {}, "cancelled": {}},
+		} {
+			value := map[string]string{"message_type": "alert", "status": "active"}[field]
+			if raw, exists := record[field]; exists {
+				var ok bool
+				value, ok = raw.(string)
+				if !ok {
+					return fmt.Errorf("%s must be a string", field)
+				}
+			}
+			if _, ok := allowed[value]; !ok {
+				return fmt.Errorf("%s has an unsupported value", field)
+			}
+		}
+		for _, field := range []string{"sent_at", "effective_at", "expires_at"} {
+			if err := validateAirQualityTime(record, field); err != nil {
+				return err
+			}
+		}
+		category, err := requiredAirQualityString(record, "category")
+		if err != nil {
+			return err
+		}
+		severity, ok := airQualitySeverity[category]
+		if !ok {
+			return errors.New("category is not extreme")
+		}
+		record["severity"] = severity
+		if err := validateOptionalAirQualityStrings(record, "area_name", "headline", "description"); err != nil {
+			return err
+		}
+		if geometry, exists := record["area_geojson"]; exists && geometry != nil {
+			if err := validateAirQualityGeometry(geometry); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if _, err := requiredAirQualityIdentifier(record, "station_id"); err != nil {
+		return err
+	}
+	if _, err := requiredAirQualityString(record, "station_name"); err != nil {
+		return err
+	}
+	value, exists := record["value"]
+	number, numeric := airQualityNumber(value)
+	if !exists || !numeric || number < 0 {
+		return errors.New("value must be a non-negative number")
+	}
+	unit, err := requiredAirQualityString(record, "unit")
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(unit) {
+	case "ug/m3", "µg/m³", "μg/m³":
+	default:
+		return errors.New("unit must be micrograms per cubic meter")
+	}
+	category, err := requiredAirQualityString(record, "category")
+	if err != nil {
+		return err
+	}
+	if _, ok := airQualityObservationCategories[category]; !ok {
+		return errors.New("category has an unsupported value")
+	}
+	return validateAirQualityTime(record, "observed_at")
+}
+
 func previewAirQualityPayload(payload any, mapping map[string]string, base sourcePreviewResult) sourcePreviewResult {
 	base.Errors = []string{}
 	base.MappedSample = []map[string]any{}
@@ -304,9 +687,16 @@ func previewAirQualityPayload(payload any, mapping map[string]string, base sourc
 				}
 				continue
 			}
-			base.ValidCount++
+			mapped := mapAirQualityRecord(record, collection.name, mapping)
+			if err := validateAirQualityRecord(mapped, collection.name); err != nil {
+				base.InvalidCount++
+				if len(base.Errors) < 10 {
+					base.Errors = append(base.Errors, fmt.Sprintf("%s %d: %v", collection.name, index, err))
+				}
+			} else {
+				base.ValidCount++
+			}
 			if len(base.MappedSample) < 3 {
-				mapped := mapAirQualityRecord(record, collection.name, mapping)
 				base.MappedSample = append(base.MappedSample, sanitizePreview(mapped).(map[string]any))
 			}
 		}
@@ -378,18 +768,11 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 	if !approvedSourceEndpoint(config.Source, config.Endpoint) {
 		return result, errors.New("official API URL is missing or not approved")
 	}
-	request, _ := http.NewRequestWithContext(ctx.Request.Context(), http.MethodGet, config.Endpoint, nil)
-	request.Header.Set("User-Agent", "SadarBencana/0.4 source-preview")
-	if config.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+config.Token)
-	}
 	started := time.Now()
-	response, err := (&http.Client{
-		Timeout: 10 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}).Do(request)
+	response, err := fetchOfficialSource(
+		ctx.Request.Context(), config.Source, config.Endpoint,
+		"SadarBencana/0.4 source-preview", config.Token,
+	)
 	if err != nil {
 		return result, err
 	}
@@ -410,7 +793,7 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 			}
 		}
 		result.Errors = append(result.Errors, "response is not valid JSON")
-		result.RawSample = string(body[:min(len(body), 2000)])
+		result.RawSample = nil
 		return result, nil
 	}
 	if config.Source == "bmkg_air_quality" {

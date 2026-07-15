@@ -265,6 +265,57 @@ async def test_cycle_fetch_failure_updates_health_and_closes_connector(monkeypat
     assert connector.closed
 
 
+@pytest.mark.asyncio
+async def test_cycle_connector_construction_failure_is_bounded_and_updates_health(
+    monkeypatch,
+):
+    connector = _PayloadConnector(deepcopy(PAYLOAD))
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(),
+        connector=connector,
+    )
+    dependencies["BMKGAirQualityConnector"].side_effect = ValueError(
+        "Hostname resolves to blocked IP 127.0.0.1"
+    )
+    pool = object()
+
+    result = await worker_main._bmkg_air_quality_cycle(pool)
+
+    assert result == {"warnings": 0, "observations": 0}
+    dependencies["upsert_connector_health"].assert_awaited_once_with(
+        pool,
+        "bmkg_air_quality",
+        0,
+        "Hostname resolves to blocked IP 127.0.0.1",
+    )
+    dependencies["upsert_official_alert"].assert_not_awaited()
+    dependencies["upsert_air_quality_observation"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_observation_only_active_cycle_never_enqueues_official_alert_revision(
+    monkeypatch,
+):
+    monkeypatch.setenv("EWS_LIFECYCLE_DELIVERY_ENABLED", "true")
+    payload = deepcopy(PAYLOAD)
+    payload["warnings"] = []
+    connector = _PayloadConnector(payload)
+    dependencies = _patch_cycle_dependencies(
+        monkeypatch,
+        setting=_setting(),
+        connector=connector,
+    )
+    pool = object()
+
+    result = await worker_main._bmkg_air_quality_cycle(pool)
+
+    assert result == {"warnings": 0, "observations": 1}
+    dependencies["upsert_air_quality_observation"].assert_awaited_once()
+    dependencies["upsert_official_alert"].assert_not_awaited()
+    dependencies["enqueue_official_alert_revision"].assert_not_awaited()
+
+
 def test_parser_separates_official_warning_and_observation():
     warnings, observations, errors = parse_air_quality_payload(PAYLOAD, {})
 

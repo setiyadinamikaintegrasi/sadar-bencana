@@ -1,9 +1,18 @@
 package http
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/gin-gonic/gin"
 )
 
 func TestApprovedOfficialSourceHosts(t *testing.T) {
@@ -112,15 +121,177 @@ func TestOfficialSourceExpectedIntervalJSONContract(t *testing.T) {
 }
 
 func TestPreviewRedactsCredentialFields(t *testing.T) {
-	sanitized := sanitizePreview(map[string]any{
-		"api_token": "secret",
-		"nested":    map[string]any{"password": "secret"},
-	}).(map[string]any)
-	if sanitized["api_token"] != "[REDACTED]" {
-		t.Fatal("token leaked into preview")
+	payload := map[string]any{
+		"api_key":     "leak-api-key",
+		"apikey":      "leak-apikey",
+		"credential":  "leak-credential",
+		"credentials": map[string]any{"username": "safe", "passwd": "leak-passwd"},
+		"nested": []any{
+			map[string]any{"Cookie": "leak-cookie", "set-cookie": "leak-set-cookie"},
+			[]any{map[string]any{"authorization": "leak-authorization", "auth": "leak-auth"}},
+			map[string]any{"client_secret": "leak-secret", "password": "leak-password"},
+		},
+		"access_token":  "leak-access-token",
+		"refresh-token": "leak-refresh-token",
+		"public":        "visible",
 	}
-	nested := sanitized["nested"].(map[string]any)
-	if nested["password"] != "[REDACTED]" {
-		t.Fatal("nested password leaked into preview")
+	sanitized := sanitizePreview(payload)
+	encoded, err := json.Marshal(sanitized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{
+		"leak-api-key", "leak-apikey", "leak-credential", "leak-passwd",
+		"leak-cookie", "leak-set-cookie", "leak-authorization", "leak-auth",
+		"leak-secret", "leak-password", "leak-access-token", "leak-refresh-token",
+	} {
+		if strings.Contains(string(encoded), leaked) {
+			t.Fatalf("credential leaked into browser preview: %s in %s", leaked, encoded)
+		}
+	}
+	if !strings.Contains(string(encoded), `"public":"visible"`) {
+		t.Fatalf("non-sensitive preview data was removed: %s", encoded)
+	}
+}
+
+func TestActiveSourceIngestionChangesForceDryRunInUpdateHandler(t *testing.T) {
+	baseBody := map[string]any{
+		"enabled": true, "run_mode": "active", "mode": "custom_api",
+		"adapter_version": "v1", "field_mapping": map[string]string{},
+		"custom_api_url":        "https://iklim.bmkg.go.id/api/air-quality",
+		"poll_interval_seconds": 3600, "expected_interval_seconds": 3600,
+	}
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "endpoint", mutate: func(body map[string]any) { body["custom_api_url"] = "https://data.bmkg.go.id/api/air-quality" }},
+		{name: "mapping", mutate: func(body map[string]any) {
+			body["field_mapping"] = map[string]string{"observation.station_id": "station.id"}
+		}},
+		{name: "adapter version", mutate: func(body map[string]any) { body["adapter_version"] = "v2" }},
+		{name: "token", mutate: func(body map[string]any) { body["api_token"] = "rotated-secret" }},
+		{name: "poll interval", mutate: func(body map[string]any) { body["poll_interval_seconds"] = 1800 }},
+		{name: "expected interval", mutate: func(body map[string]any) { body["expected_interval_seconds"] = 7200 }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.name == "adapter version" {
+				adapterContracts["bmkg_air_quality"]["v2"] = adapterContracts["bmkg_air_quality"]["v1"]
+				t.Cleanup(func() { delete(adapterContracts["bmkg_air_quality"], "v2") })
+			}
+			body := make(map[string]any, len(baseBody))
+			for key, value := range baseBody {
+				body[key] = value
+			}
+			test.mutate(body)
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT role FROM ews_subscribers").
+				WithArgs("admin@example.test").
+				WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+			mock.ExpectQuery(regexp.QuoteMeta(`SELECT run_mode, mode, adapter_version, field_mapping,
+			       custom_api_url, poll_interval_seconds, expected_interval_seconds
+			FROM official_source_settings WHERE source_name=$1`)).
+				WithArgs("bmkg_air_quality").
+				WillReturnRows(sqlmock.NewRows([]string{
+					"run_mode", "mode", "adapter_version", "field_mapping", "custom_api_url",
+					"poll_interval_seconds", "expected_interval_seconds",
+				}).AddRow("active", "custom_api", "v1", []byte(`{}`),
+					"https://iklim.bmkg.go.id/api/air-quality", 3600, 3600))
+			mock.ExpectBegin()
+			mock.ExpectQuery("(?s)WITH updated AS .*RETURNING version").
+				WithArgs(
+					"bmkg_air_quality", true, "dry_run", body["mode"], body["adapter_version"],
+					sqlmock.AnyArg(), body["custom_api_url"], body["poll_interval_seconds"],
+					body["expected_interval_seconds"], valueOrEmpty(body["api_token"]), "test-key",
+					"admin@example.test", "",
+				).
+				WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(8))
+			mock.ExpectExec("INSERT INTO official_source_setting_audit").
+				WithArgs("bmkg_air_quality", "admin@example.test", 8, "dry_run", body["adapter_version"]).
+				WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectCommit()
+
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "source", Value: "bmkg_air_quality"}}
+			ctx.Set(ctxAuthEmail, "admin@example.test")
+			ctx.Request = httptest.NewRequest(http.MethodPatch, "/settings/official-sources/bmkg_air_quality", bytes.NewReader(encoded))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+
+			OfficialSourceSettingUpdate(db, "test-key")(ctx)
+
+			if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"run_mode":"dry_run"`) {
+				t.Fatalf("active config change was not demoted: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
+func valueOrEmpty(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func TestOfficialSourceSettingTestRejectsPrivateDNSResolution(t *testing.T) {
+	originalLookup := lookupOfficialSourceIPs
+	originalDial := dialOfficialSourceContext
+	t.Cleanup(func() {
+		lookupOfficialSourceIPs = originalLookup
+		dialOfficialSourceContext = originalDial
+	})
+	lookupOfficialSourceIPs = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	}
+	dialed := false
+	dialOfficialSourceContext = func(context.Context, string, string) (net.Conn, error) {
+		dialed = true
+		return nil, nil
+	}
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("SELECT role FROM ews_subscribers").
+		WithArgs("admin@example.test").
+		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+	mock.ExpectQuery("(?s)SELECT mode, default_api_url, custom_api_url,.*FROM official_source_settings").
+		WithArgs("bmkg_air_quality", "test-key").
+		WillReturnRows(sqlmock.NewRows([]string{"mode", "default_api_url", "custom_api_url", "api_token"}).
+			AddRow("custom_api", nil, "https://iklim.bmkg.go.id/api/air-quality", nil))
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "source", Value: "bmkg_air_quality"}}
+	ctx.Set(ctxAuthEmail, "admin@example.test")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/settings/official-sources/bmkg_air_quality/test", nil)
+
+	OfficialSourceSettingTest(db, "test-key")(ctx)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "blocked IP") {
+		t.Fatalf("private DNS result was not rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if dialed {
+		t.Fatal("private DNS result reached the dialer")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
