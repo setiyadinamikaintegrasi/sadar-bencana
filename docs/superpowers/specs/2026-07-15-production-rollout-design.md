@@ -143,4 +143,3 @@ not part of routine rollback.
   activation.
 - Notification administrator: Telegram/email test sends and delivery enablement.
 - Database owner: backup validation and emergency restore.
-
