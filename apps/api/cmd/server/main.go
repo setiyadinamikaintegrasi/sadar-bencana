@@ -238,6 +238,7 @@ func main() {
 		ewsMe.POST("/channels/:channel/test", apihttp.EWSMeChannelTest(
 			dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken,
 		))
+		ewsMe.GET("/active-warnings", apihttp.EWSMeActiveWarnings(dbPool))
 		ewsMe.GET("/notifications", apihttp.EWSMeNotifications(dbPool))
 		ewsMe.POST("/notifications/:id/acknowledge", apihttp.EWSMeNotificationAcknowledge(dbPool))
 	}
