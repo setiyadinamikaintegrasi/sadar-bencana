@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ExternalLink, MapPin, RefreshCw } from 'lucide-react'
 import {
   fetchMyActiveWarnings,
+  filterBmkgActiveWarnings,
   type EWSActiveWarning,
   type EWSSafetyGuidance,
 } from '../../lib/api/ews'
 import { formatIndonesiaTime, safeBmkgSourceUrl } from '../executive/bmkgPresentation'
 
 const BMKG_ATTRIBUTION = 'BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)'
+const ACTIVE_WARNING_CLOCK_MS = 60_000
 
 const perilLabels = {
   weather: 'Cuaca',
@@ -169,6 +171,7 @@ export default function ActiveWarningsTab({
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
   const cachedWarnings = useRef<EWSActiveWarning[] | null>(null)
   const requestSequence = useRef(0)
 
@@ -197,10 +200,17 @@ export default function ActiveWarningsTab({
 
   useEffect(() => {
     void loadWarnings()
+    const interval = window.setInterval(() => setNow(Date.now()), ACTIVE_WARNING_CLOCK_MS)
     return () => {
       requestSequence.current += 1
+      window.clearInterval(interval)
     }
   }, [loadWarnings])
+
+  const activeWarnings = useMemo(
+    () => filterBmkgActiveWarnings(warnings ?? [], now),
+    [now, warnings],
+  )
 
   if (loading && warnings === null) {
     return (
@@ -234,7 +244,7 @@ export default function ActiveWarningsTab({
     <div>
       <div className="flex items-center justify-between gap-3 pb-3">
         <p className="text-xs text-slate-500">
-          {warnings?.length ?? 0} peringatan cocok dengan watch zone aktif
+          {activeWarnings.length} peringatan cocok dengan watch zone aktif
         </p>
         <button
           type="button"
@@ -264,13 +274,13 @@ export default function ActiveWarningsTab({
         </div>
       )}
 
-      {warnings?.length === 0 ? (
+      {activeWarnings.length === 0 ? (
         <p className="border-y border-slate-800 py-8 text-center text-sm text-slate-500">
           Tidak ada peringatan aktif untuk watch zone Anda.
         </p>
       ) : (
         <div className="divide-y divide-slate-800 border-y border-slate-800">
-          {warnings?.map((warning) => (
+          {activeWarnings.map((warning) => (
             <WarningRow key={warning.id} warning={warning} onViewOnMap={onViewOnMap} />
           ))}
         </div>

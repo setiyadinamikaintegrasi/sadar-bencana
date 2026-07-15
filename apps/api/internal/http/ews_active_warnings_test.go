@@ -26,6 +26,8 @@ var activeWarningsQueryPattern = regexp.QuoteMeta(
 ) + `(?s).*` + regexp.QuoteMeta(
 	"WHERE oa.is_current = TRUE AND oa.status = 'active'",
 ) + `(?s).*` + regexp.QuoteMeta(
+	"AND oa.source IN ('bmkg_cap', 'bmkg_air_quality')",
+) + `(?s).*` + regexp.QuoteMeta(
 	"AND oa.peril_type IS NOT NULL AND oa.severity IS NOT NULL",
 )
 
@@ -163,6 +165,55 @@ func TestEWSMeActiveWarningsPreservesNullableFieldsAndRequestLimit(t *testing.T)
 		if value := rawBody.Data[0][key]; value != nil {
 			t.Fatalf("%s = %#v, want null", key, value)
 		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEWSMeActiveWarningsDropsUnexpectedOfficialSourcesDefensively(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT id FROM ews_subscribers").
+		WithArgs("user-untrusted").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("subscriber-untrusted"))
+	rows := sqlmock.NewRows([]string{
+		"id", "source", "message_type", "status", "sent_at", "peril_type", "severity", "category", "headline",
+		"description", "area_name", "effective_at", "expires_at", "source_url",
+		"area_geojson", "latitude", "longitude",
+		"matched_watch_zone_ids", "matched_watch_zone_labels", "guidance", "guidance_source",
+	}).AddRow(
+		"alert-untrusted", "other_official", "alert", "active", time.Now(), "weather", "High", nil,
+		"Not a BMKG warning", nil, nil, nil, nil, nil, nil, -6.2, 106.8,
+		[]byte(`["zone-1"]`), []byte(`["Rumah"]`), nil, nil,
+	)
+	mock.ExpectQuery("SELECT oa.id").
+		WithArgs("subscriber-untrusted", 100).
+		WillReturnRows(rows)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Set(ctxAuthUserID, "user-untrusted")
+	context.Set(ctxAuthEmail, "untrusted@example.test")
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ews/me/active-warnings", nil)
+	EWSMeActiveWarnings(db)(context)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var body struct {
+		Data []EWSActiveWarning `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Data) != 0 {
+		t.Fatalf("unexpected source leaked into BMKG warnings: %#v", body.Data)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

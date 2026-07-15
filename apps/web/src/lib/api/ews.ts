@@ -38,6 +38,7 @@ export type EWSChannel = 'telegram' | 'email'
 export type EWSSeverity = 'Moderate' | 'High' | 'Critical'
 export type EWSPerilType = 'weather' | 'air_quality'
 export type EWSLifecycleAction = 'alert' | 'update' | 'cancellation' | 'expiry'
+export type EWSActiveWarningSource = 'bmkg_cap' | 'bmkg_air_quality'
 
 export interface EWSNotificationPref {
   channel: EWSChannel
@@ -72,7 +73,7 @@ export interface EWSSafetyGuidance {
 
 export interface EWSActiveWarning {
   id: string
-  source: 'bmkg_cap' | 'bmkg_air_quality'
+  source: EWSActiveWarningSource
   message_type: 'alert' | 'update' | 'cancel'
   status: 'active' | 'updated' | 'expired' | 'cancelled'
   sent_at: string
@@ -92,6 +93,19 @@ export interface EWSActiveWarning {
   matched_watch_zone_labels: string[]
   guidance?: EWSSafetyGuidance | null
   guidance_source?: string | null
+}
+
+export function filterBmkgActiveWarnings(
+  warnings: readonly EWSActiveWarning[],
+  now = Date.now(),
+): EWSActiveWarning[] {
+  return warnings.filter((warning) => {
+    if (warning.source !== 'bmkg_cap' && warning.source !== 'bmkg_air_quality') return false
+    if (warning.message_type === 'cancel' || warning.status !== 'active') return false
+    if (!warning.expires_at) return true
+    const expiresAt = new Date(warning.expires_at).getTime()
+    return !Number.isNaN(expiresAt) && expiresAt > now
+  })
 }
 
 type ListResponse<T> = { data: T[]; meta: { count: number } }
@@ -293,7 +307,7 @@ export async function fetchMyNotifications(): Promise<EWSNotificationLogEntry[]>
 
 export async function fetchMyActiveWarnings(): Promise<EWSActiveWarning[]> {
   const res = await request<ListResponse<EWSActiveWarning>>('/ews/me/active-warnings')
-  return res.data
+  return filterBmkgActiveWarnings(res.data)
 }
 
 export interface EWSChannelStatus {

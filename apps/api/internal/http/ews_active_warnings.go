@@ -75,6 +75,7 @@ LEFT JOIN ews_safety_guidance guidance
  AND guidance.is_active = TRUE
 WHERE oa.is_current = TRUE
   AND oa.status = 'active'
+  AND oa.source IN ('bmkg_cap', 'bmkg_air_quality')
   AND oa.peril_type IS NOT NULL
   AND oa.severity IS NOT NULL
   AND (oa.effective_at IS NULL OR oa.effective_at <= now())
@@ -155,6 +156,9 @@ func EWSMeActiveWarnings(db *sql.DB) gin.HandlerFunc {
 			); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
 				return
+			}
+			if warning.Source != "bmkg_cap" && warning.Source != "bmkg_air_quality" {
+				continue
 			}
 			if err := json.Unmarshal(matchedWatchZoneIDs, &warning.MatchedWatchZoneIDs); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})

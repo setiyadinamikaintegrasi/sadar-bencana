@@ -1,5 +1,5 @@
 // apps/web/src/App.tsx
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import AlertsPage from './features/alerts/AlertsPage'
 import BriefingPage from './features/briefing/BriefingPage'
 import CopilotPage from './features/copilot/CopilotPage'
@@ -17,10 +17,7 @@ import LearningPage from './features/learning/LearningPage'
 import LoginGate from './features/ews/LoginGate'
 import BrandLogo from './components/BrandLogo'
 import TopNav from './components/TopNav'
-import {
-  nextOverlayFocusRequest,
-  type OverlayFocusRequest,
-} from './components/RiskMap'
+import type { OverlayFocusRequest } from './components/RiskMap'
 import { useAuth } from './lib/auth/AuthProvider'
 
 const sections = [
@@ -83,6 +80,7 @@ function App() {
   const [activeSection, setActiveSection] = useState<Section>('Executive Overview')
   const [moreOpen, setMoreOpen] = useState(false)
   const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(null)
+  const officialAlertFocusNonce = useRef(0)
 
   const navigate = (section: string) => {
     setActiveSection(section as Section)
@@ -90,9 +88,14 @@ function App() {
   }
 
   const showOfficialAlertOnMap = (id: string) => {
-    setOfficialAlertFocus((current) => nextOverlayFocusRequest(current, id))
+    officialAlertFocusNonce.current += 1
+    setOfficialAlertFocus({ id, nonce: officialAlertFocusNonce.current })
     navigate('Executive Overview')
   }
+
+  const clearOfficialAlertFocus = useCallback(() => {
+    setOfficialAlertFocus(null)
+  }, [])
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -109,7 +112,10 @@ function App() {
 
         <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
           {activeSection === 'Executive Overview' ? (
-            <ExecutiveOverview initialOfficialAlertFocus={officialAlertFocus} />
+            <ExecutiveOverview
+              initialOfficialAlertFocus={officialAlertFocus}
+              onOfficialAlertFocusCleared={clearOfficialAlertFocus}
+            />
           ) : activeSection === 'Events' ? (
             <EventsPage />
           ) : activeSection === 'Daftar Risiko' ? (

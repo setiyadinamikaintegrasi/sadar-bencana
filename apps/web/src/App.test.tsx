@@ -18,12 +18,21 @@ vi.mock('./features/ews/EwsPage', () => ({
   ),
 }))
 vi.mock('./features/executive/ExecutiveOverview', () => ({
-  default: ({ initialOfficialAlertFocus }: { initialOfficialAlertFocus?: OverlayFocusRequest | null }) => (
-    <p data-testid="dashboard-focus">
-      {initialOfficialAlertFocus
-        ? `${initialOfficialAlertFocus.id}:${initialOfficialAlertFocus.nonce}`
-        : 'none'}
-    </p>
+  default: ({
+    initialOfficialAlertFocus,
+    onOfficialAlertFocusCleared,
+  }: {
+    initialOfficialAlertFocus?: OverlayFocusRequest | null
+    onOfficialAlertFocusCleared: () => void
+  }) => (
+    <div>
+      <p data-testid="dashboard-focus">
+        {initialOfficialAlertFocus
+          ? `${initialOfficialAlertFocus.id}:${initialOfficialAlertFocus.nonce}`
+          : 'none'}
+      </p>
+      <button type="button" onClick={onOfficialAlertFocusCleared}>Konsumsi fokus</button>
+    </div>
   ),
 }))
 
@@ -37,9 +46,25 @@ describe('App EWS map navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ke EWS' }))
     fireEvent.click(screen.getByRole('button', { name: 'Lihat warning di peta' }))
     expect(screen.getByTestId('dashboard-focus').textContent).toBe('warning-1:1')
+    fireEvent.click(screen.getByRole('button', { name: 'Konsumsi fokus' }))
+    expect(screen.getByTestId('dashboard-focus').textContent).toBe('none')
 
     fireEvent.click(screen.getByRole('button', { name: 'Ke EWS' }))
     fireEvent.click(screen.getByRole('button', { name: 'Lihat warning di peta' }))
     expect(screen.getByTestId('dashboard-focus').textContent).toBe('warning-1:2')
+  })
+
+  it('does not resurrect consumed focus after dashboard navigation remounts', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ke EWS' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Lihat warning di peta' }))
+    expect(screen.getByTestId('dashboard-focus').textContent).toBe('warning-1:1')
+    fireEvent.click(screen.getByRole('button', { name: 'Konsumsi fokus' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ke EWS' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ke Dashboard' }))
+
+    expect(screen.getByTestId('dashboard-focus').textContent).toBe('none')
   })
 })

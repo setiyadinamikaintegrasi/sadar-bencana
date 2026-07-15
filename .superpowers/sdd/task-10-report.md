@@ -92,3 +92,63 @@ Base SHA: `00141a5a8b4b2b4fc6e53b640022a5f808a6e90e`
   and cannot hide real connector state.
 - Reviewed the final diff for unrelated refactors; changes remain within Task 10
   UI/API contracts, tests, and this report.
+
+## Review Remediation (2026-07-15)
+
+### RED
+
+- Added review-regression coverage first. The focused web run failed 13 tests
+  across six files: arbitrary official sources leaked into BMKG rows, inactive
+  and expired cached warnings remained actionable, truncated dashboard arrays
+  cleared valid map overlays, App retained consumed focus, synthesized health
+  rows rendered as healthy/stale data, inactive tabpanels were absent, mobile
+  connector rows were nested cards, and null metadata/payload contracts were
+  not pinned.
+- Added backend SQL and response-boundary tests first. The focused Go run failed
+  because the query did not restrict official-alert sources and the handler
+  returned a fixture with source `other_official`.
+
+### GREEN
+
+- Focused backend active-warning suite passed with a fresh Go cache.
+- Focused review web suite passed: `6` files, `27` tests.
+- Full backend suite passed: `GOCACHE=/tmp/codex-go-cache-bmkg-dashboard-ews go test ./... -count=1`.
+- Full web suite passed: `9` files, `61` tests.
+- Web production build passed: `tsc && vite build`; the existing Vite chunk-size
+  warning remains informational.
+- Repository verification passed: `npm run verify`.
+- Whitespace verification passed: `git diff --check`.
+
+### Browser QA
+
+- At `1440x900`, all three desktop source-health tables were visible, mobile
+  lists were hidden, `Belum aktif` appeared for both API-synthesized official
+  health rows, and document width remained exactly 1440 pixels.
+- At `390x844`, desktop tables were hidden and three divided mobile lists were
+  visible. Connector rows used the unframed `py-3` treatment, no row exceeded
+  the viewport, and document width remained exactly 390 pixels.
+- Browser console errors: none.
+
+### Self-review
+
+- BMKG attribution is now enforced at SQL, handler, API parser, and component
+  boundaries and is limited to `bmkg_cap` and `bmkg_air_quality`.
+- Active warnings are re-evaluated every minute using lifecycle status,
+  cancellation message type, and expiry. Cached data follows the same rules
+  after a refresh failure, and interval cleanup is covered.
+- Dashboard focus resolves against the complete active map overlay collection,
+  so a valid warning outside the 20-item source lists remains selectable while
+  expired overlays are still rejected.
+- App owns and clears consumed or invalid focus state. Repeat clicks receive a
+  new nonce, and navigation/remount coverage prevents stale focus resurrection.
+- The connector API's zero/null/no-error synthesized signature renders as
+  `Belum aktif`; any real health evidence takes precedence.
+- All EWS tabpanels remain mounted and hidden when inactive, preserving every
+  `aria-controls` target and the existing roving keyboard behavior.
+- Mobile connector rows are an unframed divided list inside each category;
+  desktop scanning remains table-based.
+- All-null notification metadata renders no invented labels. Existing
+  weather/air-quality watch-zone and preference save payloads are covered
+  without changing their API shape.
+- Reviewed the complete remediation diff for unrelated changes; ownership stays
+  within Task 10 web/API files, tests, and this report.

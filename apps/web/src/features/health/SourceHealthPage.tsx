@@ -33,19 +33,30 @@ export function connectorRowsForCategory(
   names: readonly string[],
   byName: Map<string, ConnectorHealth>,
 ): ConnectorHealth[] {
-  return names.map((name) => byName.get(name) ?? (
-    INACTIVE_OFFICIAL_CONNECTORS.has(name)
-      ? {
-          name,
-          status: 'stale',
-          last_polled_at: null,
-          items_fetched: 0,
-          error_message: 'Belum aktif',
-          threshold_seconds: 0,
-          updated_at: null,
-        }
-      : undefined
-  )).filter((connector): connector is ConnectorHealth => connector !== undefined)
+  return names.map((name) => {
+    const connector = byName.get(name)
+    if (connector) {
+      const isApiSynthesizedMissing = INACTIVE_OFFICIAL_CONNECTORS.has(name)
+        && connector.status === 'stale'
+        && connector.last_polled_at === null
+        && connector.items_fetched === 0
+        && connector.error_message === null
+        && connector.updated_at === null
+      return isApiSynthesizedMissing
+        ? { ...connector, error_message: 'Belum aktif' }
+        : connector
+    }
+    if (!INACTIVE_OFFICIAL_CONNECTORS.has(name)) return undefined
+    return {
+      name,
+      status: 'stale' as const,
+      last_polled_at: null,
+      items_fetched: 0,
+      error_message: 'Belum aktif',
+      threshold_seconds: 0,
+      updated_at: null,
+    }
+  }).filter((connector): connector is ConnectorHealth => connector !== undefined)
 }
 
 const statusConfig = {
@@ -163,14 +174,19 @@ function CategoryCard({
         </table>
       </div>
 
-      {/* Mobile card list */}
-      <div className="space-y-3 md:hidden">
+      {/* Mobile divided list */}
+      <div
+        role="list"
+        aria-label={`${label} connectors`}
+        className="divide-y divide-slate-800 border-y border-slate-800 md:hidden"
+      >
         {connectors.map((c) => {
           const cfg = statusConfig[c.status]
           return (
             <div
               key={c.name}
-              className="rounded-xl border border-slate-800 bg-slate-950/40 p-4"
+              role="listitem"
+              className="py-3"
             >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-sm font-medium text-slate-200">{c.name}</span>

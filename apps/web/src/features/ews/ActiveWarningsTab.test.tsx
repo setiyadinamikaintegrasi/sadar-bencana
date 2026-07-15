@@ -1,13 +1,21 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchMyActiveWarnings, type EWSActiveWarning } from '../../lib/api/ews'
 import ActiveWarningsTab from './ActiveWarningsTab'
 
-vi.mock('../../lib/api/ews', () => ({
+vi.mock('../../lib/api/ews', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/api/ews')>()),
   fetchMyActiveWarnings: vi.fn(),
 }))
 
 const fetchWarnings = vi.mocked(fetchMyActiveWarnings)
+
+async function flushPromises() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
 
 function warning(overrides: Partial<EWSActiveWarning> = {}): EWSActiveWarning {
   return {
@@ -43,6 +51,7 @@ function warning(overrides: Partial<EWSActiveWarning> = {}): EWSActiveWarning {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.useRealTimers()
 })
 
 describe('ActiveWarningsTab', () => {
@@ -138,5 +147,61 @@ describe('ActiveWarningsTab', () => {
     expect(await screen.findByText(/Data terbaru belum terkonfirmasi/)).not.toBeNull()
     expect(screen.getByText('Peringatan hujan lebat Jawa Barat')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Coba lagi' })).not.toBeNull()
+  })
+
+  it('never labels an unexpected official source as BMKG', async () => {
+    fetchWarnings.mockResolvedValue([{
+      ...warning(),
+      source: 'other_official',
+    } as unknown as EWSActiveWarning])
+
+    render(<ActiveWarningsTab onViewOnMap={vi.fn()} />)
+
+    expect(await screen.findByText('Tidak ada peringatan aktif untuk watch zone Anda.')).not.toBeNull()
+    expect(screen.queryByText('Resmi BMKG')).toBeNull()
+  })
+
+  it('ages out inactive and elapsed warnings on the minute clock and removes map actions', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-15T05:00:00Z'))
+    fetchWarnings.mockResolvedValue([
+      warning({ id: 'active', expires_at: '2026-07-15T05:00:30Z' }),
+      warning({ id: 'cancelled', status: 'cancelled', headline: 'Dibatalkan' }),
+      warning({ id: 'cancel-message', message_type: 'cancel', headline: 'Pesan batal' }),
+    ])
+
+    render(<ActiveWarningsTab onViewOnMap={vi.fn()} />)
+    await flushPromises()
+
+    expect(screen.getByRole('article', { name: 'Peringatan hujan lebat Jawa Barat' })).not.toBeNull()
+    expect(screen.queryByText('Dibatalkan')).toBeNull()
+    expect(screen.queryByText('Pesan batal')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Lihat di peta' })).not.toBeNull()
+
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(screen.queryByRole('button', { name: 'Lihat di peta' })).toBeNull()
+    expect(screen.getByText('Tidak ada peringatan aktif untuk watch zone Anda.')).not.toBeNull()
+  })
+
+  it('ages out cached rows after a failed refresh and cleans up its minute timer', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-15T05:00:00Z'))
+    fetchWarnings
+      .mockResolvedValueOnce([warning({ expires_at: '2026-07-15T05:00:30Z' })])
+      .mockRejectedValueOnce(new Error('Refresh gagal.'))
+
+    const { unmount } = render(<ActiveWarningsTab onViewOnMap={vi.fn()} />)
+    await flushPromises()
+    fireEvent.click(screen.getByRole('button', { name: 'Perbarui peringatan aktif' }))
+    await flushPromises()
+    expect(screen.getByText(/Data terbaru belum terkonfirmasi/)).not.toBeNull()
+
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(screen.queryByText('Peringatan hujan lebat Jawa Barat')).toBeNull()
+    expect(screen.getByText('Tidak ada peringatan aktif untuk watch zone Anda.')).not.toBeNull()
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

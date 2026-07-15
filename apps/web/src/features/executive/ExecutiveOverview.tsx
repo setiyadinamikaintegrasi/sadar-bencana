@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import RiskMap, {
+  isOverlayActiveAt,
   nextOverlayFocusRequest,
   type OverlayFocusRequest,
 } from '../../components/RiskMap'
@@ -140,8 +141,10 @@ function connectorStatusClass(status: ConnectorHealth['status']): string {
 
 export default function ExecutiveOverview({
   initialOfficialAlertFocus = null,
+  onOfficialAlertFocusCleared,
 }: {
   initialOfficialAlertFocus?: OverlayFocusRequest | null
+  onOfficialAlertFocusCleared: () => void
 }) {
   const [events, setEvents] = useState<Event[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -210,8 +213,14 @@ export default function ExecutiveOverview({
   }, [load, loadNews])
 
   useEffect(() => {
-    if (initialOfficialAlertFocus) setOfficialAlertFocus(initialOfficialAlertFocus)
-  }, [initialOfficialAlertFocus?.id, initialOfficialAlertFocus?.nonce])
+    if (!initialOfficialAlertFocus) return
+    setOfficialAlertFocus(initialOfficialAlertFocus)
+    onOfficialAlertFocusCleared()
+  }, [
+    initialOfficialAlertFocus?.id,
+    initialOfficialAlertFocus?.nonce,
+    onOfficialAlertFocusCleared,
+  ])
 
   useEffect(() => {
     const monitoringDesk = monitoringDeskRef.current
@@ -235,8 +244,9 @@ export default function ExecutiveOverview({
 
   const handleEventClick = useCallback((event: Event) => {
     setOfficialAlertFocus(null)
+    onOfficialAlertFocusCleared()
     setSelectedEvent(event)
-  }, [])
+  }, [onOfficialAlertFocusCleared])
 
   const handleClearSelection = useCallback(() => {
     setSelectedEvent(null)
@@ -269,35 +279,14 @@ export default function ExecutiveOverview({
     if (!latestBmkgEarthquake) return
     setActivePerilFilter('earthquake')
     setOfficialAlertFocus(null)
+    onOfficialAlertFocusCleared()
     setSelectedEvent(latestBmkgEarthquake)
-  }, [latestBmkgEarthquake])
+  }, [latestBmkgEarthquake, onOfficialAlertFocusCleared])
 
   const handleFocusOfficialAlert = useCallback((id: string) => {
     setSelectedEvent(null)
     setOfficialAlertFocus((current) => nextOverlayFocusRequest(current, id))
   }, [])
-
-  useEffect(() => {
-    if (!officialAlertFocus) return
-    const warningStateConfirmed = !bmkg.loading
-      && bmkg.status.weather.loaded
-      && !bmkg.status.weather.uncertain
-      && bmkg.status.air_quality.loaded
-      && !bmkg.status.air_quality.uncertain
-    if (!warningStateConfirmed) return
-    const remainsActive = [...bmkg.weatherAlerts, ...bmkg.airQualityAlerts]
-      .some((alert) => alert.id === officialAlertFocus.id)
-    if (!remainsActive) setOfficialAlertFocus(null)
-  }, [
-    bmkg.airQualityAlerts,
-    bmkg.loading,
-    bmkg.status.air_quality.loaded,
-    bmkg.status.air_quality.uncertain,
-    bmkg.status.weather.loaded,
-    bmkg.status.weather.uncertain,
-    bmkg.weatherAlerts,
-    officialAlertFocus,
-  ])
 
   const combinedMapOverlays = useMemo(() => {
     const overlaysById = new Map(mapOverlays.map((overlay) => [overlay.id, overlay]))
@@ -306,6 +295,37 @@ export default function ExecutiveOverview({
     })
     return Array.from(overlaysById.values())
   }, [bmkg.airQualityAlerts, bmkg.weatherAlerts, mapOverlays])
+
+  useEffect(() => {
+    if (!officialAlertFocus) return
+    const warningStateConfirmed = !loading
+      && !bmkg.loading
+      && bmkg.status.weather.loaded
+      && !bmkg.status.weather.uncertain
+      && bmkg.status.air_quality.loaded
+      && !bmkg.status.air_quality.uncertain
+    if (!warningStateConfirmed) return
+    const focusedOverlay = combinedMapOverlays.find(
+      (overlay) => overlay.id === officialAlertFocus.id && overlay.layer_class === 'official',
+    )
+    if (!focusedOverlay || !isOverlayActiveAt(focusedOverlay, bmkg.now)) {
+      setOfficialAlertFocus(null)
+      onOfficialAlertFocusCleared()
+    }
+  }, [
+    bmkg.airQualityAlerts,
+    bmkg.loading,
+    bmkg.now,
+    bmkg.status.air_quality.loaded,
+    bmkg.status.air_quality.uncertain,
+    bmkg.status.weather.loaded,
+    bmkg.status.weather.uncertain,
+    bmkg.weatherAlerts,
+    combinedMapOverlays,
+    loading,
+    onOfficialAlertFocusCleared,
+    officialAlertFocus,
+  ])
 
   const unacknowledgedAlerts = useMemo(
     () => alerts.filter((alert) => !alert.acknowledged).length,
