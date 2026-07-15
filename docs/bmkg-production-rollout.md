@@ -26,9 +26,12 @@ cd /opt/sadar-bencana
 test -f docker-compose.yml
 test -f db/schema/040_bmkg_warning_and_air_quality.sql
 git rev-parse --show-toplevel
-git status --short
-git diff --quiet
-git diff --cached --quiet
+porcelain="$(git status --porcelain=v1 --untracked-files=all)"
+if [[ -n "$porcelain" ]]; then
+  printf '%s\n' "$porcelain" >&2
+  printf '%s\n' 'production checkout must have no tracked, staged, or untracked changes' >&2
+  exit 1
+fi
 git fetch origin main
 
 export PREVIOUS_COMMIT="$(git rev-parse HEAD)"
@@ -56,7 +59,7 @@ Verify tools, environment, hosted-mode baseline, Compose interpolation, service
 health, disk space, current commit, and the production URL:
 
 ```bash
-for command in git docker curl psql pg_dump pg_restore awk df jq ss; do
+for command in git docker curl psql pg_dump pg_restore awk df jq rg ss getent; do
   command -v "$command" >/dev/null
 done
 docker compose version
@@ -91,7 +94,63 @@ ss -ltnp | grep -E ':3001|:4111|:6379|:8001|:8002'
 
 All Compose services must be healthy where they define a health check. Listed
 application services must bind only to loopback or private Docker networks.
-Keep Redis running throughout the rollout.
+Keep Redis running throughout the rollout. Before continuing, inspect the
+actual reverse-proxy configuration and every hostname that has ever publicly
+addressed Worker or Mastra. Supply the real production values; this runbook
+does not invent example hostnames or proxy paths.
+
+```bash
+: "${REVERSE_PROXY_CONFIG:?set the readable active reverse-proxy configuration path}"
+[[ -r "$REVERSE_PROXY_CONFIG" ]]
+if [[ "${RETIRED_WORKER_HOSTS+x}" != x || "${RETIRED_MASTRA_HOSTS+x}" != x ]]; then
+  printf '%s\n' 'set both retired-host inventories, using an explicit empty value when applicable' >&2
+  exit 1
+fi
+
+printf '%s\n' 'Inspect all Worker/Mastra blocks and upstream targets:'
+rg -n -i 'worker|mastra|:8002|:4111|reverse_proxy' "$REVERSE_PROXY_CONFIG" || true
+if rg -n -i '(reverse_proxy|proxy_pass).*(worker|mastra|:8002|:4111)' \
+  "$REVERSE_PROXY_CONFIG"; then
+  printf '%s\n' 'public Worker or Mastra reverse-proxy target is forbidden' >&2
+  exit 1
+fi
+```
+
+The proxy inspection must show no public `reverse_proxy` target for Worker or
+Mastra. Existing hostname blocks may respond only with `404`. Set
+`RETIRED_WORKER_HOSTS` and `RETIRED_MASTRA_HOSTS` to space-separated, actual
+hostnames from the production DNS and proxy history; explicitly set either to
+an empty string only when that service has never had a public hostname.
+
+```bash
+check_retired_host() {
+  local host="$1"
+  local path="$2"
+  local status
+
+  if ! getent hosts "$host" >/dev/null 2>&1; then
+    printf 'retired hostname absent from DNS: %s\n' "$host"
+    return 0
+  fi
+
+  status="$(curl --connect-timeout 5 --max-time 15 -sS -o /dev/null \
+    -w '%{http_code}' "https://$host$path")"
+  test "$status" = 404
+  printf 'retired hostname returned 404: %s%s\n' "$host" "$path"
+}
+
+for host in $RETIRED_WORKER_HOSTS; do
+  check_retired_host "$host" /api/v1/worker/events
+done
+for host in $RETIRED_MASTRA_HOSTS; do
+  check_retired_host "$host" /api/agents
+done
+```
+
+An absent DNS name or an HTTP `404` is accepted for every supplied retired
+hostname. A resolvable hostname that returns any other status, including a
+redirect or successful response, fails the rollout. The loopback/private
+listener check above remains mandatory.
 
 ## 2. Backup And Preservation Baseline
 
@@ -142,6 +201,58 @@ PostGIS and the pre-`040` relation and column markers:
 
 ```bash
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE
+  missing_relations TEXT;
+  missing_columns TEXT;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') THEN
+    RAISE EXCEPTION 'missing required extension: postgis';
+  END IF;
+
+  SELECT string_agg(relation_name, ', ' ORDER BY relation_name)
+  INTO missing_relations
+  FROM (VALUES
+    ('official_alerts'),
+    ('ews_notification_log'),
+    ('official_source_settings'),
+    ('official_source_setting_versions'),
+    ('ews_safety_guidance'),
+    ('evacuation_locations'),
+    ('learning_user_stats'),
+    ('learning_module_progress'),
+    ('learning_badges'),
+    ('learning_user_badges')
+  ) AS required_relations(relation_name)
+  WHERE to_regclass(format('public.%I', relation_name)) IS NULL;
+
+  IF missing_relations IS NOT NULL THEN
+    RAISE EXCEPTION 'missing required pre-040 relations: %', missing_relations;
+  END IF;
+
+  SELECT string_agg(table_name || '.' || column_name, ', ' ORDER BY table_name, column_name)
+  INTO missing_columns
+  FROM (VALUES
+    ('official_alerts', 'area_geojson'),
+    ('official_alerts', 'source'),
+    ('official_alerts', 'status'),
+    ('official_source_settings', 'enabled'),
+    ('official_source_settings', 'run_mode'),
+    ('ews_notification_log', 'id')
+  ) AS required_columns(table_name, column_name)
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = required_columns.table_name
+      AND c.column_name = required_columns.column_name
+  );
+
+  IF missing_columns IS NOT NULL THEN
+    RAISE EXCEPTION 'missing required pre-040 columns: %', missing_columns;
+  END IF;
+END $$;
+
 SELECT extname, extversion
 FROM pg_extension
 WHERE extname = 'postgis';
@@ -152,7 +263,12 @@ FROM (VALUES
   ('ews_notification_log'),
   ('official_source_settings'),
   ('official_source_setting_versions'),
-  ('ews_safety_guidance')
+  ('ews_safety_guidance'),
+  ('evacuation_locations'),
+  ('learning_user_stats'),
+  ('learning_module_progress'),
+  ('learning_badges'),
+  ('learning_user_badges')
 ) AS required_relations(relation_name)
 ORDER BY relation_name;
 
@@ -215,13 +331,88 @@ SELECT source_name, enabled, run_mode, mode, default_api_url,
 FROM official_source_settings
 WHERE source_name IN ('bmkg_cap', 'bmkg_air_quality')
 ORDER BY source_name;
+
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'ews_notification_log'
+  AND column_name = 'matched_watch_zone_id';
+
+SELECT c.conname, c.conrelid::regclass AS table_name,
+       source_column.attname AS column_name,
+       c.confrelid::regclass AS foreign_table_name,
+       target_column.attname AS foreign_column_name,
+       CASE c.confdeltype WHEN 'n' THEN 'SET NULL' ELSE c.confdeltype::text END
+         AS on_delete
+FROM pg_constraint c
+JOIN pg_attribute source_column
+  ON source_column.attrelid = c.conrelid
+ AND source_column.attnum = ANY (c.conkey)
+JOIN pg_attribute target_column
+  ON target_column.attrelid = c.confrelid
+ AND target_column.attnum = ANY (c.confkey)
+WHERE c.contype = 'f'
+  AND c.conrelid = 'public.ews_notification_log'::regclass
+  AND source_column.attname = 'matched_watch_zone_id';
+
+SELECT tgname, tgrelid::regclass AS table_name, pg_get_triggerdef(oid)
+FROM pg_trigger
+WHERE tgrelid = 'public.official_alerts'::regclass
+  AND tgname = 'official_alerts_area_geojson_validation'
+  AND NOT tgisinternal;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'ews_notification_log'
+      AND column_name = 'matched_watch_zone_id'
+      AND data_type = 'uuid'
+  ) THEN
+    RAISE EXCEPTION 'missing ews_notification_log.matched_watch_zone_id UUID column';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_attribute source_column
+      ON source_column.attrelid = c.conrelid
+     AND source_column.attnum = ANY (c.conkey)
+    JOIN pg_attribute target_column
+      ON target_column.attrelid = c.confrelid
+     AND target_column.attnum = ANY (c.confkey)
+    WHERE c.contype = 'f'
+      AND c.conrelid = 'public.ews_notification_log'::regclass
+      AND source_column.attname = 'matched_watch_zone_id'
+      AND c.confrelid = 'public.ews_watch_zones'::regclass
+      AND target_column.attname = 'id'
+      AND c.confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION 'missing matched_watch_zone_id foreign key to ews_watch_zones(id) ON DELETE SET NULL';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgrelid = 'public.official_alerts'::regclass
+      AND tgname = 'official_alerts_area_geojson_validation'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'missing official_alerts_area_geojson_validation trigger';
+  END IF;
+END $$;
 SQL
 ```
 
 Both relation names must be present; the column query must return seven rows;
 and the safety query must return both rows. Both source settings must show
 `enabled = false` and `run_mode = disabled`. For air quality,
-`default_api_url` must be null. Stop if any result differs.
+`default_api_url` must be null. The notification-log column must be a UUID, its
+single foreign key must target `ews_watch_zones(id)` with `ON DELETE SET NULL`,
+and the trigger query must return `official_alerts_area_geojson_validation` on
+`official_alerts`. Stop if any result differs.
 
 Re-run the count capture after migration and reject decreases in existing
 tables:
@@ -314,7 +505,43 @@ saved response before approval to confirm it contains no synthetic identifiers.
 The map-overlay endpoint must stay valid so dashboard risk overlays render.
 Worker and Mastra paths must remain private and return `404` publicly.
 
-## 7. Staged Source And Delivery Activation
+## 7. Post-Rollout Preservation Gate
+
+Before activating any source, repeat the full preservation capture after the
+container rollout and smoke tests. Compare it directly with the original
+pre-migration baseline, not the post-migration capture.
+
+```bash
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -F $'\t' <<'SQL' \
+  | tee "$BACKUP_DIR/row-counts-after-rollout-smoke.tsv"
+SELECT 'events', count(*) FROM events
+UNION ALL SELECT 'alerts', count(*) FROM alerts
+UNION ALL SELECT 'risk_scores', count(*) FROM risk_scores
+UNION ALL SELECT 'news_items', count(*) FROM news_items
+UNION ALL SELECT 'official_alerts', count(*) FROM official_alerts
+UNION ALL SELECT 'acceptance_contracts', count(*) FROM acceptance_contracts
+UNION ALL SELECT 'ews_subscribers', count(*) FROM ews_subscribers
+UNION ALL SELECT 'ews_watch_zones', count(*) FROM ews_watch_zones
+UNION ALL SELECT 'ews_notification_log', count(*) FROM ews_notification_log
+ORDER BY 1;
+SQL
+
+awk -F $'\t' '
+  NR == FNR { before[$1] = $2; next }
+  $1 in before && $2 < before[$1] {
+    printf "count decreased: %s before=%s after=%s\n", $1, before[$1], $2 > "/dev/stderr"
+    failed = 1
+  }
+  END { exit failed }
+' "$BACKUP_DIR/row-counts-before.tsv" \
+  "$BACKUP_DIR/row-counts-after-rollout-smoke.tsv"
+```
+
+Investigate any decrease before source activation. A concurrent increase must
+be explained in the deployment record; no activation can proceed until the
+original baseline comparison succeeds.
+
+## 8. Staged Source And Delivery Activation
 
 Keep `EWS_DELIVERY_ENABLED=false` and
 `EWS_LIFECYCLE_DELIVERY_ENABLED=false` throughout the initial observation
@@ -362,7 +589,7 @@ docker compose logs --tail=100 worker
 Any unexpected delivery, bad CAP mapping, missing attribution, or connector
 error requires disabling the source and both delivery flags before investigation.
 
-## 8. Application Rollback
+## 9. Application Rollback
 
 Use application rollback for container failures, smoke-test failures, or
 source and delivery problems that do not indicate database corruption.
@@ -390,7 +617,7 @@ done
 Do not drop `040` tables, columns, indexes, guidance, or source settings during
 routine application rollback.
 
-## 9. Emergency Database Recovery
+## 10. Emergency Database Recovery
 
 Reserve database recovery for confirmed corruption or destructive count
 changes. Stop application writes first, restore only to a controlled database,
