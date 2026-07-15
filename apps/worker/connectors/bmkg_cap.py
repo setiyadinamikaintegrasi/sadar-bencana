@@ -59,6 +59,13 @@ def _allowed_cap_url(url: str) -> bool:
     )
 
 
+def _validated_response_url(response: httpx.Response) -> str:
+    url = str(response.url)
+    if not _allowed_cap_url(url):
+        raise ValueError(f"BMKG HTTPS URL required, got {url!r}")
+    return url
+
+
 def parse_bmkg_cap_rss(xml_text: str) -> list[str]:
     """Return unique, allowlisted CAP detail URLs from the BMKG RSS feed."""
     root = ET.fromstring(xml_text)
@@ -227,7 +234,8 @@ class BMKGCAPConnector:
             )
         assert self._client is not None
 
-        response = await self._client.get(self._rss_url)
+        response = await self._client.get(self._rss_url, follow_redirects=True)
+        _validated_response_url(response)
         response.raise_for_status()
         urls = parse_bmkg_cap_rss(response.text)
 
@@ -235,9 +243,10 @@ class BMKGCAPConnector:
         errors: list[str] = []
         for url in urls:
             try:
-                detail = await self._client.get(url)
+                detail = await self._client.get(url, follow_redirects=True)
+                detail_url = _validated_response_url(detail)
                 detail.raise_for_status()
-                alert = parse_bmkg_cap(detail.text, source_url=url)
+                alert = parse_bmkg_cap(detail.text, source_url=detail_url)
                 alerts.append(alert)
             except Exception as exc:
                 logger.warning("BMKG CAP detail failed for %s: %s", url, exc)

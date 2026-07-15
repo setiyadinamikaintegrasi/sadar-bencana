@@ -123,6 +123,22 @@ class BMKGCAPParserTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "include a timezone"):
             parse_bmkg_cap(cap_xml().replace("+07:00</sent>", "</sent>"))
 
+    def test_area_name_deduplicates_in_first_seen_order(self) -> None:
+        alert = parse_bmkg_cap(
+            cap_xml().replace(
+                """    <area>
+      <areaDesc>Jawa Barat</areaDesc>
+      <polygon>-6.9,107.5 -6.7,107.8 -7.1,107.9</polygon>
+    </area>""",
+                """    <area><areaDesc>Jawa Barat</areaDesc></area>
+    <area><areaDesc>Banten</areaDesc></area>
+    <area><areaDesc>Jawa Barat</areaDesc></area>
+    <area><areaDesc>DKI Jakarta</areaDesc></area>""",
+            )
+        )
+
+        self.assertEqual(alert.area_name, "Jawa Barat; Banten; DKI Jakarta")
+
 
 @pytest.mark.parametrize(
     ("cap_value", "expected"),
@@ -149,6 +165,57 @@ def test_cap_missing_severity_is_not_deliverable():
 
 
 class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_follows_bmkg_redirects_and_uses_final_detail_url(self) -> None:
+        final_rss_url = "https://alerts.bmkg.go.id/alerts/nowcast/id"
+        final_detail_url = "https://alerts.bmkg.go.id/cap/alert-1.xml"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if str(request.url) == BMKG_CAP_RSS_URL:
+                return httpx.Response(302, headers={"location": final_rss_url})
+            if str(request.url) == final_rss_url:
+                return httpx.Response(200, text=RSS_XML)
+            if request.url.path.endswith("alert-1.xml"):
+                if str(request.url) == final_detail_url:
+                    return httpx.Response(200, text=cap_xml())
+                return httpx.Response(302, headers={"location": final_detail_url})
+            if request.url.host == "evil.example":
+                return httpx.Response(200, text="<not-alert />")
+            return httpx.Response(
+                302,
+                headers={"location": "https://evil.example/cap/stolen.xml"},
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        connector = BMKGCAPConnector(http_client=client)
+        try:
+            alerts, errors = await connector.fetch_active()
+        finally:
+            await connector.close()
+            await client.aclose()
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("BMKG HTTPS", errors[0])
+        self.assertEqual(alerts[0].source_url, final_detail_url)
+        self.assertEqual(alerts[0].raw_payload["source_url"], final_detail_url)
+
+    async def test_rejects_rss_redirect_to_non_bmkg_url(self) -> None:
+        external_rss_url = "https://evil.example/alerts/nowcast/id"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if str(request.url) == BMKG_CAP_RSS_URL:
+                return httpx.Response(302, headers={"location": external_rss_url})
+            return httpx.Response(200, text=RSS_XML)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        connector = BMKGCAPConnector(http_client=client)
+        try:
+            with self.assertRaisesRegex(ValueError, "BMKG HTTPS"):
+                await connector.fetch_active()
+        finally:
+            await connector.close()
+            await client.aclose()
+
     async def test_partial_detail_failure_keeps_successful_alerts(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if str(request.url) == BMKG_CAP_RSS_URL:
