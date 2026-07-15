@@ -2,8 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ExecutiveOverview from './ExecutiveOverview'
 
-const { event, dashboardState } = vi.hoisted(() => ({
-  event: {
+const { event, dashboardState } = vi.hoisted(() => {
+  const event = {
     id: 'event-1',
     event_id: 'source-event-1',
     source: 'usgs',
@@ -16,12 +16,16 @@ const { event, dashboardState } = vi.hoisted(() => ({
     url: 'https://earthquake.usgs.gov/example',
     severity: 'High',
     created_at: '2026-07-15T04:01:00Z',
-  },
-  dashboardState: {
-    mapOverlays: [] as Array<Record<string, unknown>>,
-    weatherAlerts: [] as Array<Record<string, unknown>>,
-  },
-}))
+  }
+  return {
+    event,
+    dashboardState: {
+      events: [event],
+      mapOverlays: [] as Array<Record<string, unknown>>,
+      weatherAlerts: [] as Array<Record<string, unknown>>,
+    },
+  }
+})
 
 const warning = {
   id: 'warning-1',
@@ -67,7 +71,7 @@ function overlay(overrides: Record<string, unknown> = {}) {
 vi.mock('../../lib/api/client', () => ({
   getAlerts: vi.fn().mockResolvedValue({ data: [], meta: { count: 0, unacknowledged: 0 } }),
   getConnectorHealth: vi.fn().mockResolvedValue([]),
-  getEvents: vi.fn().mockResolvedValue([event]),
+  getEvents: vi.fn(() => Promise.resolve(dashboardState.events)),
   getMapOverlays: vi.fn(() => Promise.resolve(dashboardState.mapOverlays)),
   getMeta: vi.fn().mockResolvedValue({ service: 'api', environment: 'test', version: '1' }),
   getNews: vi.fn().mockResolvedValue([]),
@@ -121,6 +125,7 @@ vi.mock('../../components/SourceBadge', () => ({ default: () => null }))
 vi.mock('../../components/MagnitudeFilter', () => ({ default: () => null }))
 
 beforeEach(() => {
+  dashboardState.events = [event]
   dashboardState.mapOverlays = []
   dashboardState.weatherAlerts = [warning]
   vi.stubGlobal('ResizeObserver', class {
@@ -187,5 +192,37 @@ describe('ExecutiveOverview official warning navigation', () => {
 
     await waitFor(() => expect(screen.getByTestId('map-focus').textContent).toBe('none'))
     expect(onFocusCleared).toHaveBeenCalled()
+  })
+})
+
+describe('ExecutiveOverview BMKG earthquake provenance', () => {
+  it('does not label a source that only contains bmkg as official', async () => {
+    dashboardState.events = [{
+      ...event,
+      id: 'seed-event',
+      event_id: 'seed-id:regional-demo',
+      source: 'seed-bmkg',
+    }]
+
+    render(
+      <ExecutiveOverview
+        onOfficialAlertFocusCleared={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('Belum ada event gempa BMKG pada data aktif.')).toBeTruthy()
+    expect(screen.queryByText('Gempa Terbaru BMKG')).toBeNull()
+  })
+
+  it('accepts the normalized production BMKG source', async () => {
+    dashboardState.events = [{ ...event, source: ' BMKG ' }]
+
+    render(
+      <ExecutiveOverview
+        onOfficialAlertFocusCleared={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('Gempa Terbaru BMKG')).toBeTruthy()
   })
 })

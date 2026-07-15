@@ -3,6 +3,8 @@ package http
 import (
 	"database/sql"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,29 +26,72 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+var nonAlphaNumericEventMarker = regexp.MustCompile(`[^a-z0-9]+`)
+
+var nonProductionEventMarkers = map[string]struct{}{
+	"seed":      {},
+	"demo":      {},
+	"synthetic": {},
+	"mock":      {},
+	"fixture":   {},
+	"test":      {},
+}
+
+func containsNonProductionEventMarker(value string) bool {
+	normalized := strings.Trim(
+		nonAlphaNumericEventMarker.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "-"),
+		"-",
+	)
+	for _, token := range strings.Split(normalized, "-") {
+		if _, excluded := nonProductionEventMarkers[token]; excluded {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonProductionEvent(source, eventID string) bool {
+	return containsNonProductionEventMarker(source) || containsNonProductionEventMarker(eventID)
+}
+
 // eventsQuery returns per-type capped events via UNION ALL so no single
 // event type can crowd out others. Limits: earthquake 50, wildfire 200,
 // flood 30, volcano 30 — total max 310 rows.
 const eventsQuery = `
-(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
-        place, event_time, url, severity, created_at
- FROM events WHERE event_type = 'earthquake'
- ORDER BY event_time DESC NULLS LAST LIMIT 50)
+WITH production_events AS (
+  SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
+         place, event_time, url, severity, created_at
+  FROM events
+  WHERE NOT (
+    lower(regexp_replace(btrim(COALESCE(source, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+    OR lower(regexp_replace(btrim(COALESCE(event_id, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+  )
+),
+earthquakes AS (
+  SELECT * FROM production_events WHERE event_type = 'earthquake'
+  ORDER BY event_time DESC NULLS LAST LIMIT 50
+),
+wildfires AS (
+  SELECT * FROM production_events WHERE event_type = 'wildfire'
+  ORDER BY event_time DESC NULLS LAST LIMIT 200
+),
+floods AS (
+  SELECT * FROM production_events WHERE event_type = 'flood'
+  ORDER BY event_time DESC NULLS LAST LIMIT 30
+),
+volcanoes AS (
+  SELECT * FROM production_events WHERE event_type = 'volcano'
+  ORDER BY event_time DESC NULLS LAST LIMIT 30
+)
+SELECT * FROM earthquakes
 UNION ALL
-(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
-        place, event_time, url, severity, created_at
- FROM events WHERE event_type = 'wildfire'
- ORDER BY event_time DESC NULLS LAST LIMIT 200)
+SELECT * FROM wildfires
 UNION ALL
-(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
-        place, event_time, url, severity, created_at
- FROM events WHERE event_type = 'flood'
- ORDER BY event_time DESC NULLS LAST LIMIT 30)
+SELECT * FROM floods
 UNION ALL
-(SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
-        place, event_time, url, severity, created_at
- FROM events WHERE event_type = 'volcano'
- ORDER BY event_time DESC NULLS LAST LIMIT 30)
+SELECT * FROM volcanoes
 ORDER BY event_time DESC NULLS LAST
 `
 
@@ -95,6 +140,9 @@ func Events(db *sql.DB) gin.HandlerFunc {
 					"message": err.Error(),
 				})
 				return
+			}
+			if isNonProductionEvent(e.Source, e.EventID) {
+				continue
 			}
 			events = append(events, e)
 		}

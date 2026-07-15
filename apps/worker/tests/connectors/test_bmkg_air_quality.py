@@ -45,6 +45,21 @@ PAYLOAD = {
     }],
 }
 
+MAX_PAYLOAD_BYTES = 1024 * 1024
+
+
+class _TrackingAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, chunks):
+        self.chunks = chunks
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk
+
+    async def aclose(self):
+        self.closed = True
+
 
 def test_air_quality_source_is_registered_as_versioned_official_bmkg_feed():
     assert ALLOWED_HOSTS["bmkg_air_quality"] == ("bmkg.go.id",)
@@ -469,8 +484,11 @@ def test_parser_separates_official_warning_and_observation():
 async def test_connector_sends_bearer_token_to_pinned_endpoint(monkeypatch):
     client = AsyncMock(spec=httpx.AsyncClient)
     request = object()
-    response = MagicMock()
-    response.json.return_value = {"warnings": [], "observations": []}
+    response = httpx.Response(
+        200,
+        json={"warnings": [], "observations": []},
+        request=httpx.Request("GET", "https://203.0.113.10/api/air-quality"),
+    )
     client.build_request.return_value = request
     client.send.return_value = response
     monkeypatch.setattr(
@@ -487,6 +505,12 @@ async def test_connector_sends_bearer_token_to_pinned_endpoint(monkeypatch):
 
     headers = client.build_request.call_args.kwargs["headers"]
     assert headers["Authorization"] == "Bearer decrypted-secret"
+    client.send.assert_awaited_once_with(
+        request,
+        follow_redirects=False,
+        stream=True,
+    )
+    assert response.is_closed
 
 
 def test_baik_is_observation_but_not_warning():
@@ -737,6 +761,60 @@ async def test_connector_pins_public_ip_and_preserves_host_and_sni(monkeypatch):
     assert captured.url.host == "8.8.8.8"
     assert captured.headers["host"] == "iklim.bmkg.go.id"
     assert captured.extensions["sni_hostname"] == "iklim.bmkg.go.id"
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_oversized_content_length_and_closes_response(monkeypatch):
+    monkeypatch.setattr(
+        "connectors.bmkg_air_quality.resolve_public_ips",
+        lambda _: ("8.8.8.8",),
+    )
+    responses = []
+
+    def handler(request):
+        response = httpx.Response(
+            200,
+            headers={"Content-Length": str(MAX_PAYLOAD_BYTES + 1)},
+            content=b"{}",
+            request=request,
+        )
+        responses.append(response)
+        return response
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGAirQualityConnector(
+        "https://iklim.bmkg.go.id/api/air-quality", client=client,
+    )
+    try:
+        with pytest.raises(ValueError, match="air-quality payload exceeds 1048576 bytes"):
+            await connector.fetch_payload()
+    finally:
+        await client.aclose()
+
+    assert responses[0].is_closed
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_oversized_stream_without_content_length(monkeypatch):
+    monkeypatch.setattr(
+        "connectors.bmkg_air_quality.resolve_public_ips",
+        lambda _: ("8.8.8.8",),
+    )
+    valid_json = b'{"warnings":[],"observations":[]}'
+    stream = _TrackingAsyncStream([valid_json, b" " * MAX_PAYLOAD_BYTES])
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream, request=request)
+    ))
+    connector = BMKGAirQualityConnector(
+        "https://iklim.bmkg.go.id/api/air-quality", client=client,
+    )
+    try:
+        with pytest.raises(ValueError, match="air-quality payload exceeds 1048576 bytes"):
+            await connector.fetch_payload()
+    finally:
+        await client.aclose()
+
+    assert stream.closed
 
 
 @pytest.mark.asyncio

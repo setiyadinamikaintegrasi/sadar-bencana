@@ -67,6 +67,10 @@ function severityFor(magnitude: number): Severity {
   return 'Low'
 }
 
+function isProductionBmkgSource(source: string): boolean {
+  return source.trim().toLowerCase() === 'bmkg'
+}
+
 function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return '—'
   const timestamp = new Date(dateStr).getTime()
@@ -266,7 +270,7 @@ export default function ExecutiveOverview({
     return events
       .filter((event) => {
         const eventType = event.event_type.toLowerCase()
-        return event.source.toLowerCase().includes('bmkg')
+        return isProductionBmkgSource(event.source)
           && (eventType.includes('earthquake') || eventType.includes('quake'))
       })
       .sort(

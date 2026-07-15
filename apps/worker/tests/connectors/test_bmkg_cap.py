@@ -600,6 +600,128 @@ class BMKGCAPConnectorTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+MAX_PAYLOAD_BYTES = 1024 * 1024
+
+
+class _TrackingAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, chunks):
+        self.chunks = chunks
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_oversized_rss_content_length_and_closes_response(monkeypatch):
+    monkeypatch.setattr(
+        "connectors.bmkg_cap.resolve_public_ips", lambda _: ("8.8.8.8",)
+    )
+    responses = []
+
+    def handler(request):
+        response = httpx.Response(
+            200,
+            headers={"Content-Length": str(MAX_PAYLOAD_BYTES + 1)},
+            text="<rss><channel /></rss>",
+            request=request,
+        )
+        responses.append(response)
+        return response
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        with pytest.raises(ValueError, match="CAP RSS payload exceeds 1048576 bytes"):
+            await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert responses[0].is_closed
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_oversized_rss_stream_without_content_length(monkeypatch):
+    monkeypatch.setattr(
+        "connectors.bmkg_cap.resolve_public_ips", lambda _: ("8.8.8.8",)
+    )
+    stream = _TrackingAsyncStream([b"<rss><channel /></rss>", b" " * MAX_PAYLOAD_BYTES])
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream, request=request)
+    ))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        with pytest.raises(ValueError, match="CAP RSS payload exceeds 1048576 bytes"):
+            await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_oversized_detail_content_length(monkeypatch):
+    monkeypatch.setattr(
+        "connectors.bmkg_cap.resolve_public_ips", lambda _: ("8.8.8.8",)
+    )
+    detail_responses = []
+
+    def handler(request):
+        if request.url.path == "/alerts/nowcast/id":
+            return httpx.Response(200, text=RSS_XML, request=request)
+        response = httpx.Response(
+            200,
+            headers={"Content-Length": str(MAX_PAYLOAD_BYTES + 1)},
+            text=cap_xml(),
+            request=request,
+        )
+        detail_responses.append(response)
+        return response
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        alerts, errors = await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert alerts == []
+    assert len(errors) == 2
+    assert all("CAP detail payload exceeds 1048576 bytes" in error for error in errors)
+    assert all(response.is_closed for response in detail_responses)
+
+
+@pytest.mark.asyncio
+async def test_connector_rejects_oversized_detail_stream_without_content_length(monkeypatch):
+    monkeypatch.setattr(
+        "connectors.bmkg_cap.resolve_public_ips", lambda _: ("8.8.8.8",)
+    )
+    streams = []
+
+    def handler(request):
+        if request.url.path == "/alerts/nowcast/id":
+            return httpx.Response(200, text=RSS_XML, request=request)
+        stream = _TrackingAsyncStream([cap_xml().encode(), b" " * MAX_PAYLOAD_BYTES])
+        streams.append(stream)
+        return httpx.Response(200, stream=stream, request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = BMKGCAPConnector(http_client=client)
+    try:
+        alerts, errors = await connector.fetch_active()
+    finally:
+        await client.aclose()
+
+    assert alerts == []
+    assert len(errors) == 2
+    assert all("CAP detail payload exceeds 1048576 bytes" in error for error in errors)
+    assert all(stream.closed for stream in streams)
+
+
 @pytest.mark.asyncio
 async def test_connector_rejects_unsafe_initial_dns_before_request(monkeypatch):
     requests = []

@@ -10,6 +10,7 @@ from urllib.parse import ParseResult, urljoin, urlparse
 
 import httpx
 
+from connectors.bounded_response import read_bounded_text
 from models.official_alert import OfficialAlertInput
 from ssrf_guard import resolve_public_ips
 
@@ -309,19 +310,26 @@ class BMKGCAPConnector:
                 headers=headers,
                 extensions={"sni_hostname": sni_hostname},
             )
-            response = await self._client.send(request, follow_redirects=False)
+            response = await self._client.send(
+                request,
+                follow_redirects=False,
+                stream=True,
+            )
             if response.status_code not in REDIRECT_STATUSES:
                 return response, current_url
 
-            location = response.headers.get("Location")
-            if not location:
-                raise ValueError("BMKG redirect response is missing Location")
-            if redirect_count >= MAX_REDIRECTS:
-                raise ValueError("BMKG redirect limit exceeded")
-            next_url = urljoin(current_url, location)
-            # Validate before DNS resolution or any request to the next target.
-            _parsed_cap_url(next_url)
-            current_url = next_url
+            try:
+                location = response.headers.get("Location")
+                if not location:
+                    raise ValueError("BMKG redirect response is missing Location")
+                if redirect_count >= MAX_REDIRECTS:
+                    raise ValueError("BMKG redirect limit exceeded")
+                next_url = urljoin(current_url, location)
+                # Validate before DNS resolution or any request to the next target.
+                _parsed_cap_url(next_url)
+                current_url = next_url
+            finally:
+                await response.aclose()
 
         raise ValueError("BMKG redirect limit exceeded")
 
@@ -334,16 +342,21 @@ class BMKGCAPConnector:
         assert self._client is not None
 
         response, _ = await self._get_with_validated_redirects(self._rss_url)
-        response.raise_for_status()
-        urls = parse_bmkg_cap_rss(response.text)
+        urls = parse_bmkg_cap_rss(await read_bounded_text(
+            response,
+            label="CAP RSS payload",
+        ))
 
         alerts: list[OfficialAlertInput] = []
         errors: list[str] = []
         for url in urls:
             try:
                 detail, detail_url = await self._get_with_validated_redirects(url)
-                detail.raise_for_status()
-                alert = parse_bmkg_cap(detail.text, source_url=detail_url)
+                detail_text = await read_bounded_text(
+                    detail,
+                    label="CAP detail payload",
+                )
+                alert = parse_bmkg_cap(detail_text, source_url=detail_url)
                 alerts.append(alert)
             except Exception as exc:
                 logger.warning("BMKG CAP detail failed for %s: %s", url, exc)

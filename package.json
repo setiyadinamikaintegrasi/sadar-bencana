@@ -9,7 +9,8 @@
     "dev:web": "npm run dev --workspace apps/web",
     "dev:api": "cd apps/api && go run ./cmd/server",
     "dev:mastra": "npm run dev --workspace apps/mastra",
-    "verify": "bash scripts/verify-structure.sh",
+    "verify": "bash scripts/verify-structure.sh && npm run verify:compose-config",
+    "verify:compose-config": "node --test scripts/verify-compose-source-settings-key.test.mjs",
     "verify:brand": "node --test scripts/verify-brand-assets.test.mjs && node scripts/verify-brand-assets.mjs && node scripts/verify-brand-integration.mjs",
     "verify:web-runtime": "node --test scripts/verify-web-react-runtime.test.mjs && node scripts/verify-web-react-runtime.mjs",
     "generate:brand": "node scripts/generate-brand-assets.mjs"

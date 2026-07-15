@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -9,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import ValidationError
 
+from connectors.bounded_response import read_bounded_response
 from models.air_quality import AirQualityObservationInput
 from models.official_alert import OfficialAlertInput
 from ssrf_guard import resolve_public_ips
@@ -238,9 +240,15 @@ class BMKGAirQualityConnector:
             headers=headers,
             extensions={"sni_hostname": hostname},
         )
-        response = await self.client.send(request, follow_redirects=False)
-        response.raise_for_status()
-        payload = response.json()
+        response = await self.client.send(
+            request,
+            follow_redirects=False,
+            stream=True,
+        )
+        payload = json.loads(await read_bounded_response(
+            response,
+            label="air-quality payload",
+        ))
         if not isinstance(payload, dict):
             raise ValueError("air-quality payload must be a JSON object")
         return payload

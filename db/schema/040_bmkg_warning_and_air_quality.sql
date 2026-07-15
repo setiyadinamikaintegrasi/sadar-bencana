@@ -74,13 +74,41 @@ BEFORE INSERT OR UPDATE OF area_geojson ON official_alerts
 FOR EACH ROW
 EXECUTE FUNCTION validate_official_alert_area_geojson();
 
+-- Keep column creation separate so a partial prior run cannot skip the FK.
 ALTER TABLE ews_notification_log
-    ADD COLUMN IF NOT EXISTS matched_watch_zone_id UUID
-      REFERENCES ews_watch_zones(id) ON DELETE SET NULL;
+    ADD COLUMN IF NOT EXISTS matched_watch_zone_id UUID;
+
+ALTER TABLE ews_notification_log
+    DROP CONSTRAINT IF EXISTS ews_notification_log_matched_watch_zone_id_fkey,
+    ADD CONSTRAINT ews_notification_log_matched_watch_zone_id_fkey
+      FOREIGN KEY (matched_watch_zone_id)
+      REFERENCES ews_watch_zones(id)
+      ON DELETE SET NULL
+      NOT VALID;
+
+ALTER TABLE ews_notification_log
+    VALIDATE CONSTRAINT ews_notification_log_matched_watch_zone_id_fkey;
+
+-- Repair partial columns before restoring the deterministic range contract.
+ALTER TABLE official_source_settings
+    ADD COLUMN IF NOT EXISTS expected_interval_seconds INT;
+
+UPDATE official_source_settings
+SET expected_interval_seconds = 600
+WHERE expected_interval_seconds IS NULL;
 
 ALTER TABLE official_source_settings
-    ADD COLUMN IF NOT EXISTS expected_interval_seconds INT NOT NULL DEFAULT 600
-      CHECK (expected_interval_seconds BETWEEN 60 AND 86400);
+    ALTER COLUMN expected_interval_seconds SET DEFAULT 600,
+    ALTER COLUMN expected_interval_seconds SET NOT NULL;
+
+ALTER TABLE official_source_settings
+    DROP CONSTRAINT IF EXISTS official_source_settings_expected_interval_seconds_check,
+    ADD CONSTRAINT official_source_settings_expected_interval_seconds_check
+      CHECK (expected_interval_seconds BETWEEN 60 AND 86400)
+      NOT VALID;
+
+ALTER TABLE official_source_settings
+    VALIDATE CONSTRAINT official_source_settings_expected_interval_seconds_check;
 
 CREATE TABLE IF NOT EXISTS air_quality_observations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -83,6 +83,35 @@ done
 [[ "${EWS_PUBLIC_BASE_URL:-}" == "https://sadarbencana.id" ]]
 printf '%s\n' 'required environment values are present; protected values were not printed'
 
+(
+  compose_config_json="$(mktemp)"
+  trap 'rm -f "$compose_config_json"' EXIT
+  chmod 600 "$compose_config_json"
+  docker compose config --format json > "$compose_config_json"
+  python3 - "$compose_config_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    compose = json.load(source)
+
+services = compose.get("services", {})
+api_key = services.get("api", {}).get("environment", {}).get(
+    "OFFICIAL_SOURCE_SETTINGS_KEY", ""
+)
+worker_key = services.get("worker", {}).get("environment", {}).get(
+    "OFFICIAL_SOURCE_SETTINGS_KEY", ""
+)
+if not isinstance(api_key, str) or not api_key:
+    raise SystemExit("rendered API OFFICIAL_SOURCE_SETTINGS_KEY is empty")
+if not isinstance(worker_key, str) or not worker_key:
+    raise SystemExit("rendered Worker OFFICIAL_SOURCE_SETTINGS_KEY is empty")
+if api_key != worker_key:
+    raise SystemExit("rendered API and Worker source-settings keys differ")
+print("rendered API and Worker source-settings keys are present and identical")
+PY
+)
+
 docker compose config --quiet
 docker compose ps
 curl -fsS http://127.0.0.1:8001/health
@@ -94,6 +123,9 @@ ss -ltnp | grep -E ':3001|:4111|:6379|:8001|:8002'
 
 All Compose services must be healthy where they define a health check. Listed
 application services must bind only to loopback or private Docker networks.
+The rendered Compose check must confirm that API and Worker receive the same
+non-empty `OFFICIAL_SOURCE_SETTINGS_KEY`; it deletes the protected rendered
+configuration on every success or failure path and never prints the key.
 Keep Redis running throughout the rollout. Before continuing, inspect the
 actual reverse-proxy configuration and every hostname that has ever publicly
 addressed Worker or Mastra. Supply the real production values; this runbook
@@ -298,6 +330,69 @@ Record the release commit, UTC timestamp, backup path, dump checksums, and
 count file in the deployment record. Do not proceed without a readable,
 non-empty `pg_restore --list` result.
 
+Before migration or application rollout, reject every event whose normalized
+`source` or `event_id` contains a standalone `seed`, `demo`, `synthetic`,
+`mock`, `fixture`, or `test` marker. This gate covers every event category and
+records which column matched.
+
+```bash
+synthetic_event_count="$(
+  psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL'
+WITH normalized_events AS (
+  SELECT
+    lower(regexp_replace(btrim(COALESCE(source, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      AS normalized_source,
+    lower(regexp_replace(btrim(COALESCE(event_id, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      AS normalized_event_id
+  FROM events
+)
+SELECT count(*)
+FROM normalized_events
+WHERE normalized_source ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+   OR normalized_event_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)';
+SQL
+)"
+[[ "$synthetic_event_count" =~ ^[0-9]+$ ]]
+
+if (( synthetic_event_count > 0 )); then
+  psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --csv <<'SQL' \
+    > "$BACKUP_DIR/suspected-synthetic-events.csv"
+WITH normalized_events AS (
+  SELECT
+    id, event_type, source, event_id, event_time,
+    lower(regexp_replace(btrim(COALESCE(source, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      AS normalized_source,
+    lower(regexp_replace(btrim(COALESCE(event_id, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      AS normalized_event_id
+  FROM events
+)
+SELECT
+  id, event_type, source, event_id, event_time,
+  normalized_source ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+    AS source_marker,
+  normalized_event_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+    AS event_id_marker
+FROM normalized_events
+WHERE normalized_source ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+   OR normalized_event_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+ORDER BY event_time DESC NULLS LAST, id;
+SQL
+  chmod 600 "$BACKUP_DIR/suspected-synthetic-events.csv"
+  printf 'synthetic/demo event rows require remediation: %s\n' \
+    "$synthetic_event_count" >&2
+  exit 1
+fi
+printf '%s\n' 'synthetic event preflight passed: 0 matching rows'
+```
+
+If the gate finds rows, stop the rollout. The database owner must use the
+backup and CSV evidence to decide whether each exact row must be moved to a
+restricted quarantine table for audit retention or deleted because it has no
+production record value. Record the decision, approver, exact row IDs, and
+before/after counts. Do not rename markers to bypass the gate, do not delete
+rows in migration `040`, and do not continue until the same comprehensive
+query returns zero.
+
 ## 3. Migration Preflight
 
 Do not run the historical migration directory. There is no migration ledger,
@@ -437,6 +532,17 @@ FROM official_source_settings
 WHERE source_name IN ('bmkg_cap', 'bmkg_air_quality')
 ORDER BY source_name;
 
+SELECT column_name, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'official_source_settings'
+  AND column_name = 'expected_interval_seconds';
+
+SELECT conname, convalidated, pg_get_constraintdef(oid)
+FROM pg_constraint
+WHERE conrelid = 'public.official_source_settings'::regclass
+  AND conname = 'official_source_settings_expected_interval_seconds_check';
+
 SELECT table_name, column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'public'
@@ -468,6 +574,39 @@ WHERE tgrelid = 'public.official_alerts'::regclass
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute column_attribute
+    JOIN pg_attrdef column_default
+      ON column_default.adrelid = column_attribute.attrelid
+     AND column_default.adnum = column_attribute.attnum
+    WHERE column_attribute.attrelid = 'public.official_source_settings'::regclass
+      AND column_attribute.attname = 'expected_interval_seconds'
+      AND column_attribute.attnotnull
+      AND pg_get_expr(column_default.adbin, column_default.adrelid) = '600'
+  ) THEN
+    RAISE EXCEPTION 'expected_interval_seconds must be NOT NULL with default 600';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.official_source_settings'::regclass
+      AND conname = 'official_source_settings_expected_interval_seconds_check'
+      AND contype = 'c'
+      AND convalidated
+  ) THEN
+    RAISE EXCEPTION 'missing validated expected_interval_seconds range check';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM official_source_settings
+    WHERE expected_interval_seconds NOT BETWEEN 60 AND 86400
+  ) THEN
+    RAISE EXCEPTION 'expected_interval_seconds contains an out-of-range value';
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1
     FROM information_schema.columns
@@ -516,8 +655,14 @@ and the safety query must return both rows. Both source settings must show
 `enabled = false` and `run_mode = disabled`. For air quality,
 `default_api_url` must be null. The notification-log column must be a UUID, its
 single foreign key must target `ews_watch_zones(id)` with `ON DELETE SET NULL`,
-and the trigger query must return `official_alerts_area_geojson_validation` on
-`official_alerts`. Stop if any result differs.
+`expected_interval_seconds` must be `NOT NULL` with default `600` and its named
+range check must be validated, and the trigger query must return
+`official_alerts_area_geojson_validation` on `official_alerts`. Stop if any
+result differs. Migration `040` fills only null interval values. An existing
+out-of-range interval or an orphaned `matched_watch_zone_id` makes validation
+roll back the migration; after backup, the database owner must investigate and
+repair or quarantine the specific rows, record approval, and rerun the
+migration rather than disabling either constraint.
 
 Re-run the count capture after migration and reject decreases in existing
 tables:
@@ -593,10 +738,6 @@ curl -fsS "$PUBLIC_BASE_URL/api/v1/air-quality/observations?source=bmkg&latest=t
   | tee "$BACKUP_DIR/air-quality-smoke.json" \
   | jq -e '.meta.source_active == false and (.data | type == "array")' >/dev/null
 
-psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atc \
-  "SELECT count(*) FROM events WHERE event_id LIKE ('seed' || '-id:%');" \
-  | grep -qx '0'
-
 for private_path in /api/v1/worker/events /api/agents; do
   status="$(curl -sS -o /dev/null -w '%{http_code}' "$PUBLIC_BASE_URL$private_path")"
   test "$status" = 404
@@ -605,8 +746,10 @@ done
 
 The CAP response can validly be an empty list when no warning is active. Air
 quality must return `source_active=false` and can be empty. The event queries
-prove existing earthquake and wildfire data remains available; inspect the
-saved response before approval to confirm it contains no synthetic identifiers.
+prove existing earthquake and wildfire data remains available. The
+comprehensive pre-rollout database gate already covers normalized `source` and
+`event_id` markers across all event categories; inspect the saved response as
+an additional defense before approval.
 The map-overlay endpoint must stay valid so dashboard risk overlays render.
 Worker and Mastra paths must remain private and return `404` publicly.
 
