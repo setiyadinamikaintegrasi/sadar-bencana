@@ -1,6 +1,15 @@
 package http
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/gin-gonic/gin"
+)
 
 func TestOfficialAlertLimit(t *testing.T) {
 	tests := []struct {
@@ -33,5 +42,95 @@ func TestOfficialAlertStatuses(t *testing.T) {
 	}
 	if officialAlertStatuses["unknown"] {
 		t.Fatal("unknown status must be rejected")
+	}
+}
+
+func TestOfficialAlertPerilTypes(t *testing.T) {
+	for _, peril := range []string{"weather", "air_quality"} {
+		if !officialAlertPerilTypes[peril] {
+			t.Fatalf("expected %q to be accepted", peril)
+		}
+	}
+	if officialAlertPerilTypes["earthquake"] {
+		t.Fatal("unsupported peril accepted")
+	}
+}
+
+func TestOfficialAlertsRejectsUnsupportedPerilType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet,
+		"/api/v1/official-alerts?peril_type=earthquake", nil)
+
+	OfficialAlerts(db)(context)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "invalid_peril_type" {
+		t.Fatalf("error = %#v, want invalid_peril_type", body["error"])
+	}
+}
+
+func TestOfficialAlertsReturnsStructuredMetadataWithoutRawPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Now()
+	columns := []string{
+		"id", "source", "source_alert_id", "revision", "message_type", "status",
+		"sent_at", "effective_at", "expires_at", "headline", "description",
+		"area_geojson", "previous_alert_id", "is_current", "ingested_at",
+		"peril_type", "severity", "category", "area_name", "latitude",
+		"longitude", "source_url",
+	}
+	mock.ExpectQuery("FROM official_alerts").
+		WithArgs("", "", false, "weather", 100).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(
+			"alert-1", "bmkg_cap", "cap-1", 1, "alert", "active", now,
+			now, now.Add(time.Hour), "Peringatan Dini Cuaca", "Hujan lebat",
+			[]byte(`{"type":"Polygon","coordinates":[]}`), nil, true, now,
+			"weather", "High", nil, "Jawa Barat", nil, nil,
+			"https://www.bmkg.go.id/alerts/alert-1",
+		))
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet,
+		"/api/v1/official-alerts?peril_type=weather", nil)
+	OfficialAlerts(db)(context)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	item := body["data"].([]any)[0].(map[string]any)
+	if item["peril_type"] != "weather" || item["severity"] != "High" ||
+		item["area_name"] != "Jawa Barat" {
+		t.Fatalf("missing metadata: %#v", item)
+	}
+	if _, exists := item["raw_payload"]; exists {
+		t.Fatal("raw_payload leaked")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
