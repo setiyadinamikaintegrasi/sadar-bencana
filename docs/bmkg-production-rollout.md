@@ -332,8 +332,9 @@ non-empty `pg_restore --list` result.
 
 Before migration or application rollout, reject every event whose normalized
 `source` or `event_id` contains a standalone `seed`, `demo`, `synthetic`,
-`mock`, `fixture`, or `test` marker. This gate covers every event category and
-records which column matched.
+`mock`, `fixture`, or `test` marker. Apply the same boundary to every
+`risk_scores.entity_id`, including orphan scores with no matching event. This
+gate covers every event category and exports evidence for both tables.
 
 ```bash
 synthetic_event_count="$(
@@ -354,9 +355,23 @@ SQL
 )"
 [[ "$synthetic_event_count" =~ ^[0-9]+$ ]]
 
-if (( synthetic_event_count > 0 )); then
-  psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --csv <<'SQL' \
-    > "$BACKUP_DIR/suspected-synthetic-events.csv"
+synthetic_risk_score_count="$(
+  psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -At <<'SQL'
+WITH normalized_risk_scores AS (
+  SELECT
+    lower(regexp_replace(btrim(COALESCE(entity_id, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      AS normalized_entity_id
+  FROM risk_scores
+)
+SELECT count(*)
+FROM normalized_risk_scores
+WHERE normalized_entity_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)';
+SQL
+)"
+[[ "$synthetic_risk_score_count" =~ ^[0-9]+$ ]]
+
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --csv <<'SQL' \
+  > "$BACKUP_DIR/suspected-synthetic-events.csv"
 WITH normalized_events AS (
   SELECT
     id, event_type, source, event_id, event_time,
@@ -377,21 +392,56 @@ WHERE normalized_source ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
    OR normalized_event_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
 ORDER BY event_time DESC NULLS LAST, id;
 SQL
-  chmod 600 "$BACKUP_DIR/suspected-synthetic-events.csv"
-  printf 'synthetic/demo event rows require remediation: %s\n' \
-    "$synthetic_event_count" >&2
+
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --csv <<'SQL' \
+  > "$BACKUP_DIR/suspected-synthetic-risk-scores.csv"
+WITH normalized_risk_scores AS (
+  SELECT
+    id, entity_type, entity_id, score, calculated_at,
+    lower(regexp_replace(btrim(COALESCE(entity_id, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+      AS normalized_entity_id
+  FROM risk_scores
+)
+SELECT
+  id, entity_type, entity_id, score, calculated_at,
+  normalized_entity_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+    AS entity_id_marker
+FROM normalized_risk_scores
+WHERE normalized_entity_id ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
+ORDER BY calculated_at DESC NULLS LAST, id;
+SQL
+
+{
+  printf 'relation\tmatching_rows\n'
+  printf 'events\t%s\n' "$synthetic_event_count"
+  printf 'risk_scores\t%s\n' "$synthetic_risk_score_count"
+} | tee "$BACKUP_DIR/suspected-synthetic-counts.tsv"
+chmod 600 \
+  "$BACKUP_DIR/suspected-synthetic-events.csv" \
+  "$BACKUP_DIR/suspected-synthetic-risk-scores.csv" \
+  "$BACKUP_DIR/suspected-synthetic-counts.tsv"
+test -s "$BACKUP_DIR/suspected-synthetic-events.csv"
+test -s "$BACKUP_DIR/suspected-synthetic-risk-scores.csv"
+test -s "$BACKUP_DIR/suspected-synthetic-counts.tsv"
+
+if (( synthetic_event_count > 0 || synthetic_risk_score_count > 0 )); then
+  printf 'synthetic/demo rows require remediation: events=%s risk_scores=%s\n' \
+    "$synthetic_event_count" "$synthetic_risk_score_count" >&2
   exit 1
 fi
-printf '%s\n' 'synthetic event preflight passed: 0 matching rows'
+printf '%s\n' 'synthetic event/risk-score preflight passed: 0 matching rows'
 ```
 
-If the gate finds rows, stop the rollout. The database owner must use the
-backup and CSV evidence to decide whether each exact row must be moved to a
-restricted quarantine table for audit retention or deleted because it has no
-production record value. Record the decision, approver, exact row IDs, and
-before/after counts. Do not rename markers to bypass the gate, do not delete
-rows in migration `040`, and do not continue until the same comprehensive
-query returns zero.
+If the gate finds rows in either table, stop the rollout. The database owner
+must use the backup, both CSV exports, and the counts file to propose whether
+each exact event or risk score must be moved to a restricted quarantine table
+for audit retention or deleted because it has no production record value. Get
+that remediation approved before executing it, and record the approver, exact
+event row IDs, exact risk-score row IDs and entity IDs, and before/after
+counts. Do not rename markers to bypass the gate and do not delete rows in
+migration `040`. After approved remediation, rerun the entire gate, attach the
+new exports and counts to the deployment record, and do not continue until
+both event and risk-score counts are zero.
 
 ## 3. Migration Preflight
 

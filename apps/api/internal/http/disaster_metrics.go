@@ -18,12 +18,13 @@ FROM disaster_observability_events
 WHERE occurred_at >= now() - interval '24 hours'
 `
 
-const alertVolumeQuery = `
+var alertVolumeQuery = `
 SELECT COALESCE(e.source, 'derived'), COALESCE(e.event_type, a.alert_type),
        a.severity, count(*)
 FROM alerts a
 LEFT JOIN events e ON e.id = a.event_id
 WHERE a.created_at >= now() - interval '24 hours'
+  AND ` + productionEventSQLPredicate("e.source", "e.event_id") + `
 GROUP BY 1, 2, 3
 ORDER BY count(*) DESC
 `

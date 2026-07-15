@@ -25,11 +25,12 @@ ORDER BY created_at DESC
 LIMIT 1
 `
 
-const briefingTopEventsQuery = `
+var briefingTopEventsQuery = `
 SELECT e.event_id, e.magnitude, e.place, e.source
 FROM briefings b
 LEFT JOIN events e ON e.id = ANY(b.event_ids)
 WHERE b.id = $1
+  AND ` + productionEventSQLPredicate("e.source", "e.event_id") + `
 ORDER BY e.magnitude DESC NULLS LAST
 LIMIT 3
 `
@@ -106,6 +107,13 @@ func BriefingsToday(db *sql.DB) gin.HandlerFunc {
 			}
 			te.Place = nullStringPtr(place)
 			te.Source = nullStringPtr(source)
+			sourceValue := ""
+			if te.Source != nil {
+				sourceValue = *te.Source
+			}
+			if isNonProductionEvent(sourceValue, te.EventID) {
+				continue
+			}
 			topEvents = append(topEvents, te)
 		}
 

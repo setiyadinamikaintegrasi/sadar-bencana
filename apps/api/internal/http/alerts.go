@@ -31,7 +31,7 @@ type Alert struct {
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
-const alertsQuery = `
+var alertsQuery = `
 SELECT a.id,
        a.event_id,
        e.event_id,
@@ -53,6 +53,7 @@ FROM alerts a
 LEFT JOIN events e ON a.event_id = e.id
 LEFT JOIN news_items n ON a.news_item_id = n.id
 WHERE ($1::boolean IS NULL OR a.acknowledged = $1)
+  AND ` + productionEventSQLPredicate("e.source", "e.event_id") + `
 ORDER BY a.created_at DESC
 LIMIT 100
 `

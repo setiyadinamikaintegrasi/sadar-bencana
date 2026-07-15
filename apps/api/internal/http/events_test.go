@@ -26,6 +26,39 @@ func TestEventsQueryFiltersNonProductionMarkersBeforeCategoryLimits(t *testing.T
 	}
 }
 
+func TestRuntimeEventDerivedQueriesUseProductionPredicate(t *testing.T) {
+	const markerBoundary = "(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)"
+	tests := []struct {
+		name    string
+		query   string
+		before  string
+		columns []string
+	}{
+		{name: "risk scores", query: riskScoresQuery, before: "ORDER BY", columns: []string{"e.source", "rs.entity_id"}},
+		{name: "briefing top events", query: briefingTopEventsQuery, before: "ORDER BY", columns: []string{"e.source", "e.event_id"}},
+		{name: "alert volume", query: alertVolumeQuery, before: "GROUP BY", columns: []string{"e.source", "e.event_id"}},
+		{name: "alert action card", query: alertActionCardQuery, before: "LIMIT 1", columns: []string{"e.source", "e.event_id"}},
+		{name: "alerts", query: alertsQuery, before: "ORDER BY", columns: []string{"e.source", "e.event_id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			boundary := strings.Index(tt.query, tt.before)
+			if boundary < 0 {
+				t.Fatalf("query is missing boundary %q", tt.before)
+			}
+			filteredRelation := tt.query[:boundary]
+			if got := strings.Count(filteredRelation, markerBoundary); got != 2 {
+				t.Fatalf("query must apply source and event ID marker predicates before %s; got %d", tt.before, got)
+			}
+			for _, column := range tt.columns {
+				if !strings.Contains(filteredRelation, "COALESCE("+column) {
+					t.Fatalf("query must normalize %s before %s", column, tt.before)
+				}
+			}
+		})
+	}
+}
+
 func TestEventsExcludesNonProductionRowsAcrossCategories(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, err := sqlmock.New()

@@ -25,7 +25,7 @@ type AlertActionCard struct {
 	GuidanceSource  *string         `json:"guidance_source"`
 }
 
-const alertActionCardQuery = `
+var alertActionCardQuery = `
 SELECT a.id, COALESCE(a.message, 'Informasi kejadian terpantau'),
        'Alert ini cocok dengan aturan monitoring dan area yang Anda pantau.',
        COALESCE(e.event_type, a.alert_type), e.source, a.confidence_class,
@@ -36,6 +36,7 @@ JOIN ews_safety_guidance g
   ON g.peril_type = COALESCE(e.event_type, a.alert_type)
  AND g.language_code = 'id' AND g.is_active = TRUE
 WHERE a.id = $1::uuid
+  AND ` + productionEventSQLPredicate("e.source", "e.event_id") + `
 LIMIT 1
 `
 

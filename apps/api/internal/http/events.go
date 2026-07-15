@@ -3,8 +3,6 @@ package http
 import (
 	"database/sql"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,48 +24,15 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-var nonAlphaNumericEventMarker = regexp.MustCompile(`[^a-z0-9]+`)
-
-var nonProductionEventMarkers = map[string]struct{}{
-	"seed":      {},
-	"demo":      {},
-	"synthetic": {},
-	"mock":      {},
-	"fixture":   {},
-	"test":      {},
-}
-
-func containsNonProductionEventMarker(value string) bool {
-	normalized := strings.Trim(
-		nonAlphaNumericEventMarker.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "-"),
-		"-",
-	)
-	for _, token := range strings.Split(normalized, "-") {
-		if _, excluded := nonProductionEventMarkers[token]; excluded {
-			return true
-		}
-	}
-	return false
-}
-
-func isNonProductionEvent(source, eventID string) bool {
-	return containsNonProductionEventMarker(source) || containsNonProductionEventMarker(eventID)
-}
-
 // eventsQuery returns per-type capped events via UNION ALL so no single
 // event type can crowd out others. Limits: earthquake 50, wildfire 200,
 // flood 30, volcano 30 — total max 310 rows.
-const eventsQuery = `
+var eventsQuery = `
 WITH production_events AS (
   SELECT id, event_id, source, event_type, magnitude, latitude, longitude,
          place, event_time, url, severity, created_at
   FROM events
-  WHERE NOT (
-    lower(regexp_replace(btrim(COALESCE(source, '')), '[^a-zA-Z0-9]+', '-', 'g'))
-      ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
-    OR lower(regexp_replace(btrim(COALESCE(event_id, '')), '[^a-zA-Z0-9]+', '-', 'g'))
-      ~ '(^|-)(seed|demo|synthetic|mock|fixture|test)(-|$)'
-  )
+  WHERE ` + productionEventSQLPredicate("source", "event_id") + `
 ),
 earthquakes AS (
   SELECT * FROM production_events WHERE event_type = 'earthquake'
