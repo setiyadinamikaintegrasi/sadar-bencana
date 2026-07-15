@@ -258,6 +258,7 @@ export type OfficialSourceSetting = {
   attribution: string
   terms_url: string | null
   poll_interval_seconds: number
+  expected_interval_seconds: number
   notes: string | null
   last_dry_run_at: string | null
   last_dry_run_valid: boolean | null
@@ -280,6 +281,7 @@ export async function updateOfficialSourceSetting(
     custom_api_url: string | null
     api_token?: string
     poll_interval_seconds: number
+    expected_interval_seconds: number
     change_reason?: string
   },
 ): Promise<void> {
@@ -297,6 +299,8 @@ export type OfficialSourcePreview = {
   record_count: number
   valid_count: number
   invalid_count: number
+  warning_count: number
+  observation_count: number
   errors: string[]
   raw_sample: unknown
   mapped_sample: Record<string, unknown>[]

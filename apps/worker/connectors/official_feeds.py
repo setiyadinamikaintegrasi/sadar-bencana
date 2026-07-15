@@ -12,6 +12,7 @@ from models.official_alert import OfficialAlertInput
 from ssrf_guard import resolve_public_ips
 
 ALLOWED_HOSTS = {
+    "bmkg_air_quality": ("bmkg.go.id",),
     "inatews": ("bmkg.go.id",),
     "pvmbg": ("esdm.go.id",),
     "bnpb": ("bnpb.go.id",),
@@ -19,6 +20,7 @@ ALLOWED_HOSTS = {
 }
 
 ADAPTER_CONTRACTS = {
+    "bmkg_air_quality": {"v1": ("__warnings", "__observations")},
     "inatews": {"v1": ("event_group_id", "sent_at")},
     "pvmbg": {"v1": ("volcano_id", "level", "published_at")},
     "bnpb": {"v1": ("report_id", "observed_at")},

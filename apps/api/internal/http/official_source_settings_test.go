@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,12 @@ func TestApprovedOfficialSourceHosts(t *testing.T) {
 	if !approvedSourceHost("inatews", "rtsp.bmkg.go.id") {
 		t.Fatal("official BMKG host rejected")
 	}
+	if !approvedSourceHost("bmkg_air_quality", "iklim.bmkg.go.id") {
+		t.Fatal("official BMKG air-quality host rejected")
+	}
+	if approvedSourceHost("bmkg_air_quality", "bmkg.go.id.evil.example") {
+		t.Fatal("BMKG air-quality suffix confusion accepted")
+	}
 	if !approvedSourceHost("pvmbg", "magma.esdm.go.id") {
 		t.Fatal("official ESDM host rejected")
 	}
@@ -20,6 +27,22 @@ func TestApprovedOfficialSourceHosts(t *testing.T) {
 	}
 	if approvedSourceHost("inarisk", "evil.example") {
 		t.Fatal("unofficial host accepted")
+	}
+}
+
+func TestAirQualityEndpointRequiresApprovedHTTPS443URL(t *testing.T) {
+	if !approvedSourceEndpoint("bmkg_air_quality", "https://iklim.bmkg.go.id/api/air-quality") {
+		t.Fatal("approved BMKG HTTPS endpoint rejected")
+	}
+	for _, endpoint := range []string{
+		"http://iklim.bmkg.go.id/api/air-quality",
+		"https://attacker@iklim.bmkg.go.id/api/air-quality",
+		"https://iklim.bmkg.go.id:8443/api/air-quality",
+		"https://evil.example/api/air-quality",
+	} {
+		if approvedSourceEndpoint("bmkg_air_quality", endpoint) {
+			t.Fatalf("unsafe endpoint accepted: %s", endpoint)
+		}
 	}
 }
 
@@ -54,6 +77,37 @@ func TestAdapterRejectsUnknownVersion(t *testing.T) {
 	err := validateAdapterConfiguration("bnpb", "v999", nil)
 	if err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("expected unknown adapter rejection, got %v", err)
+	}
+}
+
+func TestAdapterRegistersAirQualityCollectionContract(t *testing.T) {
+	if err := validateAdapterConfiguration("bmkg_air_quality", "v1", map[string]string{
+		"__warnings":     "result.warnings",
+		"__observations": "result.observations",
+	}); err != nil {
+		t.Fatalf("valid air-quality adapter rejected: %v", err)
+	}
+	fields := adapterContracts["bmkg_air_quality"]["v1"]
+	if len(fields) != 2 || fields[0] != "__warnings" || fields[1] != "__observations" {
+		t.Fatalf("unexpected air-quality contract: %#v", fields)
+	}
+}
+
+func TestOfficialSourceExpectedIntervalJSONContract(t *testing.T) {
+	encoded, err := json.Marshal(OfficialSourceSetting{ExpectedIntervalSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"expected_interval_seconds":3600`) {
+		t.Fatalf("response omits expected interval: %s", encoded)
+	}
+
+	var update sourceSettingUpdate
+	if err := json.Unmarshal([]byte(`{"expected_interval_seconds":7200}`), &update); err != nil {
+		t.Fatal(err)
+	}
+	if update.ExpectedIntervalSeconds != 7200 {
+		t.Fatalf("update ignored expected interval: %#v", update)
 	}
 }
 

@@ -17,12 +17,13 @@ import (
 )
 
 var adapterContracts = map[string]map[string][]string{
-	"bmkg":     {"v1": {}},
-	"bmkg_cap": {"v1": {}},
-	"inatews":  {"v1": {"event_group_id", "sent_at"}},
-	"pvmbg":    {"v1": {"volcano_id", "level", "published_at"}},
-	"bnpb":     {"v1": {"report_id", "observed_at"}},
-	"inarisk":  {"v1": {"layer_id", "context_type", "data_vintage", "attribution"}},
+	"bmkg":             {"v1": {}},
+	"bmkg_cap":         {"v1": {}},
+	"bmkg_air_quality": {"v1": {"__warnings", "__observations"}},
+	"inatews":          {"v1": {"event_group_id", "sent_at"}},
+	"pvmbg":            {"v1": {"volcano_id", "level", "published_at"}},
+	"bnpb":             {"v1": {"report_id", "observed_at"}},
+	"inarisk":          {"v1": {"layer_id", "context_type", "data_vintage", "attribution"}},
 }
 
 const maxCAPPreviewLinks = 50
@@ -219,19 +220,101 @@ type sourceRuntimeConfig struct {
 }
 
 type sourcePreviewResult struct {
-	Reachable      bool             `json:"reachable"`
-	ContractValid  bool             `json:"contract_valid"`
-	StatusCode     int              `json:"status_code"`
-	ContentType    string           `json:"content_type"`
-	AdapterVersion string           `json:"adapter_version"`
-	RecordCount    int              `json:"record_count"`
-	ValidCount     int              `json:"valid_count"`
-	InvalidCount   int              `json:"invalid_count"`
-	Errors         []string         `json:"errors"`
-	RawSample      any              `json:"raw_sample"`
-	MappedSample   []map[string]any `json:"mapped_sample"`
-	PayloadStored  bool             `json:"payload_stored"`
-	LatencyMS      int64            `json:"latency_ms"`
+	Reachable        bool             `json:"reachable"`
+	ContractValid    bool             `json:"contract_valid"`
+	StatusCode       int              `json:"status_code"`
+	ContentType      string           `json:"content_type"`
+	AdapterVersion   string           `json:"adapter_version"`
+	RecordCount      int              `json:"record_count"`
+	ValidCount       int              `json:"valid_count"`
+	InvalidCount     int              `json:"invalid_count"`
+	WarningCount     int              `json:"warning_count"`
+	ObservationCount int              `json:"observation_count"`
+	Errors           []string         `json:"errors"`
+	RawSample        any              `json:"raw_sample"`
+	MappedSample     []map[string]any `json:"mapped_sample"`
+	PayloadStored    bool             `json:"payload_stored"`
+	LatencyMS        int64            `json:"latency_ms"`
+}
+
+func airQualityCollection(payload map[string]any, mapping map[string]string, key string) ([]any, bool) {
+	path := strings.TrimSpace(mapping[key])
+	if path == "" {
+		path = strings.TrimPrefix(key, "__")
+	}
+	value := mappedValue(payload, path)
+	items, ok := value.([]any)
+	return items, ok
+}
+
+func mapAirQualityRecord(record map[string]any, prefix string, mapping map[string]string) map[string]any {
+	result := make(map[string]any, len(record))
+	for key, value := range record {
+		result[key] = value
+	}
+	fieldPrefix := prefix + "."
+	for canonical, path := range mapping {
+		if strings.HasPrefix(canonical, fieldPrefix) {
+			result[strings.TrimPrefix(canonical, fieldPrefix)] = mappedValue(record, path)
+		}
+	}
+	return result
+}
+
+func previewAirQualityPayload(payload any, mapping map[string]string, base sourcePreviewResult) sourcePreviewResult {
+	base.Errors = []string{}
+	base.MappedSample = []map[string]any{}
+	base.PayloadStored = false
+	base.RawSample = sanitizePreview(payload)
+	root, ok := payload.(map[string]any)
+	if !ok {
+		base.InvalidCount = 1
+		base.Errors = append(base.Errors, "air-quality payload must be an object")
+		return base
+	}
+
+	warnings, warningsOK := airQualityCollection(root, mapping, "__warnings")
+	observations, observationsOK := airQualityCollection(root, mapping, "__observations")
+	if !warningsOK {
+		base.InvalidCount++
+		base.Errors = append(base.Errors, "warnings must be an array")
+	}
+	if !observationsOK {
+		base.InvalidCount++
+		base.Errors = append(base.Errors, "observations must be an array")
+	}
+	base.WarningCount = len(warnings)
+	base.ObservationCount = len(observations)
+	base.RecordCount = base.WarningCount + base.ObservationCount
+
+	collections := []struct {
+		name  string
+		items []any
+	}{
+		{name: "warning", items: warnings},
+		{name: "observation", items: observations},
+	}
+	for _, collection := range collections {
+		for index, item := range collection.items {
+			record, valid := item.(map[string]any)
+			if !valid {
+				base.InvalidCount++
+				if len(base.Errors) < 10 {
+					base.Errors = append(base.Errors, fmt.Sprintf("%s %d must be an object", collection.name, index))
+				}
+				continue
+			}
+			base.ValidCount++
+			if len(base.MappedSample) < 3 {
+				mapped := mapAirQualityRecord(record, collection.name, mapping)
+				base.MappedSample = append(base.MappedSample, sanitizePreview(mapped).(map[string]any))
+			}
+		}
+	}
+	base.ContractValid = warningsOK && observationsOK && base.Reachable &&
+		base.StatusCode >= 200 && base.StatusCode < 300 && base.RecordCount > 0 &&
+		base.InvalidCount == 0
+	return base
 }
 
 func loadSourceRuntimeConfig(
@@ -292,8 +375,7 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 	if err := validateAdapterConfiguration(config.Source, config.AdapterVersion, config.FieldMapping); err != nil {
 		return result, err
 	}
-	parsed, err := url.Parse(config.Endpoint)
-	if err != nil || parsed.Scheme != "https" || !approvedSourceHost(config.Source, parsed.Hostname()) {
+	if !approvedSourceEndpoint(config.Source, config.Endpoint) {
 		return result, errors.New("official API URL is missing or not approved")
 	}
 	request, _ := http.NewRequestWithContext(ctx.Request.Context(), http.MethodGet, config.Endpoint, nil)
@@ -330,6 +412,9 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 		result.Errors = append(result.Errors, "response is not valid JSON")
 		result.RawSample = string(body[:min(len(body), 2000)])
 		return result, nil
+	}
+	if config.Source == "bmkg_air_quality" {
+		return previewAirQualityPayload(payload, config.FieldMapping, result), nil
 	}
 	result.RawSample = sanitizePreview(payload)
 	records := payloadRecords(payload, config.FieldMapping)
@@ -394,7 +479,9 @@ func OfficialSourcePreview(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 		}
 		result, previewErr := executeSourcePreview(c, config)
 		writeSourceAudit(db, source, "preview", AuthEmail(c), config.ConfigVersion, previewErr == nil && result.ContractValid,
-			gin.H{"record_count": result.RecordCount, "valid_count": result.ValidCount, "payload_stored": false})
+			gin.H{"record_count": result.RecordCount, "warning_count": result.WarningCount,
+				"observation_count": result.ObservationCount, "valid_count": result.ValidCount,
+				"payload_stored": false})
 		if previewErr != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "preview_failed", "message": previewErr.Error(), "data": result})
 			return
@@ -428,7 +515,9 @@ func OfficialSourceDryRun(db *sql.DB, encryptionKey string) gin.HandlerFunc {
 			  last_dry_run_valid=$2, last_dry_run_config_version=config_version
 			WHERE source_name=$1`, source, valid)
 		writeSourceAudit(db, source, "dry_run", AuthEmail(c), config.ConfigVersion, valid,
-			gin.H{"record_count": result.RecordCount, "valid_count": result.ValidCount, "invalid_count": result.InvalidCount})
+			gin.H{"record_count": result.RecordCount, "warning_count": result.WarningCount,
+				"observation_count": result.ObservationCount, "valid_count": result.ValidCount,
+				"invalid_count": result.InvalidCount})
 		if updateErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "dry_run_state_failed"})
 			return
@@ -472,7 +561,8 @@ func OfficialSourceActivate(db *sql.DB) gin.HandlerFunc {
 			  jsonb_build_object(
 			    'enabled',enabled,'run_mode',run_mode,'mode',mode,
 			    'adapter_version',adapter_version,'field_mapping',field_mapping,
-			    'custom_api_url',custom_api_url,'poll_interval_seconds',poll_interval_seconds
+			    'custom_api_url',custom_api_url,'poll_interval_seconds',poll_interval_seconds,
+			    'expected_interval_seconds',expected_interval_seconds
 			  ),
 			  api_token_encrypted,$2,'Activated after successful dry run'
 			FROM updated RETURNING version`,
@@ -538,6 +628,7 @@ func OfficialSourceRollback(db *sql.DB) gin.HandlerFunc {
 			    field_mapping=COALESCE(t.configuration->'field_mapping','{}'::jsonb),
 			    custom_api_url=NULLIF(t.configuration->>'custom_api_url',''),
 			    poll_interval_seconds=COALESCE((t.configuration->>'poll_interval_seconds')::int,600),
+			    expected_interval_seconds=COALESCE((t.configuration->>'expected_interval_seconds')::int,600),
 			    api_token_encrypted=t.api_token_encrypted,
 			    config_version=s.config_version+1,
 			    last_dry_run_at=NULL,last_dry_run_valid=NULL,last_dry_run_config_version=NULL,
@@ -550,7 +641,8 @@ func OfficialSourceRollback(db *sql.DB) gin.HandlerFunc {
 			  jsonb_build_object(
 			    'enabled',enabled,'run_mode',run_mode,'mode',mode,
 			    'adapter_version',adapter_version,'field_mapping',field_mapping,
-			    'custom_api_url',custom_api_url,'poll_interval_seconds',poll_interval_seconds
+			    'custom_api_url',custom_api_url,'poll_interval_seconds',poll_interval_seconds,
+			    'expected_interval_seconds',expected_interval_seconds
 			  ),
 			  api_token_encrypted,$3,$4
 			FROM updated RETURNING version`,

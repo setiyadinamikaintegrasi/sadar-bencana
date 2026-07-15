@@ -13,24 +13,25 @@ import (
 )
 
 type OfficialSourceSetting struct {
-	SourceName          string            `json:"source_name"`
-	DisplayName         string            `json:"display_name"`
-	Enabled             bool              `json:"enabled"`
-	RunMode             string            `json:"run_mode"`
-	Mode                string            `json:"mode"`
-	AdapterVersion      string            `json:"adapter_version"`
-	FieldMapping        map[string]string `json:"field_mapping"`
-	ConfigVersion       int               `json:"config_version"`
-	DefaultAPIURL       *string           `json:"default_api_url"`
-	CustomAPIURL        *string           `json:"custom_api_url"`
-	HasAPIToken         bool              `json:"has_api_token"`
-	Attribution         string            `json:"attribution"`
-	TermsURL            *string           `json:"terms_url"`
-	PollIntervalSeconds int               `json:"poll_interval_seconds"`
-	Notes               *string           `json:"notes"`
-	LastDryRunAt        *time.Time        `json:"last_dry_run_at"`
-	LastDryRunValid     *bool             `json:"last_dry_run_valid"`
-	UpdatedAt           time.Time         `json:"updated_at"`
+	SourceName              string            `json:"source_name"`
+	DisplayName             string            `json:"display_name"`
+	Enabled                 bool              `json:"enabled"`
+	RunMode                 string            `json:"run_mode"`
+	Mode                    string            `json:"mode"`
+	AdapterVersion          string            `json:"adapter_version"`
+	FieldMapping            map[string]string `json:"field_mapping"`
+	ConfigVersion           int               `json:"config_version"`
+	DefaultAPIURL           *string           `json:"default_api_url"`
+	CustomAPIURL            *string           `json:"custom_api_url"`
+	HasAPIToken             bool              `json:"has_api_token"`
+	Attribution             string            `json:"attribution"`
+	TermsURL                *string           `json:"terms_url"`
+	PollIntervalSeconds     int               `json:"poll_interval_seconds"`
+	ExpectedIntervalSeconds int               `json:"expected_interval_seconds"`
+	Notes                   *string           `json:"notes"`
+	LastDryRunAt            *time.Time        `json:"last_dry_run_at"`
+	LastDryRunValid         *bool             `json:"last_dry_run_valid"`
+	UpdatedAt               time.Time         `json:"updated_at"`
 }
 
 func requireSettingsAdmin(c *gin.Context, db *sql.DB) bool {
@@ -53,7 +54,8 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 			SELECT source_name, display_name, enabled, run_mode, mode,
 			       adapter_version, field_mapping, config_version, default_api_url,
 			       custom_api_url, api_token_encrypted IS NOT NULL, attribution,
-			       terms_url, poll_interval_seconds, notes, last_dry_run_at,
+			       terms_url, poll_interval_seconds, expected_interval_seconds,
+			       notes, last_dry_run_at,
 			       last_dry_run_valid, updated_at
 			FROM official_source_settings ORDER BY display_name`)
 		if err != nil {
@@ -71,7 +73,8 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 			if err := rows.Scan(&item.SourceName, &item.DisplayName, &item.Enabled, &item.RunMode,
 				&item.Mode, &item.AdapterVersion, &mapping, &item.ConfigVersion, &defaultURL,
 				&customURL, &item.HasAPIToken, &item.Attribution, &termsURL,
-				&item.PollIntervalSeconds, &notes, &dryRunAt, &dryRunValid, &item.UpdatedAt); err != nil {
+				&item.PollIntervalSeconds, &item.ExpectedIntervalSeconds,
+				&notes, &dryRunAt, &dryRunValid, &item.UpdatedAt); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed"})
 				return
 			}
@@ -94,15 +97,16 @@ func OfficialSourceSettingsList(db *sql.DB) gin.HandlerFunc {
 }
 
 type sourceSettingUpdate struct {
-	Enabled             bool              `json:"enabled"`
-	RunMode             string            `json:"run_mode"`
-	Mode                string            `json:"mode"`
-	AdapterVersion      string            `json:"adapter_version"`
-	FieldMapping        map[string]string `json:"field_mapping"`
-	CustomAPIURL        *string           `json:"custom_api_url"`
-	APIToken            *string           `json:"api_token"`
-	PollIntervalSeconds int               `json:"poll_interval_seconds"`
-	ChangeReason        string            `json:"change_reason"`
+	Enabled                 bool              `json:"enabled"`
+	RunMode                 string            `json:"run_mode"`
+	Mode                    string            `json:"mode"`
+	AdapterVersion          string            `json:"adapter_version"`
+	FieldMapping            map[string]string `json:"field_mapping"`
+	CustomAPIURL            *string           `json:"custom_api_url"`
+	APIToken                *string           `json:"api_token"`
+	PollIntervalSeconds     int               `json:"poll_interval_seconds"`
+	ExpectedIntervalSeconds int               `json:"expected_interval_seconds"`
+	ChangeReason            string            `json:"change_reason"`
 }
 
 func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFunc {
@@ -148,8 +152,7 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 		}
 		customURL := strings.TrimSpace(valueString(body.CustomAPIURL))
 		if customURL != "" {
-			parsed, err := url.Parse(customURL)
-			if err != nil || parsed.Scheme != "https" || !approvedSourceHost(source, parsed.Hostname()) {
+			if !approvedSourceEndpoint(source, customURL) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_api_url"})
 				return
 			}
@@ -165,6 +168,14 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 		}
 		if interval < 60 || interval > 86400 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_poll_interval"})
+			return
+		}
+		expectedInterval := body.ExpectedIntervalSeconds
+		if expectedInterval == 0 {
+			expectedInterval = interval
+		}
+		if expectedInterval < 60 || expectedInterval > 86400 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_expected_interval"})
 			return
 		}
 		currentMode := ""
@@ -194,13 +205,13 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			  UPDATE official_source_settings SET
 			    enabled=$2, run_mode=$3, mode=$4, adapter_version=$5,
 			    field_mapping=$6::jsonb, custom_api_url=NULLIF($7,''),
-			    poll_interval_seconds=$8,
-			    api_token_encrypted=CASE WHEN $9='' THEN api_token_encrypted
-			      ELSE pgp_sym_encrypt($9,$10) END,
+			    poll_interval_seconds=$8, expected_interval_seconds=$9,
+			    api_token_encrypted=CASE WHEN $10='' THEN api_token_encrypted
+			      ELSE pgp_sym_encrypt($10,$11) END,
 			    config_version=config_version+1,
 			    last_dry_run_at=NULL, last_dry_run_valid=NULL,
 			    last_dry_run_config_version=NULL,
-			    updated_by=$11, updated_at=now()
+			    updated_by=$12, updated_at=now()
 			  WHERE source_name=$1
 			  RETURNING *
 			)
@@ -211,13 +222,14 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			    'enabled', enabled, 'run_mode', run_mode, 'mode', mode,
 			    'adapter_version', adapter_version, 'field_mapping', field_mapping,
 			    'custom_api_url', custom_api_url,
-			    'poll_interval_seconds', poll_interval_seconds
+			    'poll_interval_seconds', poll_interval_seconds,
+			    'expected_interval_seconds', expected_interval_seconds
 			  ),
-			  api_token_encrypted, $11, NULLIF($12,'')
+			  api_token_encrypted, $12, NULLIF($13,'')
 			FROM updated
 			RETURNING version`,
 			source, runMode != "disabled", runMode, body.Mode, adapterVersion,
-			string(mappingJSON), customURL, interval, token, encryptionKey,
+			string(mappingJSON), customURL, interval, expectedInterval, token, encryptionKey,
 			AuthEmail(c), strings.TrimSpace(body.ChangeReason)).Scan(&version)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_update_failed", "message": err.Error()})
@@ -267,8 +279,7 @@ func OfficialSourceSettingTest(db *sql.DB, encryptionKey string) gin.HandlerFunc
 		} else if defaultURL.Valid {
 			endpoint = defaultURL.String
 		}
-		parsed, parseErr := url.Parse(endpoint)
-		if parseErr != nil || !approvedSourceHost(source, parsed.Hostname()) {
+		if !approvedSourceEndpoint(source, endpoint) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "official_api_not_configured"})
 			return
 		}
@@ -310,10 +321,13 @@ func valueString(value *string) string {
 func approvedSourceHost(source, host string) bool {
 	host = strings.ToLower(host)
 	suffixes := map[string][]string{
-		"bmkg":     {"bmkg.go.id"},
-		"bmkg_cap": {"bmkg.go.id"}, "inatews": {"bmkg.go.id"},
-		"pvmbg": {"esdm.go.id"}, "bnpb": {"bnpb.go.id"},
-		"inarisk": {"bnpb.go.id"},
+		"bmkg":             {"bmkg.go.id"},
+		"bmkg_cap":         {"bmkg.go.id"},
+		"bmkg_air_quality": {"bmkg.go.id"},
+		"inatews":          {"bmkg.go.id"},
+		"pvmbg":            {"esdm.go.id"},
+		"bnpb":             {"bnpb.go.id"},
+		"inarisk":          {"bnpb.go.id"},
 	}
 	for _, suffix := range suffixes[source] {
 		if host == suffix || strings.HasSuffix(host, "."+suffix) {
@@ -321,4 +335,16 @@ func approvedSourceHost(source, host string) bool {
 		}
 	}
 	return false
+}
+
+func approvedSourceEndpoint(source, raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil ||
+		!approvedSourceHost(source, parsed.Hostname()) {
+		return false
+	}
+	if source == "bmkg_air_quality" && parsed.Port() != "" && parsed.Port() != "443" {
+		return false
+	}
+	return true
 }

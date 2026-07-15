@@ -106,6 +106,7 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
       custom_api_url: item.custom_api_url,
       api_token: tokens[item.source_name] || undefined,
       poll_interval_seconds: item.poll_interval_seconds,
+      expected_interval_seconds: item.expected_interval_seconds,
       change_reason: changeReasons[item.source_name] || undefined,
     })
     setTokens((current) => ({ ...current, [item.source_name]: '' }))
@@ -270,7 +271,7 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
                 <label className="text-sm">Adapter version
                   <input value={item.adapter_version} onChange={(e) => patchItem(item.source_name, { adapter_version: e.target.value })} className={inputClass} />
                 </label>
-                <label className="text-sm">Mode endpoint
+                <label className="text-sm md:col-span-2">Mode endpoint
                   <select value={item.mode} onChange={(e) => patchItem(item.source_name, { mode: e.target.value as OfficialSourceSetting['mode'] })} className={inputClass}>
                     <option value="auto">Auto</option>
                     <option value="default_public">Default Public</option>
@@ -279,6 +280,9 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
                 </label>
                 <label className="text-sm">Interval polling (detik)
                   <input type="number" min={60} max={86400} value={item.poll_interval_seconds} onChange={(e) => patchItem(item.source_name, { poll_interval_seconds: Number(e.target.value) })} className={inputClass} />
+                </label>
+                <label className="text-sm">Interval data yang diharapkan (detik)
+                  <input type="number" min={60} max={86400} value={item.expected_interval_seconds} onChange={(e) => patchItem(item.source_name, { expected_interval_seconds: Number(e.target.value) })} className={inputClass} />
                 </label>
                 <label className="text-sm md:col-span-2">Custom API URL
                   <input type="url" placeholder={item.default_api_url ?? 'https://... API resmi'} value={item.custom_api_url ?? ''} onChange={(e) => patchItem(item.source_name, { custom_api_url: e.target.value || null })} className={inputClass} />

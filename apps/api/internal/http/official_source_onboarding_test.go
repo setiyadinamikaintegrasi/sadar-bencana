@@ -81,6 +81,51 @@ func TestCapPreviewDoesNotTreatJSONAsXML(t *testing.T) {
 	}
 }
 
+func TestAirQualityPreviewSeparatesWarningsAndObservations(t *testing.T) {
+	payload := map[string]any{
+		"warnings": []any{map[string]any{
+			"source_alert_id": "aq-jabar-20260715",
+			"category":        "Tidak Sehat",
+		}},
+		"observations": []any{map[string]any{
+			"station_id": "kmy3",
+			"category":   "Baik",
+		}},
+	}
+	base := sourcePreviewResult{
+		Reachable:      true,
+		StatusCode:     200,
+		AdapterVersion: "v1",
+	}
+
+	result := previewAirQualityPayload(payload, map[string]string{}, base)
+
+	if !result.ContractValid {
+		t.Fatalf("expected valid air-quality contract: %#v", result)
+	}
+	if result.WarningCount != 1 || result.ObservationCount != 1 {
+		t.Fatalf("collections were not separated: %#v", result)
+	}
+	if result.RecordCount != 2 || result.ValidCount != 2 || result.InvalidCount != 0 {
+		t.Fatalf("unexpected counts: %#v", result)
+	}
+	if result.PayloadStored {
+		t.Fatal("preview must never persist payload")
+	}
+}
+
+func TestAirQualityPreviewRejectsCollectionSchemaDrift(t *testing.T) {
+	result := previewAirQualityPayload(
+		map[string]any{"warnings": map[string]any{}, "observations": []any{}},
+		map[string]string{},
+		sourcePreviewResult{Reachable: true, StatusCode: 200, AdapterVersion: "v1"},
+	)
+
+	if result.ContractValid || result.InvalidCount == 0 || len(result.Errors) == 0 {
+		t.Fatalf("schema drift was accepted: %#v", result)
+	}
+}
+
 func TestExecuteSourcePreviewReadsBMKGCAPRSSIndex(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	server := httptest.NewTLSServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

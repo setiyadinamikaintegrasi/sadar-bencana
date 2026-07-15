@@ -21,9 +21,11 @@ class ResolvedSourceSetting:
     adapter_version: str
     field_mapping: dict[str, str]
     config_version: int
+    expected_interval_seconds: int
 
 
 _ENV_URLS = {
+    "bmkg_air_quality": "BMKG_AIR_QUALITY_FEED_URL",
     "inatews": "INATEWS_FEED_URL",
     "pvmbg": "PVMBG_FEED_URL",
     "bnpb": "BNPB_FEED_URL",
@@ -41,7 +43,7 @@ async def resolve_source_setting(
             row = await conn.fetchrow(
                 """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
                           attribution, run_mode, adapter_version, field_mapping,
-                          config_version,
+                          config_version, expected_interval_seconds,
                           CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
                             THEN pgp_sym_decrypt(api_token_encrypted, $2) END AS api_token
                    FROM official_source_settings WHERE source_name=$1""",
@@ -79,6 +81,7 @@ async def resolve_source_setting(
         adapter_version=str(row.get("adapter_version") or "v1"),
         field_mapping=mapping,
         config_version=int(row.get("config_version") or 1),
+        expected_interval_seconds=int(row.get("expected_interval_seconds") or 600),
     )
 
 

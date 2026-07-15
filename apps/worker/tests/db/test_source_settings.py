@@ -52,11 +52,37 @@ async def test_dry_run_setting_loads_versioned_mapping():
         "adapter_version": "v1",
         "field_mapping": '{"report_id":"id","observed_at":"time.observed"}',
         "config_version": 3,
+        "expected_interval_seconds": 3600,
     }), "bnpb")
     assert setting.enabled
     assert setting.run_mode == "dry_run"
     assert setting.field_mapping["report_id"] == "id"
     assert setting.config_version == 3
+    assert setting.expected_interval_seconds == 3600
+
+
+@pytest.mark.asyncio
+async def test_air_quality_auto_mode_uses_gated_environment_endpoint(monkeypatch):
+    monkeypatch.setenv(
+        "BMKG_AIR_QUALITY_FEED_URL",
+        "https://iklim.bmkg.go.id/api/air-quality",
+    )
+    setting = await resolve_source_setting(_pool({
+        "source_name": "bmkg_air_quality",
+        "enabled": False,
+        "mode": "auto",
+        "default_api_url": None,
+        "custom_api_url": None,
+        "attribution": "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)",
+        "api_token": None,
+        "run_mode": "disabled",
+        "expected_interval_seconds": 3600,
+    }), "bmkg_air_quality")
+
+    assert setting.api_url == "https://iklim.bmkg.go.id/api/air-quality"
+    assert not setting.enabled
+    assert setting.run_mode == "disabled"
+    assert setting.expected_interval_seconds == 3600
 
 
 @pytest.mark.asyncio

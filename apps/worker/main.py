@@ -60,6 +60,7 @@ from alerts.lifecycle_delivery import (
 )
 from connectors.aisstream import AISStreamConnector
 from connectors.bmkg import BMKGConnector
+from connectors.bmkg_air_quality import BMKGAirQualityConnector, parse_air_quality_payload
 from connectors.bmkg_cap import BMKG_ATTRIBUTION, BMKGCAPConnector
 from connectors.gdacs_flood import GDACSFloodConnector
 from connectors.gdacs_volcano import GDACSVolcanoConnector
@@ -84,6 +85,10 @@ from connectors.vesselfinder import VesselFinderConnector
 from correlation_pipeline import correlate_ingested_events
 from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
+from db.air_quality import (
+    delete_old_air_quality_observations,
+    upsert_air_quality_observation,
+)
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
 from db.evidence import create_impact_report, create_risk_context, create_source_record
@@ -410,6 +415,64 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
         await connector.close()
 
 
+async def _bmkg_air_quality_cycle(pool: asyncpg.Pool) -> dict[str, int]:
+    setting = await resolve_source_setting(pool, "bmkg_air_quality")
+    if setting is None or not setting.enabled or not setting.api_url:
+        return {"warnings": 0, "observations": 0}
+
+    connector = BMKGAirQualityConnector(setting.api_url)
+    try:
+        payload = await connector.fetch_payload()
+        warnings, observations, record_errors = parse_air_quality_payload(
+            payload,
+            setting.field_mapping,
+        )
+        health_error = "; ".join(record_errors[:3]) if record_errors else None
+        await upsert_connector_health(
+            pool,
+            "bmkg_air_quality",
+            len(warnings) + len(observations),
+            health_error,
+        )
+        if setting.run_mode == "dry_run":
+            return {"warnings": 0, "observations": 0}
+
+        created_warnings = 0
+        for warning in warnings:
+            await create_source_record(
+                pool,
+                SourceRecordInput(
+                    source_name="bmkg_air_quality",
+                    source_record_id=warning.source_alert_id,
+                    source_type="official",
+                    source_url=warning.source_url,
+                    attribution=BMKG_ATTRIBUTION,
+                    observed_at=warning.effective_at,
+                    published_at=warning.sent_at,
+                    raw_payload=warning.raw_payload,
+                ),
+            )
+            row, created = await upsert_official_alert(pool, warning)
+            created_warnings += int(created)
+            if created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+                await enqueue_official_alert_revision(pool, row)
+
+        for observation in observations:
+            await upsert_air_quality_observation(pool, observation)
+
+        await delete_old_air_quality_observations(pool)
+        return {
+            "warnings": created_warnings,
+            "observations": len(observations),
+        }
+    except Exception as exc:
+        await upsert_connector_health(pool, "bmkg_air_quality", 0, str(exc))
+        logger.warning("BMKG air-quality fetch failed: %s", exc)
+        return {"warnings": 0, "observations": 0}
+    finally:
+        await connector.close()
+
+
 async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:
     created = 0
     configurations = [
@@ -507,6 +570,8 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     sub-connector in the connector_health table. Raises on any failure.
     """
     official_alerts = await _bmkg_cap_cycle(pool)
+    air_quality_counts = await _bmkg_air_quality_cycle(pool)
+    official_alerts += air_quality_counts["warnings"]
     official_alerts += await _remaining_official_sources_cycle(pool)
 
     # ---- Earthquake sources (BMKG + USGS with geo-aware merge) ----
