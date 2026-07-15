@@ -5,6 +5,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 
 import main as worker_main
+from db.source_settings import MissingSourceSettingError
 
 
 def _setting(**overrides):
@@ -32,9 +33,18 @@ async def test_bmkg_cap_cycle_enforces_configured_poll_cadence(monkeypatch):
     )
     connector = MagicMock()
     monkeypatch.setattr(worker_main, "BMKGCAPConnector", connector)
+    reserve = AsyncMock(return_value=False)
+    monkeypatch.setattr(worker_main, "reserve_source_poll_slot", reserve)
 
     assert await worker_main._bmkg_cap_cycle(object(), now=now) == 0
     connector.assert_not_called()
+    reserve.assert_awaited_once_with(
+        ANY,
+        "bmkg_cap",
+        config_version=4,
+        poll_interval_seconds=600,
+        now=now,
+    )
 
 
 @pytest.mark.asyncio
@@ -49,10 +59,33 @@ async def test_bmkg_cap_settings_error_fails_closed_without_legacy_poll(monkeypa
     health = AsyncMock()
     monkeypatch.setattr(worker_main, "BMKGCAPConnector", connector)
     monkeypatch.setattr(worker_main, "upsert_connector_health", health)
+    monkeypatch.setattr(
+        worker_main,
+        "reserve_source_poll_slot",
+        AsyncMock(return_value=True),
+    )
 
     assert await worker_main._bmkg_cap_cycle(object()) == 0
     connector.assert_not_called()
     health.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bmkg_cap_missing_control_plane_row_fails_closed(monkeypatch):
+    monkeypatch.setenv("CONNECTOR_BMKG_CAP_ENABLED", "true")
+    monkeypatch.setattr(
+        worker_main,
+        "resolve_source_setting",
+        AsyncMock(side_effect=MissingSourceSettingError("bmkg_cap missing")),
+    )
+    connector = MagicMock()
+    reserve = AsyncMock()
+    monkeypatch.setattr(worker_main, "BMKGCAPConnector", connector)
+    monkeypatch.setattr(worker_main, "reserve_source_poll_slot", reserve)
+
+    assert await worker_main._bmkg_cap_cycle(object()) == 0
+    connector.assert_not_called()
+    reserve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -88,6 +121,11 @@ async def test_bmkg_cap_shadow_reports_measured_persistence_delta(monkeypatch):
     )
     monkeypatch.setattr(worker_main, "record_worker_shadow_evidence", audit)
     monkeypatch.setattr(worker_main, "upsert_connector_health", AsyncMock())
+    monkeypatch.setattr(
+        worker_main,
+        "reserve_source_poll_slot",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         worker_main,
         "_official_alert_topology_errors",

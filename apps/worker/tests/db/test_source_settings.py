@@ -3,8 +3,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from db.source_settings import (
+    MissingSourceSettingError,
     capture_worker_shadow_persistence_counts,
     record_worker_shadow_evidence,
+    reserve_source_poll_slot,
     resolve_source_setting,
     source_write_is_allowed,
 )
@@ -133,6 +135,12 @@ async def test_settings_read_error_is_not_converted_to_legacy_fallback():
 
 
 @pytest.mark.asyncio
+async def test_missing_settings_row_fails_closed():
+    with pytest.raises(MissingSourceSettingError, match="bmkg_cap"):
+        await resolve_source_setting(_pool(None), "bmkg_cap")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("row", "expected"),
     [
@@ -246,3 +254,48 @@ async def test_shadow_counts_are_source_scoped():
     }
     assert conn.fetchval.await_count == 5
     assert all(call.args[1] == "bmkg_cap" for call in conn.fetchval.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_air_quality_shadow_uses_persisted_bmkg_source_identifier():
+    conn = AsyncMock()
+    conn.fetchval.side_effect = [0, 1, 0, 0, 0]
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    counts = await capture_worker_shadow_persistence_counts(
+        pool,
+        "bmkg_air_quality",
+    )
+
+    assert counts["air_quality_observations"] == 1
+    calls = conn.fetchval.await_args_list
+    assert calls[1].args[1] == "bmkg"
+    assert all(
+        call.args[1] == "bmkg_air_quality"
+        for index, call in enumerate(calls)
+        if index != 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_poll_reservation_uses_config_version_and_interval():
+    conn = AsyncMock()
+    conn.fetchval.return_value = True
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    reserved = await reserve_source_poll_slot(
+        pool,
+        "bmkg_cap",
+        config_version=7,
+        poll_interval_seconds=600,
+    )
+
+    assert reserved is True
+    sql, source, version, _now, interval = conn.fetchval.await_args.args
+    assert "ON CONFLICT" in sql
+    assert "config_version" in sql
+    assert (source, version, interval) == ("bmkg_cap", 7, 600)

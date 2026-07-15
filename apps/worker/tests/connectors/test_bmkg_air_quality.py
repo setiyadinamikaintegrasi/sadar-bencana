@@ -92,6 +92,7 @@ def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
     }
     dependencies = {
         "resolve_source_setting": AsyncMock(return_value=setting),
+        "reserve_source_poll_slot": AsyncMock(return_value=True),
         "BMKGAirQualityConnector": MagicMock(return_value=connector),
         "create_source_record": AsyncMock(return_value=({"id": "source-1"}, True)),
         "upsert_official_alert": AsyncMock(return_value=({"id": "alert-1", "revision": 1}, True)),
@@ -206,6 +207,7 @@ async def test_scheduled_cycle_skips_fetch_until_poll_interval_is_due(monkeypatc
         setting=_setting(last_polled_at=now, poll_interval_seconds=3600),
         connector=connector,
     )
+    dependencies["reserve_source_poll_slot"].return_value = False
 
     result = await worker_main._bmkg_air_quality_cycle(object(), now=now)
 

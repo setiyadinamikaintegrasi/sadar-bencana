@@ -78,6 +78,8 @@ def _setting(**overrides):
         "api_url": BMKG_CAP_RSS_URL,
         "api_token": "cap-token",
         "run_mode": "active",
+        "config_version": 7,
+        "poll_interval_seconds": 600,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -100,8 +102,16 @@ class _CycleConnector:
 
 
 def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
+    zero_counts = {
+        "official_alerts": 0,
+        "air_quality_observations": 0,
+        "ews_notification_log": 0,
+        "source_records": 0,
+        "disaster_observability_events": 0,
+    }
     dependencies = {
         "resolve_source_setting": AsyncMock(return_value=setting),
+        "reserve_source_poll_slot": AsyncMock(return_value=True),
         "BMKGCAPConnector": MagicMock(return_value=connector),
         "create_source_record": AsyncMock(return_value=({"id": "source-1"}, True)),
         "record_observation": AsyncMock(),
@@ -109,6 +119,14 @@ def _patch_cycle_dependencies(monkeypatch, *, setting, connector):
             return_value=({"id": "alert-1", "revision": 1}, True),
         ),
         "enqueue_official_alert_revision": AsyncMock(),
+        "persist_official_alert_revision": AsyncMock(
+            return_value=({"id": "alert-1", "revision": 1}, True, True),
+        ),
+        "capture_worker_shadow_persistence_counts": AsyncMock(
+            return_value=zero_counts,
+        ),
+        "record_worker_shadow_evidence": AsyncMock(),
+        "_official_alert_topology_errors": AsyncMock(return_value=[]),
         "upsert_connector_health": AsyncMock(),
     }
     for name, value in dependencies.items():
@@ -169,6 +187,7 @@ async def test_dry_run_updates_health_without_persistence_or_delivery(monkeypatc
         "record_observation",
         "upsert_official_alert",
         "enqueue_official_alert_revision",
+        "persist_official_alert_revision",
     ):
         dependencies[name].assert_not_awaited()
     assert connector.closed
@@ -189,13 +208,15 @@ async def test_active_cycle_persists_observations_and_enqueues_new_alert(monkeyp
     result = await worker_main._bmkg_cap_cycle(pool)
 
     assert result == 1
-    dependencies["create_source_record"].assert_awaited_once()
+    dependencies["create_source_record"].assert_not_awaited()
     assert dependencies["record_observation"].await_count == 2
-    dependencies["upsert_official_alert"].assert_awaited_once_with(pool, alert)
-    dependencies["enqueue_official_alert_revision"].assert_awaited_once_with(
-        pool,
-        {"id": "alert-1", "revision": 1},
-    )
+    dependencies["upsert_official_alert"].assert_not_awaited()
+    dependencies["enqueue_official_alert_revision"].assert_not_awaited()
+    persist = dependencies["persist_official_alert_revision"]
+    persist.assert_awaited_once()
+    assert persist.await_args.args == (pool, alert)
+    assert persist.await_args.kwargs["source_name"] == "bmkg_cap"
+    assert persist.await_args.kwargs["expected_config_version"] == 7
     dependencies["upsert_connector_health"].assert_awaited_once_with(
         pool,
         "bmkg_cap",
@@ -252,6 +273,7 @@ async def test_cycle_fetch_failure_updates_health_without_persistence(monkeypatc
         "record_observation",
         "upsert_official_alert",
         "enqueue_official_alert_revision",
+        "persist_official_alert_revision",
     ):
         dependencies[name].assert_not_awaited()
     assert connector.closed

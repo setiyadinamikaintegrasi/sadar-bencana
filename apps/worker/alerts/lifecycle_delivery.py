@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -20,7 +21,11 @@ from observability import disaster_correlation_id, record_observation
 
 MAX_DELIVERY_ATTEMPTS = 5
 BASE_RETRY_SECONDS = 30
-DELIVERY_LEASE_SECONDS = 300
+CHANNEL_SEND_TIMEOUT_SECONDS = {"email": 30, "telegram": 15}
+DELIVERY_LEASE_MARGIN_SECONDS = 30
+DELIVERY_LEASE_SECONDS = (
+    max(CHANNEL_SEND_TIMEOUT_SECONDS.values()) + DELIVERY_LEASE_MARGIN_SECONDS
+)
 
 _ENQUEUE_ACTIVE_SQL = """
 INSERT INTO ews_notification_log (
@@ -179,6 +184,29 @@ FROM claimed c
 JOIN ews_subscribers s ON s.id = c.subscriber_id
 LEFT JOIN official_alerts oa ON oa.id = c.official_alert_id
 LEFT JOIN alerts a ON a.id = c.alert_id
+"""
+
+_PREPARE_SEND_SQL = """
+UPDATE ews_notification_log
+SET next_attempt_at = now() + ($3 * interval '1 second')
+WHERE id = $1
+  AND attempt_count = $2
+  AND status IN ('pending', 'failed')
+  AND next_attempt_at > now()
+  AND (
+    delivery_kind <> 'official_lifecycle'
+    OR EXISTS (
+      SELECT 1
+      FROM official_alerts current_alert
+      JOIN official_source_settings source_setting
+        ON source_setting.source_name = current_alert.source
+      WHERE current_alert.id = ews_notification_log.official_alert_id
+        AND current_alert.is_current = TRUE
+        AND source_setting.enabled = TRUE
+        AND source_setting.run_mode = 'active'
+    )
+  )
+RETURNING id
 """
 
 _MARK_SENT_SQL = """
@@ -393,20 +421,22 @@ async def process_due_deliveries(
     batch_size: int = 100,
     now: datetime | None = None,
 ) -> dict[str, int]:
-    current = now or datetime.now(timezone.utc)
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(_SKIP_DISABLED_SQL)
-            await conn.execute(_SKIP_STALE_SQL)
-            rows = await conn.fetch(
-                _CLAIM_DUE_SQL,
-                MAX_DELIVERY_ATTEMPTS,
-                batch_size,
-                DELIVERY_LEASE_SECONDS,
-            )
-
     result = {"sent": 0, "failed": 0, "dead_letter": 0}
-    for raw in rows:
+    for _ in range(batch_size):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(_SKIP_DISABLED_SQL)
+                await conn.execute(_SKIP_STALE_SQL)
+                rows = await conn.fetch(
+                    _CLAIM_DUE_SQL,
+                    MAX_DELIVERY_ATTEMPTS,
+                    1,
+                    DELIVERY_LEASE_SECONDS,
+                )
+        if not rows:
+            break
+
+        raw = rows[0]
         row = dict(raw)
         adapter = CHANNELS.get(row["channel"])
         recipient = _recipient(row)
@@ -417,27 +447,51 @@ async def process_due_deliveries(
         elif recipient is None:
             error = "recipient_unavailable"
         else:
+            send_timeout = CHANNEL_SEND_TIMEOUT_SECONDS.get(
+                row["channel"],
+                max(CHANNEL_SEND_TIMEOUT_SECONDS.values()),
+            )
+            lease_seconds = send_timeout + DELIVERY_LEASE_MARGIN_SECONDS
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(_SKIP_DISABLED_SQL)
+                    await conn.execute(_SKIP_STALE_SQL)
+                    prepared_id = await conn.fetchval(
+                        _PREPARE_SEND_SQL,
+                        row["id"],
+                        row["attempt_count"],
+                        lease_seconds,
+                    )
+            if prepared_id is None:
+                continue
             subject = (
                 f"[SadarBencana][{row.get('severity') or 'ALERT'}] "
                 f"{row.get('alert_type') or 'alert'}"
                 if row.get("delivery_kind") == "alert"
                 else f"[SadarBencana] {row['lifecycle_action']}"
             )
-            send_result = await adapter.send(
-                recipient,
-                lifecycle_message(row),
-                subject=subject,
-                notification_kind=row.get("delivery_kind"),
-                severity=row.get("severity"),
-                alert_type=row.get("alert_type"),
-                headline=row.get("headline"),
-                description=row.get("description"),
-                source=row.get("source"),
-                occurred_at=row.get("source_sent_at"),
-                lifecycle_action=row.get("lifecycle_action"),
-            )
-            error = send_result.get("error")
+            try:
+                send_result = await asyncio.wait_for(
+                    adapter.send(
+                        recipient,
+                        lifecycle_message(row),
+                        subject=subject,
+                        notification_kind=row.get("delivery_kind"),
+                        severity=row.get("severity"),
+                        alert_type=row.get("alert_type"),
+                        headline=row.get("headline"),
+                        description=row.get("description"),
+                        source=row.get("source"),
+                        occurred_at=row.get("source_sent_at"),
+                        lifecycle_action=row.get("lifecycle_action"),
+                    ),
+                    timeout=send_timeout,
+                )
+                error = send_result.get("error")
+            except TimeoutError:
+                error = "delivery_timeout"
 
+        current = now or datetime.now(timezone.utc)
         async with pool.acquire() as conn:
             # Recheck containment/currentness after network I/O. A disable,
             # rollback, update, or cancellation may have committed meanwhile.

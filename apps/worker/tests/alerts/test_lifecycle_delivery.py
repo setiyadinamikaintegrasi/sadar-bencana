@@ -193,6 +193,18 @@ def test_claim_uses_lease_and_active_source_barrier():
     assert "source_setting.run_mode = 'active'" in sql
 
 
+def test_pre_send_cas_revalidates_lease_revision_and_source():
+    sql = " ".join(lifecycle_delivery._PREPARE_SEND_SQL.split())
+
+    assert "attempt_count = $2" in sql
+    assert "status IN ('pending', 'failed')" in sql
+    assert "next_attempt_at > now()" in sql
+    assert "current_alert.is_current = TRUE" in sql
+    assert "source_setting.enabled = TRUE" in sql
+    assert "source_setting.run_mode = 'active'" in sql
+    assert "RETURNING id" in sql
+
+
 def test_delivery_callbacks_compare_and_set_the_claim_attempt():
     sent_sql = " ".join(lifecycle_delivery._MARK_SENT_SQL.split())
     failed_sql = " ".join(lifecycle_delivery._MARK_FAILED_SQL.split())

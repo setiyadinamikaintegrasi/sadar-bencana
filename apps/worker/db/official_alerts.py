@@ -45,16 +45,11 @@ FROM official_alerts
 WHERE source = $1 AND source_alert_id = $2
 """
 
-_FIND_CAP_MESSAGE_SQL = """
-SELECT source_alert_id, raw_payload
+_LOCK_CAP_ROWS_SQL = f"""
+SELECT {_RETURNING_COLUMNS}
 FROM official_alerts
 WHERE source = $1
-  AND (
-    raw_payload->>'message_identifier' = $2
-    OR source_alert_id = $2
-  )
-ORDER BY is_current DESC, sent_at DESC, revision DESC
-LIMIT 1
+FOR UPDATE
 """
 
 _INSERT_SQL = f"""
@@ -136,42 +131,288 @@ def _referenced_message_identifiers(payload: dict[str, Any]) -> list[str]:
     ]
 
 
-async def _resolve_cap_lifecycle_id(
+def _payload_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        decoded = json.loads(value)
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _cap_message_identifier(row: dict[str, Any]) -> str:
+    payload = _payload_dict(row.get("raw_payload"))
+    return str(
+        payload.get("message_identifier")
+        or payload.get("identifier")
+        or payload.get("source_alert_id")
+        or row["source_alert_id"]
+    ).strip()
+
+
+def _reference_sent_times(payload: dict[str, Any]) -> dict[str, datetime]:
+    result: dict[str, datetime] = {}
+    references = payload.get("references")
+    if not isinstance(references, list):
+        return result
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+        identifier = str(reference.get("identifier") or "").strip()
+        raw_sent = str(reference.get("sent") or "").strip()
+        if not identifier or not raw_sent:
+            continue
+        try:
+            sent = datetime.fromisoformat(raw_sent.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if sent.tzinfo is None:
+            continue
+        sent = sent.astimezone(timezone.utc)
+        current = result.get(identifier)
+        if current is None or sent < current:
+            result[identifier] = sent
+    return result
+
+
+def _cap_component(
+    rows: list[dict[str, Any]],
+    alert: OfficialAlertInput,
+) -> tuple[set[str], str]:
+    """Return the connected CAP component and its deterministic root."""
+    adjacency: dict[str, set[str]] = {}
+    predecessors: dict[str, set[str]] = {}
+    sent_times: dict[str, datetime] = {}
+
+    def add_node(identifier: str, sent_at: datetime | None = None) -> None:
+        adjacency.setdefault(identifier, set())
+        predecessors.setdefault(identifier, set())
+        if sent_at is not None:
+            normalized = sent_at.astimezone(timezone.utc)
+            current = sent_times.get(identifier)
+            if current is None or normalized < current:
+                sent_times[identifier] = normalized
+
+    def add_message(
+        identifier: str,
+        payload: dict[str, Any],
+        sent_at: datetime,
+        persisted_lifecycle: str | None = None,
+    ) -> None:
+        add_node(identifier, sent_at)
+        if (
+            persisted_lifecycle
+            and persisted_lifecycle != identifier
+            and not persisted_lifecycle.startswith("__cap_")
+        ):
+            add_node(persisted_lifecycle, sent_at)
+            adjacency[identifier].add(persisted_lifecycle)
+            adjacency[persisted_lifecycle].add(identifier)
+        reference_times = _reference_sent_times(payload)
+        for referenced in _referenced_message_identifiers(payload):
+            add_node(referenced, reference_times.get(referenced))
+            predecessors[identifier].add(referenced)
+            adjacency[identifier].add(referenced)
+            adjacency[referenced].add(identifier)
+
+    for row in rows:
+        identifier = _cap_message_identifier(row)
+        add_message(
+            identifier,
+            _payload_dict(row.get("raw_payload")),
+            row["sent_at"],
+            str(row["source_alert_id"]),
+        )
+
+    incoming_payload = _payload_dict(alert.raw_payload)
+    incoming_identifier = str(
+        incoming_payload.get("message_identifier")
+        or incoming_payload.get("identifier")
+        or incoming_payload.get("source_alert_id")
+        or alert.source_alert_id
+    ).strip()
+    add_message(incoming_identifier, incoming_payload, alert.sent_at)
+
+    component: set[str] = set()
+    pending = [incoming_identifier]
+    while pending:
+        identifier = pending.pop()
+        if identifier in component:
+            continue
+        component.add(identifier)
+        pending.extend(adjacency.get(identifier, ()))
+
+    roots = [
+        identifier
+        for identifier in component
+        if not (predecessors.get(identifier, set()) & component)
+    ]
+    candidates = roots or list(component)
+    missing_time = datetime.max.replace(tzinfo=timezone.utc)
+    canonical = min(
+        candidates,
+        key=lambda identifier: (sent_times.get(identifier, missing_time), identifier),
+    )
+    return component, canonical
+
+
+def _reconciled_status(
+    row: dict[str, Any],
+    *,
+    is_current: bool,
+    now: datetime,
+) -> str:
+    if row["message_type"] == "cancel":
+        return "cancelled"
+    expires_at = row.get("expires_at")
+    if expires_at is not None and expires_at <= now:
+        return "expired"
+    return "active" if is_current else "updated"
+
+
+async def _reconcile_cap_lifecycle(
     conn: asyncpg.Connection,
     alert: OfficialAlertInput,
-) -> str:
-    """Resolve immediate CAP references to the persisted canonical lifecycle.
+    rows: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    component, canonical = _cap_component(rows, alert)
+    component_rows = [row for row in rows if _cap_message_identifier(row) in component]
+    component_rows.sort(
+        key=lambda row: (
+            row["sent_at"],
+            _cap_message_identifier(row),
+            str(row["id"]),
+        )
+    )
 
-    New rows store the canonical lifecycle in ``source_alert_id`` while retaining
-    the CAP message identifier in raw payload. Following legacy rows recursively
-    keeps chains coherent across deployments of this resolver.
-    """
-    if alert.source != "bmkg_cap" or alert.message_type == "alert":
-        return alert.source_alert_id
-    pending = _referenced_message_identifiers(alert.raw_payload)
-    if not pending:
-        return alert.source_alert_id
-    fallback = pending[0]
-    visited: set[str] = {alert.source_alert_id}
-    while pending:
-        identifier = pending.pop(0)
-        if identifier in visited:
-            continue
-        visited.add(identifier)
-        row = await conn.fetchrow(_FIND_CAP_MESSAGE_SQL, alert.source, identifier)
-        if row is None:
-            return identifier
-        canonical = str(row["source_alert_id"])
-        if canonical != identifier:
-            return canonical
-        raw_payload = row["raw_payload"]
-        if isinstance(raw_payload, str):
-            raw_payload = json.loads(raw_payload)
-        parent_identifiers = _referenced_message_identifiers(raw_payload or {})
-        if not parent_identifiers:
-            return canonical
-        pending = [*parent_identifiers, *pending]
-    return fallback
+    for row in component_rows:
+        await conn.execute(
+            """
+            UPDATE official_alerts
+            SET source_alert_id = $2, revision = 1, previous_alert_id = NULL,
+                is_current = FALSE
+            WHERE id = $1
+            """,
+            row["id"],
+            f"__cap_reconcile__:{row['id']}",
+        )
+
+    previous_id = None
+    final_rows: list[dict[str, Any]] = []
+    for revision, row in enumerate(component_rows, start=1):
+        is_current = revision == len(component_rows)
+        status = _reconciled_status(row, is_current=is_current, now=now)
+        updated = await conn.fetchrow(
+            f"""
+            UPDATE official_alerts
+            SET source_alert_id = $2, revision = $3, previous_alert_id = $4,
+                is_current = $5, status = $6
+            WHERE id = $1
+            RETURNING {_RETURNING_COLUMNS}
+            """,
+            row["id"],
+            canonical,
+            revision,
+            previous_id,
+            is_current,
+            status,
+        )
+        if updated is not None:
+            final_rows.append(dict(updated))
+        previous_id = row["id"]
+
+    queue_supports_lifecycle = await conn.fetchval(
+        """
+        SELECT count(*) = 2
+        FROM pg_attribute
+        WHERE attrelid = to_regclass('ews_notification_log')
+          AND attname IN ('source_alert_id', 'alert_revision')
+          AND NOT attisdropped
+        """
+    )
+    if queue_supports_lifecycle:
+        for row in final_rows:
+            await conn.execute(
+                """
+                UPDATE ews_notification_log
+                SET source_alert_id = $2, alert_revision = $3
+                WHERE official_alert_id = $1
+                """,
+                row["id"],
+                canonical,
+                row["revision"],
+            )
+    return final_rows
+
+
+async def _upsert_cap_alert(
+    conn: asyncpg.Connection,
+    alert: OfficialAlertInput,
+    *,
+    checksum: str,
+    now: datetime,
+) -> tuple[dict[str, Any], bool]:
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        f"{alert.source}:lifecycle-graph",
+    )
+    rows = [dict(row) for row in await conn.fetch(_LOCK_CAP_ROWS_SQL, alert.source)]
+    message_identifier = str(
+        alert.raw_payload.get("message_identifier")
+        or alert.raw_payload.get("identifier")
+        or alert.raw_payload.get("source_alert_id")
+        or alert.source_alert_id
+    ).strip()
+    duplicate = next(
+        (
+            row
+            for row in rows
+            if _cap_message_identifier(row) == message_identifier
+            and row["payload_checksum"] == checksum
+        ),
+        None,
+    )
+
+    created = duplicate is None
+    incoming_id = duplicate["id"] if duplicate is not None else None
+    if duplicate is None:
+        status = _current_status(alert, now)
+        inserted = await conn.fetchrow(
+            _INSERT_SQL,
+            alert.source,
+            f"__cap_pending__:{checksum}",
+            1,
+            alert.message_type,
+            status,
+            alert.sent_at,
+            alert.effective_at,
+            alert.expires_at,
+            alert.headline,
+            alert.description,
+            _json_value(alert.area_geojson),
+            _json_value(alert.raw_payload),
+            checksum,
+            None,
+            False,
+            alert.peril_type,
+            alert.severity,
+            alert.category,
+            alert.area_name,
+            alert.latitude,
+            alert.longitude,
+            alert.source_url,
+        )
+        if inserted is None:
+            return {}, False
+        duplicate = dict(inserted)
+        incoming_id = duplicate["id"]
+        rows.append(duplicate)
+
+    reconciled = await _reconcile_cap_lifecycle(conn, alert, rows, now=now)
+    incoming = next((row for row in reconciled if row["id"] == incoming_id), None)
+    return (incoming or duplicate or {}), created
 
 
 async def upsert_official_alert(
@@ -190,12 +431,15 @@ async def upsert_official_alert(
     checksum = payload_checksum(alert.raw_payload)
 
     async def execute(conn: asyncpg.Connection) -> tuple[dict[str, Any], bool]:
-        canonical_source_alert_id = await _resolve_cap_lifecycle_id(conn, alert)
-        persisted_alert = (
-            alert
-            if canonical_source_alert_id == alert.source_alert_id
-            else alert.model_copy(update={"source_alert_id": canonical_source_alert_id})
-        )
+        if alert.source == "bmkg_cap":
+            return await _upsert_cap_alert(
+                conn,
+                alert,
+                checksum=checksum,
+                now=current_time,
+            )
+
+        persisted_alert = alert
         await conn.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
             f"{persisted_alert.source}:{persisted_alert.source_alert_id}",

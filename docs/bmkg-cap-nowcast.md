@@ -22,13 +22,14 @@ dengan jumlah alert dan detail error. Mode ini tidak menulis source record,
 evidence observation, official alert, atau antrean delivery. `run_mode=active`
 tetap menjalankan persistence dan delivery normal.
 
-Fallback environment `CONNECTOR_BMKG_CAP_ENABLED=true` dipakai ketika resolver
-pengaturan mengembalikan tidak ada config, termasuk row `bmkg_cap` hilang,
-query pengaturan gagal, atau dekripsi credential gagal. Fallback tersebut
-bersifat fail-open dan selalu diperlakukan sebagai `active`, bukan `dry_run`.
-Karena itu fallback harus dikonfigurasi dengan sengaja, dimonitor, dan sebaiknya
-tidak diaktifkan ketika database settings menjadi control plane. Row yang ada
-dengan `run_mode=disabled` tidak memakai fallback.
+Fallback environment `CONNECTOR_BMKG_CAP_ENABLED=true` hanya dipakai untuk
+deployment legacy yang belum memiliki tabel control-plane
+`official_source_settings`. Setelah tabel tersebut tersedia, row `bmkg_cap`
+yang hilang, kegagalan query, atau kegagalan dekripsi credential selalu gagal
+tertutup: worker tidak melakukan request maupun persistence. Row disabled juga
+tidak pernah memakai fallback. Perbaiki control-plane dan audit konfigurasi
+sebelum polling diaktifkan kembali; jangan mengandalkan flag environment untuk
+melewati kegagalan settings.
 
 ## Urutan aktivasi terkontrol
 

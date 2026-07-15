@@ -6,11 +6,15 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 import asyncpg
 
 logger = logging.getLogger(__name__)
+
+
+class MissingSourceSettingError(RuntimeError):
+    """The control plane exists but has no row for a required source."""
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,47 @@ _WORKER_SHADOW_COUNT_SQL = {
         "SELECT count(*) FROM disaster_observability_events WHERE source_name = $1"
     ),
 }
+
+_PERSISTED_SOURCE_NAMES = {
+    ("bmkg_air_quality", "air_quality_observations"): "bmkg",
+}
+
+_RESERVE_POLL_SQL = """
+INSERT INTO connector_health (
+    name, last_polled_at, items_fetched, error_message, updated_at
+)
+SELECT $1, $3, 0, NULL, now()
+FROM official_source_settings source_setting
+WHERE source_setting.source_name = $1
+  AND source_setting.enabled = TRUE
+  AND source_setting.run_mode IN ('active', 'dry_run')
+  AND source_setting.config_version = $2
+ON CONFLICT (name) DO UPDATE SET
+    last_polled_at = EXCLUDED.last_polled_at,
+    items_fetched = 0,
+    error_message = NULL,
+    updated_at = now()
+WHERE connector_health.last_polled_at IS NULL
+   OR connector_health.last_polled_at
+      <= EXCLUDED.last_polled_at - ($4 * interval '1 second')
+RETURNING TRUE
+"""
+
+_RESERVE_LEGACY_POLL_SQL = """
+INSERT INTO connector_health (
+    name, last_polled_at, items_fetched, error_message, updated_at
+)
+VALUES ($1, $2, 0, NULL, now())
+ON CONFLICT (name) DO UPDATE SET
+    last_polled_at = EXCLUDED.last_polled_at,
+    items_fetched = 0,
+    error_message = NULL,
+    updated_at = now()
+WHERE connector_health.last_polled_at IS NULL
+   OR connector_health.last_polled_at
+      <= EXCLUDED.last_polled_at - ($3 * interval '1 second')
+RETURNING TRUE
+"""
 
 
 async def resolve_source_setting(
@@ -93,7 +138,9 @@ async def resolve_source_setting(
         # configuration. All other read/decryption failures remain fail-closed.
         return None
     if row is None:
-        return None
+        raise MissingSourceSettingError(
+            f"official source setting row is missing: {source_name}"
+        )
     mode = row["mode"]
     environment_url = os.getenv(_ENV_URLS.get(source_name, ""), "").strip() or None
     if mode == "custom_api":
@@ -147,6 +194,35 @@ async def source_write_is_allowed(
         and str(row["run_mode"]) == "active"
         and int(row["config_version"]) == config_version
     )
+
+
+async def reserve_source_poll_slot(
+    pool: asyncpg.Pool,
+    source_name: str,
+    *,
+    config_version: int | None,
+    poll_interval_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    """Atomically reserve one source poll across all worker replicas."""
+    reserved_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    async with pool.acquire() as connection:
+        if config_version is None:
+            reserved = await connection.fetchval(
+                _RESERVE_LEGACY_POLL_SQL,
+                source_name,
+                reserved_at,
+                poll_interval_seconds,
+            )
+        else:
+            reserved = await connection.fetchval(
+                _RESERVE_POLL_SQL,
+                source_name,
+                config_version,
+                reserved_at,
+                poll_interval_seconds,
+            )
+    return bool(reserved)
 
 
 async def record_worker_shadow_evidence(
@@ -207,10 +283,16 @@ async def capture_worker_shadow_persistence_counts(
 ) -> dict[str, int]:
     """Measure source-scoped persistence tables used by the activation gate."""
     async with pool.acquire() as connection:
-        return {
-            table: int(await connection.fetchval(sql, source_name))
-            for table, sql in _WORKER_SHADOW_COUNT_SQL.items()
-        }
+        counts: dict[str, int] = {}
+        for table, sql in _WORKER_SHADOW_COUNT_SQL.items():
+            persisted_source = _PERSISTED_SOURCE_NAMES.get(
+                (source_name, table),
+                source_name,
+            )
+            counts[table] = int(
+                await connection.fetchval(sql, persisted_source)
+            )
+        return counts
 
 
 def worker_shadow_persistence_deltas(
@@ -224,9 +306,11 @@ def worker_shadow_persistence_deltas(
 
 
 __all__ = [
+    "MissingSourceSettingError",
     "ResolvedSourceSetting",
     "capture_worker_shadow_persistence_counts",
     "record_worker_shadow_evidence",
+    "reserve_source_poll_slot",
     "resolve_source_setting",
     "source_write_is_allowed",
     "worker_shadow_persistence_deltas",

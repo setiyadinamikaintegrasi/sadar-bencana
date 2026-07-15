@@ -381,6 +381,20 @@ class BlockingAdapter:
         return {"success": True, "provider_id": f"provider-{self.calls}"}
 
 
+class FirstSendBlockingAdapter:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.messages: list[str] = []
+
+    async def send(self, _recipient, message, **_kwargs):
+        self.messages.append(message)
+        if len(self.messages) == 1:
+            self.started.set()
+            await self.release.wait()
+        return {"success": True, "provider_id": f"provider-{len(self.messages)}"}
+
+
 def cap_lifecycle_input(
     identifier: str,
     *,
@@ -677,6 +691,105 @@ async def test_parallel_workers_claim_and_send_a_delivery_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_second_row_superseded_while_first_sends_is_never_sent(monkeypatch):
+    adapter = FirstSendBlockingAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            await insert_recipient(conn)
+            initial = await insert_alert(
+                conn,
+                source_alert_id="second-row-superseded",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, initial) == 2
+
+        sending = asyncio.create_task(process_due_deliveries(pool, batch_size=2))
+        await asyncio.wait_for(adapter.started.wait(), timeout=2)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE official_alerts SET is_current=FALSE WHERE id=$1",
+                initial["id"],
+            )
+            changed = await insert_alert(
+                conn,
+                source_alert_id="second-row-superseded",
+                revision=2,
+                message_type="update",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, changed) == 2
+        adapter.release.set()
+        await asyncio.wait_for(sending, timeout=3)
+
+        assert sum(message.startswith("[PERINGATAN]") for message in adapter.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_second_row_disabled_while_first_sends_is_never_sent(monkeypatch):
+    adapter = FirstSendBlockingAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            await insert_recipient(conn)
+            alert = await insert_alert(
+                conn,
+                source_alert_id="second-row-disabled",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, alert) == 2
+
+        sending = asyncio.create_task(process_due_deliveries(pool, batch_size=2))
+        await asyncio.wait_for(adapter.started.wait(), timeout=2)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE official_source_settings "
+                "SET enabled=FALSE, run_mode='disabled' "
+                "WHERE source_name='bmkg_cap'"
+            )
+        adapter.release.set()
+        await asyncio.wait_for(sending, timeout=3)
+
+        assert len(adapter.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_delivery_lease_is_renewed_for_channel_timeout(monkeypatch):
+    adapter = BlockingAdapter()
+    monkeypatch.setitem(lifecycle_delivery.CHANNELS, "email", adapter)
+    monkeypatch.setattr(lifecycle_delivery, "record_observation", AsyncMock())
+    async with isolated_lifecycle_database() as pool:
+        async with pool.acquire() as conn:
+            await insert_recipient(conn)
+            alert = await insert_alert(
+                conn,
+                source_alert_id="lease-renewal",
+                area_geojson=JAKARTA_POLYGON,
+            )
+        assert await enqueue_official_alert_revision(pool, alert) == 1
+
+        sending = asyncio.create_task(process_due_deliveries(pool))
+        await asyncio.wait_for(adapter.started.wait(), timeout=2)
+        async with pool.acquire() as conn:
+            remaining = await conn.fetchval(
+                "SELECT next_attempt_at - now() FROM ews_notification_log"
+            )
+        adapter.release.set()
+        await asyncio.wait_for(sending, timeout=2)
+
+        expected = (
+            lifecycle_delivery.CHANNEL_SEND_TIMEOUT_SECONDS["email"]
+            + lifecycle_delivery.DELIVERY_LEASE_MARGIN_SECONDS
+            - 2
+        )
+        assert remaining.total_seconds() >= expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("message_type", "status", "expected_action"),
     [("update", "active", "update"), ("cancel", "cancelled", "cancellation")],
@@ -725,13 +838,13 @@ async def test_inflight_delivery_cannot_overwrite_superseding_revision(
                 "FROM ews_notification_log ORDER BY alert_revision"
             )
 
-        assert result == {"sent": 0, "failed": 0, "dead_letter": 0}
+        assert result == {"sent": 1, "failed": 0, "dead_letter": 0}
         assert [dict(row) for row in rows] == [
             {"alert_revision": 1, "lifecycle_action": "alert", "status": "skipped"},
             {
                 "alert_revision": 2,
                 "lifecycle_action": expected_action,
-                "status": "pending",
+                "status": "sent",
             },
         ]
 

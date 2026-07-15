@@ -101,6 +101,7 @@ from db.pool import close_pool, get_pool, init_pool
 from db.source_settings import (
     capture_worker_shadow_persistence_counts,
     record_worker_shadow_evidence,
+    reserve_source_poll_slot,
     resolve_source_setting,
     source_write_is_allowed,
     worker_shadow_persistence_deltas,
@@ -392,23 +393,31 @@ async def _bmkg_cap_cycle(
     if setting is not None:
         if not setting.enabled or not setting.api_url:
             return 0
-        current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        last_polled_at = getattr(setting, "last_polled_at", None)
-        if (
-            last_polled_at is not None
-            and current_time - last_polled_at.astimezone(timezone.utc)
-            < timedelta(seconds=setting.poll_interval_seconds)
-        ):
-            return 0
         rss_url, api_token = setting.api_url, setting.api_token
         run_mode = setting.run_mode
         config_version = getattr(setting, "config_version", None)
+        poll_interval_seconds = setting.poll_interval_seconds
     else:
         if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
             return 0
         rss_url, api_token = "https://www.bmkg.go.id/alerts/nowcast/id", None
         run_mode = "active"
         config_version = None
+        poll_interval_seconds = 600
+
+    try:
+        reserved = await reserve_source_poll_slot(
+            pool,
+            "bmkg_cap",
+            config_version=config_version,
+            poll_interval_seconds=poll_interval_seconds,
+            now=now,
+        )
+    except Exception as exc:
+        logger.warning("BMKG CAP poll reservation failed closed: %s", exc)
+        return 0
+    if not reserved:
+        return 0
 
     shadow_before = None
     if run_mode == "dry_run" and config_version is not None:
@@ -555,16 +564,25 @@ async def _bmkg_air_quality_cycle(
     *,
     now: datetime | None = None,
 ) -> dict[str, int]:
-    setting = await resolve_source_setting(pool, "bmkg_air_quality")
+    try:
+        setting = await resolve_source_setting(pool, "bmkg_air_quality")
+    except Exception as exc:
+        logger.warning("BMKG air-quality settings resolution failed closed: %s", exc)
+        return {"warnings": 0, "observations": 0}
     if setting is None or not setting.enabled or not setting.api_url:
         return {"warnings": 0, "observations": 0}
-    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    last_polled_at = getattr(setting, "last_polled_at", None)
-    if (
-        last_polled_at is not None
-        and current_time - last_polled_at.astimezone(timezone.utc)
-        < timedelta(seconds=setting.poll_interval_seconds)
-    ):
+    try:
+        reserved = await reserve_source_poll_slot(
+            pool,
+            "bmkg_air_quality",
+            config_version=setting.config_version,
+            poll_interval_seconds=setting.poll_interval_seconds,
+            now=now,
+        )
+    except Exception as exc:
+        logger.warning("BMKG air-quality poll reservation failed closed: %s", exc)
+        return {"warnings": 0, "observations": 0}
+    if not reserved:
         return {"warnings": 0, "observations": 0}
 
     shadow_before = None
