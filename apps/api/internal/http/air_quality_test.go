@@ -27,6 +27,8 @@ func TestAirQualityLimit(t *testing.T) {
 		valid bool
 	}{
 		{"", 50, true},
+		{" ", 0, false},
+		{"\t", 0, false},
 		{"1", 1, true},
 		{"50", 50, true},
 		{"0", 0, false},
@@ -90,7 +92,7 @@ func TestAirQualityObservationsHistoryUsesHistoryQuery(t *testing.T) {
 	now := time.Date(2026, 7, 15, 4, 0, 0, 0, time.UTC)
 	mock.ExpectQuery("SELECT enabled AND run_mode = 'active'").
 		WillReturnRows(sqlmock.NewRows([]string{"source_active"}).AddRow(false))
-	mock.ExpectQuery("FROM air_quality_observations o").
+	mock.ExpectQuery(`(?s)\A\s*SELECT\s+o\.id\b.*ORDER BY\s+CASE\s+o\.category\b`).
 		WithArgs("", 2).
 		WillReturnRows(airQualityRows(now).AddRow(
 			"obs-2", "bmkg", "kmy3", "Kemayoran", -6.155, 106.84,
@@ -118,13 +120,17 @@ func TestAirQualityObservationsRejectsInvalidQueries(t *testing.T) {
 	for _, rawURL := range []string{
 		"/api/v1/air-quality/observations?source=other",
 		"/api/v1/air-quality/observations?source=BMKG",
+		"/api/v1/air-quality/observations?source=%20",
 		"/api/v1/air-quality/observations?latest=maybe",
 		"/api/v1/air-quality/observations?latest=1",
+		"/api/v1/air-quality/observations?latest=%20",
 		"/api/v1/air-quality/observations?limit=0",
 		"/api/v1/air-quality/observations?limit=51",
 		"/api/v1/air-quality/observations?limit=abc",
+		"/api/v1/air-quality/observations?limit=%20",
 		"/api/v1/air-quality/observations?source=bmkg&source=bmkg",
 		"/api/v1/air-quality/observations?unknown=value",
+		"/api/v1/air-quality/observations?limit=1;source=bmkg",
 	} {
 		db, mock, err := sqlmock.New()
 		if err != nil {
@@ -138,6 +144,54 @@ func TestAirQualityObservationsRejectsInvalidQueries(t *testing.T) {
 			t.Fatal(err)
 		}
 		db.Close()
+	}
+
+	t.Run("invalid percent escape", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+
+		body := requestAirQualityRawQuery(t, db, "limit=%ZZ")
+		if body.Status != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", body.Status, body.Raw)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestAirQualityObservationsSerializesNullableSafeFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, 7, 15, 4, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("SELECT enabled AND run_mode = 'active'").
+		WillReturnRows(sqlmock.NewRows([]string{"source_active"}).AddRow(true))
+	mock.ExpectQuery("WITH latest AS").
+		WithArgs("", 50).
+		WillReturnRows(airQualityRows(now).AddRow(
+			"obs-null", "bmkg", "station-null", "Station Null", nil, nil,
+			"pm25", 66.2, "ug/m3", "Tidak Sehat", now, nil, false, now,
+		))
+
+	body := requestAirQuality(t, db, "/api/v1/air-quality/observations")
+	if body.Status != http.StatusOK || len(body.Data) != 1 {
+		t.Fatalf("unexpected response: %#v", body)
+	}
+	for _, field := range []string{"latitude", "longitude", "source_url"} {
+		if body.Data[0][field] != nil {
+			t.Fatalf("%s=%#v, want JSON null", field, body.Data[0][field])
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -291,6 +345,14 @@ func TestAirQualityObservationsPostgreSQL(t *testing.T) {
 	if got, want := airQualityIDs(history.Data), []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000003", "00000000-0000-0000-0000-000000000002"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("history ids=%v, want %v", got, want)
 	}
+
+	if _, err := db.Exec(`DELETE FROM official_source_settings WHERE source_name='bmkg_air_quality'`); err != nil {
+		t.Fatalf("delete source setting: %v", err)
+	}
+	missingSetting := requestAirQuality(t, db, "/api/v1/air-quality/observations?latest=true")
+	if missingSetting.Status != http.StatusOK || missingSetting.Meta.SourceActive || !missingSetting.Meta.Latest || missingSetting.Meta.Count != 0 || len(missingSetting.Data) != 0 {
+		t.Fatalf("unexpected missing-setting response: %#v", missingSetting)
+	}
 }
 
 type airQualityResponse struct {
@@ -315,9 +377,21 @@ func airQualityRows(now time.Time) *sqlmock.Rows {
 
 func requestAirQuality(t *testing.T, db *sql.DB, rawURL string) airQualityResponse {
 	t.Helper()
+	return requestAirQualityRequest(t, db, httptest.NewRequest(http.MethodGet, rawURL, nil))
+}
+
+func requestAirQualityRawQuery(t *testing.T, db *sql.DB, rawQuery string) airQualityResponse {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/air-quality/observations", nil)
+	request.URL.RawQuery = rawQuery
+	return requestAirQualityRequest(t, db, request)
+}
+
+func requestAirQualityRequest(t *testing.T, db *sql.DB, request *http.Request) airQualityResponse {
+	t.Helper()
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, rawURL, nil)
+	ctx.Request = request
 	AirQualityObservations(db)(ctx)
 	response := airQualityResponse{Status: recorder.Code, Raw: recorder.Body.String()}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {

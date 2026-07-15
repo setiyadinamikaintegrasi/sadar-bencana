@@ -3,8 +3,8 @@ package http
 import (
 	"database/sql"
 	"net/http"
+	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -81,7 +81,7 @@ type AirQualityObservation struct {
 }
 
 func airQualityLimit(raw string) (int, bool) {
-	if strings.TrimSpace(raw) == "" {
+	if raw == "" {
 		return 50, true
 	}
 	limit, err := strconv.Atoi(raw)
@@ -108,7 +108,13 @@ func AirQualityObservations(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		params := c.Request.URL.Query()
+		params, err := url.ParseQuery(c.Request.URL.RawQuery)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "invalid_query", "message": "query parameters must be valid URL-encoded values",
+			})
+			return
+		}
 		for name, values := range params {
 			if (name != "source" && name != "latest" && name != "limit") || len(values) != 1 {
 				c.JSON(http.StatusBadRequest, gin.H{
@@ -118,7 +124,7 @@ func AirQualityObservations(db *sql.DB) gin.HandlerFunc {
 			}
 		}
 
-		source := c.Query("source")
+		source := params.Get("source")
 		if source != "" && source != "bmkg" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "invalid_source", "message": "source must be bmkg when supplied",
@@ -141,16 +147,20 @@ func AirQualityObservations(db *sql.DB) gin.HandlerFunc {
 			}
 		}
 
-		limit, valid := airQualityLimit(c.Query("limit"))
-		if !valid {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "invalid_limit", "message": "limit must be an integer between 1 and 50",
-			})
-			return
+		limit := 50
+		if values, supplied := params["limit"]; supplied {
+			var valid bool
+			limit, valid = airQualityLimit(values[0])
+			if !valid {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "invalid_limit", "message": "limit must be an integer between 1 and 50",
+				})
+				return
+			}
 		}
 
 		sourceActive := false
-		err := db.QueryRowContext(c.Request.Context(), airQualitySourceActiveQuery).Scan(&sourceActive)
+		err = db.QueryRowContext(c.Request.Context(), airQualitySourceActiveQuery).Scan(&sourceActive)
 		if err != nil && err != sql.ErrNoRows {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": "source_status_query_failed", "message": err.Error(),
