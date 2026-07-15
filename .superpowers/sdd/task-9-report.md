@@ -186,3 +186,176 @@ git diff --check
 (no output)
 exit_code=0
 ```
+
+## Review Findings Fix Pass
+
+### Scope and Root Causes
+
+- Replaced the observation source's initial `false` default with a tri-state
+  `boolean | null` model. Endpoint status now records whether a successful
+  response has ever been observed and whether retained data became uncertain
+  after a failed refresh.
+- Moved BMKG loading into a single-flight hook with a 60-second clock/reload.
+  Timer ticks update local expiry even while a request is already running;
+  overlapping reloads share the same promise, and unmounted consumers ignore
+  late completions.
+- Added local status/`expires_at` filtering in the hook and again at the panel
+  render boundary. Expired or cancelled alerts cannot remain in the list, map
+  inputs, or focus selection after the local clock advances.
+- Replaced selected-ID-only map focus with `{ id, nonce }` requests. Repeated
+  clicks refit/refly the map, stable Leaflet layer refs reopen popups, and
+  selected polygons and points use visibly stronger styling.
+- Completed the tabs as an accessible manual-activation tablist with
+  `useId`-derived IDs, persistent hidden tabpanels, roving `tabIndex`, and
+  ArrowLeft/ArrowRight/Home/End behavior.
+- Added the approved weather-active count, lifecycle text, remaining-time text,
+  malformed/missing-time fallbacks, and full wrapping BMKG attribution.
+
+### RED 5: Lifecycle and Loader State
+
+After adding tests for local expiry, remaining-time formatting, initial unknown
+source status, cached retry uncertainty, and overlapping timer loads:
+
+```text
+Test Files 2 failed (2)
+Tests 2 failed | 19 passed
+Error: Failed to resolve import "./useBmkgWarnings"
+TypeError: filterActiveOfficialAlerts is not a function
+TypeError: lifecycleStatusText is not a function
+exit_code=1
+```
+
+### GREEN 5: Lifecycle and Loader State
+
+After implementing the pure helpers and single-flight hook:
+
+```text
+Test Files 2 passed (2)
+Tests 24 passed (24)
+exit_code=0
+```
+
+The hook test cleanup was made explicit after an intermediate timeout revealed
+a live interval from the previous test. The cached-retry case then passed both
+alone and with the presentation suite.
+
+### RED 6: Panel Review Findings
+
+The panel contract tests failed on the six missing review behaviors while all
+previous assertions remained green:
+
+```text
+Test Files 1 failed (1)
+Tests 6 failed | 20 passed
+Missing: active count, unknown source state, cached uncertainty,
+local expiry filtering, two persistent tabpanels, wrapping attribution
+exit_code=1
+```
+
+### GREEN 6: Panel Review Findings
+
+After implementing endpoint-aware empty states, lifecycle presentation,
+accessible tabs, and wrapping attribution:
+
+```text
+Test Files 1 passed (1)
+Tests 26 passed (26)
+exit_code=0
+```
+
+### RED/GREEN 7: Repeatable Map Focus
+
+Controller tests first failed because the focus, popup, nonce, and selected
+style helpers did not exist:
+
+```text
+Test Files 1 failed (1)
+Tests 3 failed (3)
+TypeError: focusOverlay is not a function
+TypeError: nextOverlayFocusRequest is not a function
+exit_code=1
+```
+
+After routing Polygon, MultiPolygon, and point layers through the tested
+helpers, the suite passed. A follow-up expiry-gate test first failed with
+`isOverlayActiveAt is not a function`, then passed after the map's selected
+overlay lookup adopted the local expiry gate:
+
+```text
+Test Files 1 passed (1)
+Tests 4 passed (4)
+exit_code=0
+```
+
+### RED/GREEN 8: Cached Inactive Source Truthfulness
+
+Self-review added a regression for a previously confirmed inactive source
+whose next observation refresh fails. It first failed because the panel still
+rendered `Integrasi kualitas udara BMKG belum aktif` as a current fact. After
+separating confirmed from uncertain inactivity, the case passed with
+`Status terakhir: integrasi kualitas udara BMKG belum aktif; status terbaru
+belum diketahui`.
+
+### Browser QA
+
+- `1440x900`: document/body width `1440`; panel width `1376`, scroll width
+  `1374`; no horizontal overflow. Both tabpanels were present with reciprocal
+  `aria-controls`/`aria-labelledby` IDs. Attribution used `white-space: normal`.
+- `390x844`: document/body width `390`; panel width `358`, scroll width `356`;
+  tab controls were `157px` wide with matching scroll widths.
+- `320x700`: document/body width `320`; panel width `288`, scroll width `286`.
+  Full attribution wrapped to two visible lines (`32px` height), and both tab
+  labels fit their `122px x 32px` controls without internal overflow.
+- Live ArrowRight interaction moved DOM focus to Kualitas Udara, changed its
+  `aria-selected` to `true` and `tabIndex` to `0`, demoted Cuaca Ekstrem to
+  `tabIndex=-1`, and exposed the matching tabpanel.
+- Browser console error log was empty at the end of QA.
+
+### Fix-Pass Self-Review
+
+- Initial observation failure now shows an error plus unknown source status;
+  it never shows the inactive-source notice or a confirmed-empty observation
+  state. Only an explicit successful `source_active: false` response is shown
+  as confirmed inactive; a retained `false` after refresh failure is labeled
+  as last-known and uncertain.
+- A failed retry preserves prior rows and source status. Cached official rows
+  display `Status aktif belum terkonfirmasi`; cached observations display
+  `Data terbaru belum terkonfirmasi`. Empty states require successful,
+  non-uncertain endpoint status.
+- Status and expiry filtering is applied before counts, rows, overlays, focus
+  buttons, and map selection. The local minute clock removes elapsed cached
+  alerts even if the refresh fails or remains in flight.
+- Periodic and manual reloads are single-flight, preventing overlap and stale
+  completion ordering. State updates are also suppressed after unmount.
+- Repeated focus requests increment a nonce. Polygon/MultiPolygon bounds and
+  point fly-to behavior are covered; stable layer refs reopen popups, and both
+  point and polygon selections have distinct radius/weight/color/fill styling.
+- Tabs have unique IDs per component instance, both targets remain mounted,
+  only the active tab is tabbable, and all required navigation keys are tested.
+- The compact divided-row layout remains one panel with no nested cards. The
+  full BMKG attribution remains visible and wrapping at narrow widths.
+
+### Fix-Pass Final Verification
+
+```text
+npm run test --workspace apps/web
+Test Files 3 passed (3)
+Tests 34 passed (34)
+exit_code=0
+
+npm run build --workspace apps/web
+1905 modules transformed
+vite build completed successfully
+exit_code=0
+
+npm run verify
+Structure verification PASSED
+exit_code=0
+
+git diff --check
+(no output)
+exit_code=0
+```
+
+The build retained the existing non-fatal warning for a minified chunk over
+500 kB.

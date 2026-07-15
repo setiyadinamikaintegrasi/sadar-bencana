@@ -46,6 +46,12 @@ function timestamp(value: string): number {
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
+function optionalTimestamp(value: string | null): number | null {
+  if (!value) return null
+  const parsed = new Date(value).getTime()
+  return Number.isNaN(parsed) ? null : parsed
+}
+
 export function categoryRank(category: string): number {
   return airRank[category] ?? 0
 }
@@ -74,6 +80,44 @@ export function sortOfficialAlerts(items: OfficialAlert[]): OfficialAlert[] {
     return timestamp(right.effective_at ?? right.sent_at)
       - timestamp(left.effective_at ?? left.sent_at)
   })
+}
+
+export function filterActiveOfficialAlerts(
+  items: OfficialAlert[],
+  now = Date.now(),
+): OfficialAlert[] {
+  return items.filter((alert) => {
+    if (alert.status !== 'active') return false
+    const expiresAt = optionalTimestamp(alert.expires_at)
+    return expiresAt == null || expiresAt > now
+  })
+}
+
+export function formatTimeRemaining(value: string | null, now = Date.now()): string {
+  const expiresAt = optionalTimestamp(value)
+  if (expiresAt == null) return 'Waktu berakhir tidak tersedia'
+  const remainingMs = expiresAt - now
+  if (remainingMs <= 0) return 'Sudah berakhir'
+  const remainingMinutes = Math.floor(remainingMs / 60_000)
+  if (remainingMinutes < 1) return '< 1 menit tersisa'
+  const hours = Math.floor(remainingMinutes / 60)
+  const minutes = remainingMinutes % 60
+  if (hours === 0) return `${minutes} menit tersisa`
+  if (minutes === 0) return `${hours} jam tersisa`
+  return `${hours} jam ${minutes} menit tersisa`
+}
+
+export function lifecycleStatusText(
+  alert: OfficialAlert,
+  now = Date.now(),
+  uncertain = false,
+): string {
+  if (uncertain) return 'Status aktif belum terkonfirmasi'
+  const expiresAt = optionalTimestamp(alert.expires_at)
+  if (expiresAt != null && expiresAt - now <= 60 * 60 * 1000) {
+    return 'Aktif · segera berakhir'
+  }
+  return 'Aktif'
 }
 
 export function sortAirQualityObservations(

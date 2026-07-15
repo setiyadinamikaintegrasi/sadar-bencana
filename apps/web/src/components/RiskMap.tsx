@@ -140,6 +140,49 @@ export function overlayPolygons(overlay: MapOverlay): [number, number][][] {
   )
 }
 
+export type OverlayFocusRequest = { id: string; nonce: number }
+
+export function nextOverlayFocusRequest(
+  current: OverlayFocusRequest | null,
+  id: string,
+): OverlayFocusRequest {
+  return { id, nonce: (current?.nonce ?? 0) + 1 }
+}
+
+export function overlayPathOptions(overlay: MapOverlay, selected: boolean): L.PathOptions {
+  const official = overlay.layer_class === 'official'
+  return {
+    color: selected ? '#f8fafc' : official ? '#e879f9' : '#8b5cf6',
+    fillColor: official ? '#e879f9' : '#8b5cf6',
+    fillOpacity: selected ? 0.4 : official ? 0.24 : 0.1,
+    weight: selected ? 4 : 3,
+    dashArray: official ? undefined : '6 5',
+  }
+}
+
+type OverlayMapController = Pick<L.Map, 'fitBounds' | 'flyTo'>
+
+export function focusOverlay(map: OverlayMapController, overlay: MapOverlay): void {
+  const polygons = overlayPolygons(overlay)
+  if (polygons.length > 0) {
+    map.fitBounds(polygons.flat(), { padding: [32, 32], maxZoom: 9 })
+    return
+  }
+  if (overlay.latitude != null && overlay.longitude != null) {
+    map.flyTo([overlay.latitude, overlay.longitude], 9, { animate: true, duration: 0.8 })
+  }
+}
+
+export function openOverlayPopup(layer: { openPopup: () => unknown } | null): void {
+  layer?.openPopup()
+}
+
+export function isOverlayActiveAt(overlay: MapOverlay, now = Date.now()): boolean {
+  if (overlay.layer_class !== 'official' || !overlay.expires_at) return true
+  const expiresAt = new Date(overlay.expires_at).getTime()
+  return Number.isNaN(expiresAt) || expiresAt > now
+}
+
 function createEventIcon(event: Event, selected: boolean): L.DivIcon {
   const color = eventColor(event)
   const critical = event.magnitude >= 6 || ['wildfire', 'volcano', 'flood'].includes((event.event_type ?? '').toLowerCase())
@@ -229,22 +272,91 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
   return null
 }
 
-function OverlayFocusController({ overlay }: { overlay?: MapOverlay }) {
+function OverlayFocusController({
+  overlay,
+  focusNonce,
+}: {
+  overlay?: MapOverlay
+  focusNonce: number
+}) {
   const map = useMap()
 
   useEffect(() => {
     if (!overlay) return
-    const polygons = overlayPolygons(overlay)
-    if (polygons.length > 0) {
-      map.fitBounds(polygons.flat(), { padding: [32, 32], maxZoom: 9 })
-      return
-    }
-    if (overlay.latitude != null && overlay.longitude != null) {
-      map.flyTo([overlay.latitude, overlay.longitude], 9, { animate: true, duration: 0.8 })
-    }
-  }, [map, overlay])
+    focusOverlay(map, overlay)
+  }, [focusNonce, map, overlay])
 
   return null
+}
+
+function OverlayPolygonLayer({
+  overlay,
+  positions,
+  selected,
+  focusNonce,
+}: {
+  overlay: MapOverlay
+  positions: [number, number][]
+  selected: boolean
+  focusNonce: number
+}) {
+  const layerRef = useRef<L.Polygon | null>(null)
+
+  useEffect(() => {
+    if (selected) openOverlayPopup(layerRef.current)
+  }, [focusNonce, selected])
+
+  return (
+    <Polygon ref={layerRef} positions={positions} pathOptions={overlayPathOptions(overlay, selected)}>
+      <Popup>
+        <strong>{overlay.label}</strong>
+        <br />
+        <span>{overlay.layer_class === 'official' ? 'Warning resmi' : 'Kajian risiko statis'}</span>
+        <br />
+        <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+          {overlay.attribution ?? 'Sumber belum dicantumkan'}
+          {overlay.layer_class === 'static_risk'
+            ? ` · vintage ${overlay.data_vintage ?? 'tidak tersedia'}`
+            : ''}
+        </span>
+      </Popup>
+    </Polygon>
+  )
+}
+
+function OfficialPointLayer({
+  overlay,
+  selected,
+  focusNonce,
+}: {
+  overlay: MapOverlay
+  selected: boolean
+  focusNonce: number
+}) {
+  const layerRef = useRef<L.CircleMarker | null>(null)
+
+  useEffect(() => {
+    if (selected) openOverlayPopup(layerRef.current)
+  }, [focusNonce, selected])
+
+  return (
+    <CircleMarker
+      ref={layerRef}
+      center={[overlay.latitude!, overlay.longitude!]}
+      radius={selected ? 11 : 8}
+      pathOptions={overlayPathOptions(overlay, selected)}
+    >
+      <Popup>
+        <strong>{overlay.label}</strong>
+        <br />
+        <span>Warning resmi</span>
+        <br />
+        <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+          {overlay.attribution ?? 'Sumber belum dicantumkan'}
+        </span>
+      </Popup>
+    </CircleMarker>
+  )
 }
 
 interface RiskMapProps {
@@ -256,6 +368,7 @@ interface RiskMapProps {
   onEventClick: (event: Event) => void
   selectedEvent?: Event | null
   selectedOverlayId?: string | null
+  overlayFocusNonce?: number
   height?: number | string
 }
 
@@ -268,6 +381,7 @@ export default function RiskMap({
   onEventClick,
   selectedEvent,
   selectedOverlayId,
+  overlayFocusNonce = 0,
   height = 430,
 }: RiskMapProps) {
   const [timelineHoursAgo, setTimelineHoursAgo] = useState(0)
@@ -311,11 +425,15 @@ export default function RiskMap({
     [news, currentFilter],
   )
 
-  const selectedOverlay = overlays.find((overlay) => overlay.id === selectedOverlayId)
+  const currentTime = Date.now()
+  const selectedOverlay = overlays.find((overlay) => {
+    if (overlay.id !== selectedOverlayId) return false
+    return isOverlayActiveAt(overlay, currentTime)
+  })
   const focusEvent = selectedEvent ?? visibleEvents[0] ?? events[0]
   const timelineAt = Date.now() - timelineHoursAgo * 60 * 60 * 1000
   const visibleOverlays = overlays.filter((overlay) => {
-    if (overlay.id === selectedOverlayId) return true
+    if (overlay.id === selectedOverlay?.id) return true
     if (!visibleOverlayClasses.has(overlay.layer_class)) return false
     if (overlay.layer_class !== 'official') return true
     const effective = overlay.effective_at ? new Date(overlay.effective_at).getTime() : 0
@@ -436,33 +554,18 @@ export default function RiskMap({
             style={{ height: '100%', width: '100%', background: '#020617' }}
           >
             <MiniMapController events={visibleEvents.length > 0 ? visibleEvents : events} selectedEvent={selectedEvent} />
-            <OverlayFocusController overlay={selectedOverlay} />
+            <OverlayFocusController overlay={selectedOverlay} focusNonce={overlayFocusNonce} />
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
 
             {visibleOverlays.flatMap((overlay) =>
               overlayPolygons(overlay).map((positions, index) => (
-                <Polygon
+                <OverlayPolygonLayer
                   key={`${overlay.id}-${index}`}
+                  overlay={overlay}
                   positions={positions}
-                  pathOptions={{
-                    color: overlay.layer_class === 'official' ? '#e879f9' : '#8b5cf6',
-                    fillOpacity: overlay.layer_class === 'official' ? 0.24 : 0.1,
-                    dashArray: overlay.layer_class === 'official' ? undefined : '6 5',
-                  }}
-                >
-                  <Popup>
-                    <strong>{overlay.label}</strong>
-                    <br />
-                    <span>{overlay.layer_class === 'official' ? 'Warning resmi' : 'Kajian risiko statis'}</span>
-                    <br />
-                    <span style={{ color: '#94a3b8', fontSize: '11px' }}>
-                      {overlay.attribution ?? 'Sumber belum dicantumkan'}
-                      {overlay.layer_class === 'static_risk'
-                        ? ` · vintage ${overlay.data_vintage ?? 'tidak tersedia'}`
-                        : ''}
-                    </span>
-                  </Popup>
-                </Polygon>
+                  selected={overlay.id === selectedOverlay?.id}
+                  focusNonce={overlayFocusNonce}
+                />
               )),
             )}
 
@@ -474,22 +577,12 @@ export default function RiskMap({
                 && !overlay.geometry,
               )
               .map((overlay) => (
-                <CircleMarker
+                <OfficialPointLayer
                   key={overlay.id}
-                  center={[overlay.latitude!, overlay.longitude!]}
-                  radius={8}
-                  pathOptions={{ color: '#e879f9', fillColor: '#e879f9', fillOpacity: 0.35 }}
-                >
-                  <Popup>
-                    <strong>{overlay.label}</strong>
-                    <br />
-                    <span>Warning resmi</span>
-                    <br />
-                    <span style={{ color: '#94a3b8', fontSize: '11px' }}>
-                      {overlay.attribution ?? 'Sumber belum dicantumkan'}
-                    </span>
-                  </Popup>
-                </CircleMarker>
+                  overlay={overlay}
+                  selected={overlay.id === selectedOverlay?.id}
+                  focusNonce={overlayFocusNonce}
+                />
               ))}
 
             {visibleOverlays

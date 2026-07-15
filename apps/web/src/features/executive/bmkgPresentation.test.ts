@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type {
   AirQualityObservation,
   AirQualityObservationsResponse,
@@ -9,9 +9,13 @@ import type {
 } from '../../lib/api/client'
 import { overlayPolygons } from '../../components/RiskMap'
 import BmkgWarningsPanel from './BmkgWarningsPanel'
+import type { BmkgEndpointStatuses } from './useBmkgWarnings'
 import {
   categoryRank,
+  filterActiveOfficialAlerts,
   formatIndonesiaTime,
+  formatTimeRemaining,
+  lifecycleStatusText,
   safeBmkgSourceUrl,
   sortAirQualityObservations,
   sortOfficialAlerts,
@@ -112,6 +116,32 @@ describe('BMKG presentation', () => {
     expect(formatIndonesiaTime('not-a-date')).toBe('Waktu tidak tersedia')
   })
 
+  it('filters cancelled, expired, and locally elapsed alerts', () => {
+    const now = new Date('2026-07-15T05:00:00Z').getTime()
+    const active = officialAlert({ id: 'active', expires_at: '2026-07-15T06:00:00Z' })
+    const noExpiry = officialAlert({ id: 'no-expiry' })
+    const elapsed = officialAlert({ id: 'elapsed', expires_at: '2026-07-15T04:59:59Z' })
+    const cancelled = officialAlert({ id: 'cancelled', status: 'cancelled' })
+    const updated = officialAlert({ id: 'updated', status: 'updated' })
+
+    expect(filterActiveOfficialAlerts(
+      [active, noExpiry, elapsed, cancelled, updated],
+      now,
+    ).map((alert) => alert.id)).toEqual(['active', 'no-expiry'])
+  })
+
+  it('formats lifecycle and remaining time safely', () => {
+    const now = new Date('2026-07-15T05:00:00Z').getTime()
+    expect(lifecycleStatusText(officialAlert({ expires_at: '2026-07-15T05:45:00Z' }), now, false))
+      .toBe('Aktif · segera berakhir')
+    expect(lifecycleStatusText(officialAlert({ expires_at: null }), now, true))
+      .toBe('Status aktif belum terkonfirmasi')
+    expect(formatTimeRemaining('2026-07-15T06:30:00Z', now)).toBe('1 jam 30 menit tersisa')
+    expect(formatTimeRemaining('2026-07-15T05:00:30Z', now)).toBe('< 1 menit tersisa')
+    expect(formatTimeRemaining(null, now)).toBe('Waktu berakhir tidak tersedia')
+    expect(formatTimeRemaining('not-a-time', now)).toBe('Waktu berakhir tidak tersedia')
+  })
+
   it.each([
     ['https://www.bmkg.go.id/cuaca/peringatan-dini-cuaca', true],
     ['https://iklim.bmkg.go.id/id/kualitas-udara/', true],
@@ -202,6 +232,12 @@ describe('BmkgWarningsPanel', () => {
       sourceActive: true,
       loading: false,
       errors: {} as Record<string, string>,
+      status: {
+        weather: { loaded: true, uncertain: false },
+        air_quality: { loaded: true, uncertain: false },
+        observations: { loaded: true, uncertain: false },
+      } satisfies BmkgEndpointStatuses,
+      now: new Date('2026-07-15T05:00:00Z').getTime(),
       onFocusAlert,
       onRetry,
       ...overrides,
@@ -224,6 +260,9 @@ describe('BmkgWarningsPanel', () => {
     expect(screen.getByRole('tab', { name: 'Cuaca Ekstrem' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tab', { name: 'Kualitas Udara' }).getAttribute('aria-selected')).toBe('false')
     expect(screen.getByLabelText('Tingkat keparahan High').textContent).toContain('High')
+    expect(screen.getByLabelText('1 peringatan cuaca aktif').textContent).toBe('1')
+    expect(screen.getByText('Aktif')).not.toBeNull()
+    expect(screen.getByText('Waktu berakhir tidak tersedia')).not.toBeNull()
 
     const source = screen.getByRole('link', { name: 'Sumber BMKG' })
     expect(source.getAttribute('target')).toBe('_blank')
@@ -284,6 +323,117 @@ describe('BmkgWarningsPanel', () => {
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
 
+  it('shows unknown source status after an initial observation failure without a confirmed empty state', () => {
+    renderPanel({
+      sourceActive: null,
+      errors: { observations: 'network unavailable' },
+      status: {
+        weather: { loaded: true, uncertain: false },
+        air_quality: { loaded: true, uncertain: false },
+        observations: { loaded: false, uncertain: false },
+      } satisfies BmkgEndpointStatuses,
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Kualitas Udara' }))
+    const panel = screen.getByRole('tabpanel')
+
+    expect(within(panel).getByText('Status integrasi kualitas udara BMKG belum diketahui')).not.toBeNull()
+    expect(within(panel).queryByText('Integrasi kualitas udara BMKG belum aktif')).toBeNull()
+    expect(within(panel).queryByText('Tidak ada peringatan aktif.')).toBeNull()
+  })
+
+  it('keeps cached retry rows visible and marks their lifecycle uncertain', () => {
+    renderPanel({
+      weatherAlerts: [officialAlert({ headline: 'Peringatan tersimpan' })],
+      errors: { weather: 'refresh failed' },
+      status: {
+        weather: { loaded: true, uncertain: true },
+        air_quality: { loaded: true, uncertain: false },
+        observations: { loaded: true, uncertain: false },
+      } satisfies BmkgEndpointStatuses,
+    })
+
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText('Peringatan tersimpan')).not.toBeNull()
+    expect(within(panel).getByText('Status aktif belum terkonfirmasi')).not.toBeNull()
+    expect(within(panel).queryByText('Tidak ada peringatan aktif.')).toBeNull()
+  })
+
+  it('does not present a cached inactive source status as current after refresh failure', () => {
+    renderPanel({
+      sourceActive: false,
+      errors: { observations: 'refresh failed' },
+      status: {
+        weather: { loaded: true, uncertain: false },
+        air_quality: { loaded: true, uncertain: false },
+        observations: { loaded: true, uncertain: true },
+      } satisfies BmkgEndpointStatuses,
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Kualitas Udara' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText(
+      'Status terakhir: integrasi kualitas udara BMKG belum aktif; status terbaru belum diketahui',
+    )).not.toBeNull()
+    expect(within(panel).queryByText('Integrasi kualitas udara BMKG belum aktif')).toBeNull()
+  })
+
+  it('defensively removes locally expired and cancelled rows', () => {
+    renderPanel({
+      weatherAlerts: [
+        officialAlert({ id: 'expired', headline: 'Sudah lewat', expires_at: '2026-07-15T04:00:00Z' }),
+        officialAlert({ id: 'cancelled', headline: 'Sudah dibatalkan', status: 'cancelled' }),
+      ],
+    })
+
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).queryByText('Sudah lewat')).toBeNull()
+    expect(within(panel).queryByText('Sudah dibatalkan')).toBeNull()
+    expect(within(panel).getByText('Tidak ada peringatan aktif.')).not.toBeNull()
+  })
+
+  it('uses unique persistent tab panels and roving keyboard focus', () => {
+    const first = renderPanel()
+    const firstTabs = Array.from(first.container.querySelectorAll<HTMLElement>('[role="tab"]'))
+    const firstPanels = Array.from(first.container.querySelectorAll<HTMLElement>('[role="tabpanel"]'))
+    expect(firstPanels).toHaveLength(2)
+    expect(firstPanels[0].hidden).toBe(false)
+    expect(firstPanels[1].hidden).toBe(true)
+    expect(firstTabs[0].tabIndex).toBe(0)
+    expect(firstTabs[1].tabIndex).toBe(-1)
+    expect(firstTabs[0].getAttribute('aria-controls')).toBe(firstPanels[0].id)
+    expect(firstPanels[0].getAttribute('aria-labelledby')).toBe(firstTabs[0].id)
+
+    fireEvent.keyDown(firstTabs[0], { key: 'ArrowRight' })
+    expect(firstTabs[1].getAttribute('aria-selected')).toBe('true')
+    expect(firstTabs[1].tabIndex).toBe(0)
+    expect(document.activeElement).toBe(firstTabs[1])
+
+    fireEvent.keyDown(firstTabs[1], { key: 'Home' })
+    expect(document.activeElement).toBe(firstTabs[0])
+    fireEvent.keyDown(firstTabs[0], { key: 'End' })
+    expect(document.activeElement).toBe(firstTabs[1])
+    fireEvent.keyDown(firstTabs[1], { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(firstTabs[0])
+    fireEvent.keyDown(firstTabs[0], { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(firstTabs[1])
+
+    const firstIds = new Set([...firstTabs, ...firstPanels].map((element) => element.id))
+    const second = renderPanel()
+    const secondIds = Array.from(second.container.querySelectorAll<HTMLElement>('[role="tab"], [role="tabpanel"]'))
+      .map((element) => element.id)
+    expect(secondIds.every((id) => !firstIds.has(id))).toBe(true)
+  })
+
+  it('keeps the full BMKG attribution wrapping at narrow widths', () => {
+    const { container } = renderPanel()
+    const attribution = screen.getByText('BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)')
+    expect(attribution.className).toContain('whitespace-normal')
+    expect(attribution.className).toContain('break-words')
+    expect(attribution.className).not.toContain('truncate')
+    expect(container.textContent).toContain('BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)')
+  })
+
   it('renders stable loading and empty states', () => {
     const loadingView = renderPanel({ loading: true })
     const status = screen.getByRole('status', { name: 'Memuat peringatan BMKG' })
@@ -292,6 +442,6 @@ describe('BmkgWarningsPanel', () => {
 
     loadingView.unmount()
     renderPanel()
-    expect(screen.getByText('Tidak ada peringatan aktif.')).not.toBeNull()
+    expect(within(screen.getByRole('tabpanel')).getByText('Tidak ada peringatan aktif.')).not.toBeNull()
   })
 })
