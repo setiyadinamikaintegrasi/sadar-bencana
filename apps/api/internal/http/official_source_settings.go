@@ -3,7 +3,6 @@ package http
 import (
 	"database/sql"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -205,13 +204,21 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_expected_interval"})
 			return
 		}
+		mappingJSON, _ := json.Marshal(body.FieldMapping)
+		tx, err := db.BeginTx(c.Request.Context(), nil)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_transaction_failed"})
+			return
+		}
+		defer tx.Rollback()
+
 		current := currentSourceIngestionConfig{FieldMapping: map[string]string{}}
 		var currentMapping []byte
 		var currentCustomURL sql.NullString
-		if err := db.QueryRowContext(c.Request.Context(), `
+		if err := tx.QueryRowContext(c.Request.Context(), `
 			SELECT run_mode, mode, adapter_version, field_mapping,
 			       custom_api_url, poll_interval_seconds, expected_interval_seconds
-			FROM official_source_settings WHERE source_name=$1`, source).Scan(
+			FROM official_source_settings WHERE source_name=$1 FOR UPDATE`, source).Scan(
 			&current.RunMode, &current.Mode, &current.AdapterVersion, &currentMapping,
 			&currentCustomURL, &current.PollIntervalSeconds, &current.ExpectedIntervalSeconds,
 		); err != nil {
@@ -237,13 +244,6 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 		) {
 			runMode = "dry_run"
 		}
-		mappingJSON, _ := json.Marshal(body.FieldMapping)
-		tx, err := db.BeginTx(c.Request.Context(), nil)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_transaction_failed"})
-			return
-		}
-		defer tx.Rollback()
 		var version int
 		err = tx.QueryRowContext(c.Request.Context(), `
 			WITH updated AS (
@@ -340,7 +340,7 @@ func OfficialSourceSettingTest(db *sql.DB, encryptionKey string) gin.HandlerFunc
 			return
 		}
 		defer response.Body.Close()
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		body, readErr := readOfficialSourceResponse(response.Body)
 		contractValid := response.StatusCode >= 200 && response.StatusCode < 300 && readErr == nil
 		if contractValid && source != "bmkg_cap" {
 			var payload any

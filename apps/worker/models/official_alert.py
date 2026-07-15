@@ -58,9 +58,27 @@ class OfficialAlertInput(BaseModel):
     def bmkg_source_url_must_use_bmkg_host(self) -> OfficialAlertInput:
         if self.source not in {"bmkg_cap", "bmkg_air_quality"} or self.source_url is None:
             return self
-        hostname = urlparse(self.source_url).hostname
-        if hostname != "bmkg.go.id" and not hostname.endswith(".bmkg.go.id"):
-            raise ValueError("BMKG source_url must use hostname bmkg.go.id or a subdomain")
+        parsed = urlparse(self.source_url)
+        try:
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError(
+                "BMKG source_url must use hostname bmkg.go.id or a subdomain"
+            ) from exc
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or port not in (None, 443)
+            or (
+                hostname != "bmkg.go.id"
+                and not hostname.endswith(".bmkg.go.id")
+            )
+        ):
+            raise ValueError(
+                "BMKG source_url must use hostname bmkg.go.id or a subdomain "
+                "without credentials on HTTPS port 443"
+            )
         return self
 
     @model_validator(mode="after")

@@ -74,12 +74,20 @@ def test_bmkg_root_https_source_url_is_accepted():
     assert observation(source_url=source_url).source_url == source_url
 
 
+def test_bmkg_explicit_https_port_source_url_is_accepted():
+    source_url = "https://bmkg.go.id:443/kualitas-udara/pm25/pm25_kmy3"
+
+    assert observation(source_url=source_url).source_url == source_url
+
+
 @pytest.mark.parametrize(
     "source_url",
     [
         "https://bmkg.go.id.example.com/kualitas-udara/pm25/pm25_kmy3",
         "https://notbmkg.go.id/kualitas-udara/pm25/pm25_kmy3",
         "https://bmkg.go.id@evil.example/kualitas-udara/pm25/pm25_kmy3",
+        "https://reader:secret@bmkg.go.id/kualitas-udara/pm25/pm25_kmy3",
+        "https://iklim.bmkg.go.id:8443/kualitas-udara/pm25/pm25_kmy3",
     ],
 )
 def test_look_alike_bmkg_hosts_are_rejected(source_url: str):

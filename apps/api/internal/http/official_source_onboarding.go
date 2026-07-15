@@ -34,7 +34,12 @@ var adapterContracts = map[string]map[string][]string{
 	"inarisk":          {"v1": {"layer_id", "context_type", "data_vintage", "attribution"}},
 }
 
-const maxCAPPreviewLinks = 50
+const (
+	maxCAPPreviewLinks             = 50
+	maxOfficialSourceResponseBytes = 1 << 20
+)
+
+var errOfficialSourceResponseTooLarge = errors.New("official source response exceeds 1 MiB limit")
 
 var (
 	lookupOfficialSourceIPs   = net.DefaultResolver.LookupIPAddr
@@ -233,6 +238,7 @@ func sensitivePreviewKey(key string) bool {
 	}, key)
 	for _, pattern := range []string{
 		"secretkey",
+		"accesskey",
 		"privatekey",
 		"basicauth",
 		"authorizationheader",
@@ -265,6 +271,24 @@ func sensitivePreviewKey(key string) bool {
 	return false
 }
 
+func sanitizePreviewString(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		if strings.Contains(value, "@") && (strings.Contains(value, "://") || strings.HasPrefix(value, "//")) {
+			return "[REDACTED]"
+		}
+		return value
+	}
+	if parsed.User == nil {
+		return value
+	}
+	if parsed.Hostname() == "" {
+		return "[REDACTED]"
+	}
+	parsed.User = nil
+	return parsed.String()
+}
+
 func sanitizePreview(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -287,9 +311,22 @@ func sanitizePreview(value any) any {
 			result = append(result, sanitizePreview(item))
 		}
 		return result
+	case string:
+		return sanitizePreviewString(typed)
 	default:
 		return value
 	}
+}
+
+func readOfficialSourceResponse(body io.Reader) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(body, maxOfficialSourceResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > maxOfficialSourceResponseBytes {
+		return nil, errOfficialSourceResponseTooLarge
+	}
+	return payload, nil
 }
 
 func likelyXMLResponse(contentType string, body []byte) bool {
@@ -544,7 +581,7 @@ func validISOWeekDate(value string) bool {
 	year, yearErr := strconv.Atoi(yearText)
 	week, weekErr := strconv.Atoi(weekText)
 	day, dayErr := strconv.Atoi(dayText)
-	if yearErr != nil || weekErr != nil || dayErr != nil || week < 1 || week > 53 || day < 1 || day > 7 {
+	if yearErr != nil || weekErr != nil || dayErr != nil || year < 1 || week < 1 || week > 53 || day < 1 || day > 7 {
 		return false
 	}
 	jan4 := time.Date(year, time.January, 4, 0, 0, 0, 0, time.UTC)
@@ -565,13 +602,15 @@ func isoDatePrefixLength(value string) (int, bool) {
 	}
 	if len(value) >= len("2006-01-02") && value[4] == '-' {
 		date := value[:len("2006-01-02")]
+		year, yearErr := strconv.Atoi(date[:4])
 		_, err := time.Parse("2006-01-02", date)
-		return len(date), err == nil
+		return len(date), yearErr == nil && year >= 1 && err == nil
 	}
 	if len(value) >= len("20060102") {
 		date := value[:len("20060102")]
+		year, yearErr := strconv.Atoi(date[:4])
 		_, err := time.Parse("20060102", date)
-		return len(date), err == nil
+		return len(date), yearErr == nil && year >= 1 && err == nil
 	}
 	return 0, false
 }
@@ -761,8 +800,8 @@ func validateAirQualityGeometry(value any) error {
 				if !ok || len(point) < 2 {
 					return errors.New("area_geojson positions must contain longitude and latitude")
 				}
-				longitude, longitudeOK := airQualityNumber(point[0])
-				latitude, latitudeOK := airQualityNumber(point[1])
+				longitude, longitudeOK := airQualityJSONNumber(point[0])
+				latitude, latitudeOK := airQualityJSONNumber(point[1])
 				if !longitudeOK || !latitudeOK {
 					return errors.New("area_geojson positions must be numeric")
 				}
@@ -773,6 +812,13 @@ func validateAirQualityGeometry(value any) error {
 		}
 	}
 	return nil
+}
+
+func airQualityJSONNumber(value any) (float64, bool) {
+	if _, isString := value.(string); isString {
+		return 0, false
+	}
+	return airQualityNumber(value)
 }
 
 func validateAirQualityRecord(record map[string]any, kind string) error {
@@ -994,7 +1040,7 @@ func executeSourcePreview(ctx *gin.Context, config sourceRuntimeConfig) (sourceP
 	result.ContentType = response.Header.Get("Content-Type")
 	result.Reachable = response.StatusCode >= 200 && response.StatusCode < 500
 	result.LatencyMS = time.Since(started).Milliseconds()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := readOfficialSourceResponse(response.Body)
 	if err != nil {
 		return result, err
 	}

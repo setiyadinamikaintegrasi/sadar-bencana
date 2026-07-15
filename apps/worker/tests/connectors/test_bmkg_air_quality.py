@@ -421,6 +421,47 @@ def test_parser_accepts_datetime_fromisoformat_variants(timestamp):
     assert observations[0].observed_at.utcoffset() is not None
 
 
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "0000-01-01T04:00:00+07:00",
+        "00000101T040000+0700",
+        "0000-W01-1T04:00:00+07:00",
+    ],
+)
+def test_parser_rejects_year_zero_timestamps(timestamp):
+    payload = deepcopy(PAYLOAD)
+    for field in ("sent_at", "effective_at", "expires_at"):
+        payload["warnings"][0][field] = timestamp
+    payload["observations"][0]["observed_at"] = timestamp
+
+    warnings, observations, errors = parse_air_quality_payload(payload, {})
+
+    assert warnings == []
+    assert observations == []
+    assert len(errors) == 2
+
+
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://reader:secret@iklim.bmkg.go.id/data",
+        "https://iklim.bmkg.go.id:8443/data",
+    ],
+)
+def test_parser_rejects_bmkg_source_url_credentials_and_non_https_ports(source_url):
+    payload = deepcopy(PAYLOAD)
+    payload["warnings"][0]["source_url"] = source_url
+    payload["observations"][0]["source_url"] = source_url
+
+    warnings, observations, errors = parse_air_quality_payload(payload, {})
+
+    assert warnings == []
+    assert observations == []
+    assert len(errors) == 2
+    assert all("official BMKG" in error or "bmkg.go.id" in error for error in errors)
+
+
 def test_schema_drift_is_rejected_before_record_processing():
     with pytest.raises(ValueError, match="warnings and observations must be arrays"):
         parse_air_quality_payload({"warnings": {}, "observations": []}, {})

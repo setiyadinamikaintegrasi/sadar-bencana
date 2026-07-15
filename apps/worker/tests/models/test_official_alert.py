@@ -38,6 +38,7 @@ def test_official_alert_rejects_invalid_coordinates():
     "source_url",
     [
         "https://bmkg.go.id/alerts/alert-1",
+        "https://bmkg.go.id:443/alerts/alert-1",
         "https://iklim.bmkg.go.id/alerts/alert-1",
     ],
 )
@@ -53,6 +54,22 @@ def test_bmkg_sources_reject_non_bmkg_source_urls(source: str):
         base_alert(source=source, source_url="https://example.com/alerts/alert-1")
 
 
+@pytest.mark.parametrize("source", ["bmkg_cap", "bmkg_air_quality"])
+@pytest.mark.parametrize(
+    "source_url",
+    [
+        "https://reader:secret@bmkg.go.id/alerts/alert-1",
+        "https://iklim.bmkg.go.id:8443/alerts/alert-1",
+    ],
+)
+def test_bmkg_sources_reject_url_credentials_and_non_https_ports(
+    source: str,
+    source_url: str,
+):
+    with pytest.raises(ValueError, match="bmkg.go.id"):
+        base_alert(source=source, source_url=source_url)
+
+
 def test_non_bmkg_sources_accept_generic_https_source_urls():
     alert = base_alert(
         source="gdacs",
@@ -60,6 +77,12 @@ def test_non_bmkg_sources_accept_generic_https_source_urls():
     )
 
     assert alert.source_url == "https://example.com/alerts/alert-1"
+
+
+def test_non_bmkg_source_url_policy_remains_generic_https_only():
+    source_url = "https://reader:secret@example.com:8443/alerts/alert-1"
+
+    assert base_alert(source="gdacs", source_url=source_url).source_url == source_url
 
 
 @pytest.mark.parametrize(

@@ -199,17 +199,17 @@ func TestActiveSourceIngestionChangesForceDryRunInUpdateHandler(t *testing.T) {
 			mock.ExpectQuery("SELECT role FROM ews_subscribers").
 				WithArgs("admin@example.test").
 				WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+			mock.ExpectBegin()
 			mock.ExpectQuery(regexp.QuoteMeta(`SELECT run_mode, mode, adapter_version, field_mapping,
 			       custom_api_url, poll_interval_seconds, expected_interval_seconds
-			FROM official_source_settings WHERE source_name=$1`)).
+			FROM official_source_settings WHERE source_name=$1 FOR UPDATE`)).
 				WithArgs("bmkg_air_quality").
 				WillReturnRows(sqlmock.NewRows([]string{
 					"run_mode", "mode", "adapter_version", "field_mapping", "custom_api_url",
 					"poll_interval_seconds", "expected_interval_seconds",
 				}).AddRow("active", "custom_api", "v1", []byte(`{}`),
 					"https://iklim.bmkg.go.id/api/air-quality", 3600, 3600))
-			mock.ExpectBegin()
-			mock.ExpectQuery("(?s)WITH updated AS .*RETURNING version").
+			mock.ExpectQuery("(?s)WITH updated AS .*config_version=config_version\\+1,.*last_dry_run_at=NULL, last_dry_run_valid=NULL,.*last_dry_run_config_version=NULL,.*RETURNING version").
 				WithArgs(
 					"bmkg_air_quality", true, "dry_run", body["mode"], body["adapter_version"],
 					sqlmock.AnyArg(), body["custom_api_url"], body["poll_interval_seconds"],
@@ -239,6 +239,105 @@ func TestActiveSourceIngestionChangesForceDryRunInUpdateHandler(t *testing.T) {
 				t.Fatalf("unmet SQL expectations: %v", err)
 			}
 		})
+	}
+}
+
+func TestStaleActiveSourceSaveCannotReactivateLockedDryRunConfig(t *testing.T) {
+	body := []byte(`{
+		"enabled":true,"run_mode":"active","mode":"custom_api",
+		"adapter_version":"v1","field_mapping":{},
+		"custom_api_url":"https://iklim.bmkg.go.id/api/air-quality",
+		"poll_interval_seconds":3600,"expected_interval_seconds":3600
+	}`)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("SELECT role FROM ews_subscribers").
+		WithArgs("admin@example.test").
+		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT run_mode, mode, adapter_version, field_mapping,
+		       custom_api_url, poll_interval_seconds, expected_interval_seconds
+		FROM official_source_settings WHERE source_name=$1 FOR UPDATE`)).
+		WithArgs("bmkg_air_quality").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"run_mode", "mode", "adapter_version", "field_mapping", "custom_api_url",
+			"poll_interval_seconds", "expected_interval_seconds",
+		}).AddRow("dry_run", "custom_api", "v1", []byte(`{}`),
+			"https://iklim.bmkg.go.id/api/air-quality", 3600, 3600))
+	mock.ExpectRollback()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "source", Value: "bmkg_air_quality"}}
+	ctx.Set(ctxAuthEmail, "admin@example.test")
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/settings/official-sources/bmkg_air_quality", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	OfficialSourceSettingUpdate(db, "test-key")(ctx)
+
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), `"error":"dry_run_required"`) {
+		t.Fatalf("stale active save was not rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestUnchangedActiveSourceSavePreservesTokenAndClearsDryRunEvidence(t *testing.T) {
+	body := []byte(`{
+		"enabled":true,"run_mode":"active","mode":"custom_api",
+		"adapter_version":"v1","field_mapping":{},
+		"custom_api_url":"https://iklim.bmkg.go.id/api/air-quality",
+		"poll_interval_seconds":3600,"expected_interval_seconds":3600
+	}`)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("SELECT role FROM ews_subscribers").
+		WithArgs("admin@example.test").
+		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("admin"))
+	mock.ExpectBegin()
+	mock.ExpectQuery("(?s)SELECT run_mode, mode, adapter_version, field_mapping,.*FOR UPDATE").
+		WithArgs("bmkg_air_quality").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"run_mode", "mode", "adapter_version", "field_mapping", "custom_api_url",
+			"poll_interval_seconds", "expected_interval_seconds",
+		}).AddRow("active", "custom_api", "v1", []byte(`{}`),
+			"https://iklim.bmkg.go.id/api/air-quality", 3600, 3600))
+	mock.ExpectQuery("(?s)WITH updated AS .*api_token_encrypted=CASE WHEN \\$10='' THEN api_token_encrypted.*ELSE pgp_sym_encrypt\\(\\$10,\\$11\\) END,.*config_version=config_version\\+1,.*last_dry_run_at=NULL, last_dry_run_valid=NULL,.*last_dry_run_config_version=NULL,.*RETURNING version").
+		WithArgs(
+			"bmkg_air_quality", true, "active", "custom_api", "v1", sqlmock.AnyArg(),
+			"https://iklim.bmkg.go.id/api/air-quality", 3600, 3600, "", "test-key",
+			"admin@example.test", "",
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(9))
+	mock.ExpectExec("INSERT INTO official_source_setting_audit").
+		WithArgs("bmkg_air_quality", "admin@example.test", 9, "active", "v1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "source", Value: "bmkg_air_quality"}}
+	ctx.Set(ctxAuthEmail, "admin@example.test")
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/settings/official-sources/bmkg_air_quality", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	OfficialSourceSettingUpdate(db, "test-key")(ctx)
+
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"config_version":9`) ||
+		!strings.Contains(recorder.Body.String(), `"run_mode":"active"`) {
+		t.Fatalf("unchanged active save changed semantics: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 

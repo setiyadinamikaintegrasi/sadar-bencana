@@ -211,9 +211,42 @@ func TestExecuteAirQualityPreviewRequiresExactlyOneJSONValue(t *testing.T) {
 	}
 }
 
+func TestExecuteAirQualityPreviewEnforcesOneMiBResponseLimit(t *testing.T) {
+	encoded, err := json.Marshal(validAirQualityPreviewPayload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit = 1 << 20
+	exactLimit := make([]byte, limit)
+	copy(exactLimit, encoded)
+	for index := len(encoded); index < len(exactLimit); index++ {
+		exactLimit[index] = ' '
+	}
+
+	result, err := executeAirQualityPreviewBody(t, exactLimit)
+	if err != nil || !result.ContractValid {
+		t.Fatalf("exactly 1 MiB response was rejected: result=%#v err=%v", result, err)
+	}
+
+	hiddenSecondValue := append(append([]byte{}, exactLimit...), []byte(`{"warnings":[],"observations":[]}`)...)
+	result, err = executeAirQualityPreviewBody(t, hiddenSecondValue)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 1 MiB") {
+		t.Fatalf("oversized response was not rejected explicitly: result=%#v err=%v", result, err)
+	}
+	if result.ContractValid {
+		t.Fatalf("second JSON value beyond the old truncation boundary was accepted: %#v", result)
+	}
+}
+
 func TestSensitivePreviewKeyRecognizesNormalizedCredentialPatterns(t *testing.T) {
 	for _, key := range []string{
 		"backup_secret_key_material",
+		"secret_access_key",
+		"access_key_id",
+		"aws_access_key_id",
+		"aws_secret_access_key",
+		"aws_session_token",
+		"service_credential_token",
 		"private-key",
 		"basicAuth",
 		"requestAuthorizationHeaderValue",
@@ -247,6 +280,40 @@ func TestSensitivePreviewKeyRecognizesNormalizedCredentialPatterns(t *testing.T)
 	}
 }
 
+func TestSanitizePreviewRemovesURLUserinfoRegardlessOfFieldKey(t *testing.T) {
+	payload := map[string]any{
+		"homepage": "https://alice:homepage-secret@example.com/path?region=java#latest",
+		"nested": []any{map[string]any{
+			"ordinary":     "https://bob:nested-secret@iklim.bmkg.go.id/data?station=kmy3",
+			"network_path": "//dave:network-secret@bmkg.go.id/archive?year=2026",
+			"public":       "https://iklim.bmkg.go.id/data?station=kmy3",
+			"invalid":      "https://carol:invalid-secret@bmkg.go.id/%zz",
+		}},
+	}
+
+	encoded, err := json.Marshal(sanitizePreview(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{
+		"alice", "homepage-secret", "bob", "nested-secret", "carol", "invalid-secret",
+		"dave", "network-secret",
+	} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("URL credential %q leaked from ordinary field: %s", secret, encoded)
+		}
+	}
+	for _, metadata := range []string{
+		"https://example.com/path?region=java#latest",
+		"https://iklim.bmkg.go.id/data?station=kmy3",
+		"//bmkg.go.id/archive?year=2026",
+	} {
+		if !strings.Contains(string(encoded), metadata) {
+			t.Fatalf("non-secret URL metadata %q was not preserved: %s", metadata, encoded)
+		}
+	}
+}
+
 func TestAirQualityPreviewRedactsNestedRawAndMappedSamples(t *testing.T) {
 	payload := validAirQualityPreviewPayload()
 	warning := payload["warnings"].([]any)[0].(map[string]any)
@@ -262,12 +329,14 @@ func TestAirQualityPreviewRedactsNestedRawAndMappedSamples(t *testing.T) {
 			},
 		},
 	}
+	warning["reference_url"] = "https://reader:raw-url-secret@iklim.bmkg.go.id/reference?area=jabar"
 	observation := payload["observations"].([]any)[0].(map[string]any)
 	observation["service_credentials_blob"] = map[string]any{
 		"browser_cookies_copy": "leak-cookie",
 		"refresh_tokens_list":  []any{"leak-token"},
 	}
 	observation["ordinary_metadata"] = map[string]any{"status": "visible-ordinary"}
+	observation["dashboard_url"] = "https://viewer:mapped-url-secret@bmkg.go.id/dashboard?station=kmy3"
 
 	result := previewAirQualityPayload(payload, map[string]string{}, sourcePreviewResult{
 		Reachable: true, StatusCode: 200, AdapterVersion: "v1",
@@ -284,6 +353,7 @@ func TestAirQualityPreviewRedactsNestedRawAndMappedSamples(t *testing.T) {
 		}
 		for _, leaked := range []string{
 			"leak-secret-key", "leak-client-secret", "leak-cookie", "leak-token",
+			"raw-url-secret", "mapped-url-secret", "reader", "viewer",
 		} {
 			if strings.Contains(string(encoded), leaked) {
 				t.Fatalf("%s sample leaked %q: %s", name, leaked, encoded)
@@ -291,6 +361,7 @@ func TestAirQualityPreviewRedactsNestedRawAndMappedSamples(t *testing.T) {
 		}
 		for _, visible := range []string{
 			"visible-secretary", "visible-public-key", "visible-ordinary",
+			"iklim.bmkg.go.id/reference?area=jabar", "bmkg.go.id/dashboard?station=kmy3",
 		} {
 			if !strings.Contains(string(encoded), visible) {
 				t.Fatalf("%s sample removed ordinary value %q: %s", name, visible, encoded)
@@ -354,6 +425,9 @@ func TestAirQualityPreviewRejectsUnsafeNumericAndTimestampStrings(t *testing.T) 
 		{name: "not a number coordinate", mutate: func(record map[string]any) { record["latitude"] = "NaN" }},
 		{name: "negative value", mutate: func(record map[string]any) { record["value"] = "-0.1" }},
 		{name: "out of range coordinate", mutate: func(record map[string]any) { record["longitude"] = "181" }},
+		{name: "year zero extended date", mutate: func(record map[string]any) { record["observed_at"] = "0000-01-01T04:00:00+07:00" }},
+		{name: "year zero basic date", mutate: func(record map[string]any) { record["observed_at"] = "00000101T040000+0700" }},
+		{name: "year zero week date", mutate: func(record map[string]any) { record["observed_at"] = "0000-W01-1T04:00:00+07:00" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -400,6 +474,11 @@ func TestAirQualityPreviewRejectsMalformedRecordsWithoutDiscardingValidSiblingCo
 		{name: "warning polygon geometry", collection: "warnings", mutate: func(record map[string]any) {
 			record["area_geojson"] = map[string]any{"type": "Polygon", "coordinates": []any{[]any{
 				[]any{106.0, -7.0}, []any{108.0, -7.0}, []any{108.0, -6.0}, []any{107.0, -7.0},
+			}}}
+		}},
+		{name: "warning polygon numeric strings", collection: "warnings", mutate: func(record map[string]any) {
+			record["area_geojson"] = map[string]any{"type": "Polygon", "coordinates": []any{[]any{
+				[]any{"106", "-7"}, []any{"108", "-7"}, []any{"108", "-6"}, []any{"106", "-7"},
 			}}}
 		}},
 		{name: "observation required station", collection: "observations", mutate: func(record map[string]any) { delete(record, "station_name") }},

@@ -61,9 +61,19 @@ class AirQualityObservationInput(BaseModel):
         if value is None:
             return None
         parsed = urlparse(value)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        if parsed.scheme != "https" or not (
-            host == "bmkg.go.id" or host.endswith(".bmkg.go.id")
+        try:
+            host = (parsed.hostname or "").lower().rstrip(".")
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError(
+                "source_url must use an official BMKG HTTPS host"
+            ) from exc
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or port not in (None, 443)
+            or not (host == "bmkg.go.id" or host.endswith(".bmkg.go.id"))
         ):
             raise ValueError("source_url must use an official BMKG HTTPS host")
         return value
