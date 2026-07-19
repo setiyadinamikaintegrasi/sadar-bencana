@@ -1413,14 +1413,26 @@ func TestSourcePreviewPinsPublicIPAndPreservesHostAndSNI(t *testing.T) {
 }
 
 func TestPinnedOfficialSourceURLUsesResolvedAddress(t *testing.T) {
-	parsed, err := url.Parse("https://iklim.bmkg.go.id/api/air-quality?station=kmy3")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	target := pinnedOfficialSourceURL(parsed, "8.8.8.8")
-	if target != "https://8.8.8.8:443/api/air-quality?station=kmy3" {
-		t.Fatalf("unexpected pinned request URL: %q", target)
+	for _, test := range []struct {
+		endpoint string
+		want     string
+	}{
+		{
+			endpoint: "https://iklim.bmkg.go.id/api/air-quality?station=kmy3",
+			want:     "https://8.8.8.8:443/api/air-quality?station=kmy3",
+		},
+		{
+			endpoint: "https://iklim.bmkg.go.id//evil.example/path",
+			want:     "https://8.8.8.8:443/evil.example/path",
+		},
+	} {
+		parsed, err := url.Parse(test.endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target := pinnedOfficialSourceURL(parsed, "8.8.8.8"); target != test.want {
+			t.Fatalf("unexpected pinned request URL: %q", target)
+		}
 	}
 }
 

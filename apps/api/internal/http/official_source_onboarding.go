@@ -144,11 +144,8 @@ func fetchOfficialSource(
 }
 
 func pinnedOfficialSourceURL(parsed *url.URL, pinnedIP string) string {
-	path := parsed.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	target := "https://" + net.JoinHostPort(pinnedIP, "443") + path
+	path := strings.TrimLeft(parsed.EscapedPath(), "/")
+	target := "https://" + net.JoinHostPort(pinnedIP, "443") + "/" + path
 	if parsed.ForceQuery || parsed.RawQuery != "" {
 		target += "?" + parsed.RawQuery
 	}
