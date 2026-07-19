@@ -40,7 +40,7 @@ async def isolated_audit_database():
             TEST_DATABASE_URL,
             min_size=1,
             max_size=2,
-            server_settings={"search_path": f'"{schema}", public'},
+            server_settings={"search_path": f'"{schema}", public, extensions'},
         )
         async with pool.acquire() as connection:
             await connection.execute(
@@ -136,7 +136,7 @@ async def test_worker_shadow_evidence_satisfies_activation_metadata_contract():
 
 
 @pytest.mark.asyncio
-async def test_worker_shadow_uses_postgis_topology_validation_without_writes():
+async def test_worker_shadow_repairs_topology_without_persistence_writes():
     alert = SimpleNamespace(
         source_alert_id="self-intersection",
         area_geojson={
@@ -149,6 +149,7 @@ async def test_worker_shadow_uses_postgis_topology_validation_without_writes():
                 [106.0, -6.0],
             ]],
         },
+        raw_payload={},
     )
     async with isolated_audit_database() as pool:
         errors = await worker_main._official_alert_topology_errors(pool, [alert])
@@ -156,10 +157,17 @@ async def test_worker_shadow_uses_postgis_topology_validation_without_writes():
             writes = await connection.fetchval(
                 "SELECT count(*) FROM official_source_setting_audit"
             )
+            valid = await connection.fetchval(
+                """SELECT ST_IsValid(
+                       ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)
+                   )""",
+                json.dumps(alert.area_geojson, separators=(",", ":")),
+            )
 
-    assert errors == [
-        "warning self-intersection: area_geojson topology is invalid"
-    ]
+    assert errors == []
+    assert alert.area_geojson["type"] == "MultiPolygon"
+    assert alert.raw_payload["area_geometry_normalization"] == "postgis_st_makevalid"
+    assert valid is True
     assert writes == 0
 
 

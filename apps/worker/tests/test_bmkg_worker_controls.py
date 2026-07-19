@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
+import json
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -7,6 +8,47 @@ import pytest
 
 import main as worker_main
 from db.source_settings import MissingSourceSettingError
+
+
+@asynccontextmanager
+async def _connection(connection):
+    yield connection
+
+
+@pytest.mark.asyncio
+async def test_topology_validation_repairs_self_intersection_before_persistence():
+    repaired = {
+        "type": "MultiPolygon",
+        "coordinates": [[[[106.0, -6.0], [107.0, -7.0], [106.0, -8.0], [106.0, -6.0]]]],
+    }
+    connection = SimpleNamespace(
+        fetchrow=AsyncMock(return_value={
+            "repaired": True,
+            "geometry_type": "MULTIPOLYGON",
+            "valid": True,
+            "empty": False,
+            "geojson": json.dumps(repaired),
+        })
+    )
+    pool = SimpleNamespace(acquire=lambda: _connection(connection))
+    alert = SimpleNamespace(
+        source_alert_id="self-intersection",
+        area_geojson={
+            "type": "Polygon",
+            "coordinates": [[
+                [106.0, -6.0], [108.0, -8.0], [108.0, -6.0],
+                [106.0, -8.0], [106.0, -6.0],
+            ]],
+        },
+        raw_payload={},
+    )
+
+    errors = await worker_main._official_alert_topology_errors(pool, [alert])
+
+    assert errors == []
+    assert alert.area_geojson == repaired
+    assert alert.raw_payload["area_geometry_normalization"] == "postgis_st_makevalid"
+    assert "ST_MakeValid" in connection.fetchrow.await_args.args[0]
 
 
 def _setting(**overrides):
