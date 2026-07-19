@@ -227,6 +227,65 @@ export async function getMapOverlays(): Promise<MapOverlay[]> {
   return response.data
 }
 
+export type OfficialAlert = {
+  id: string
+  source: string
+  source_alert_id: string
+  revision: number
+  message_type: 'alert' | 'update' | 'cancel'
+  status: 'active' | 'updated' | 'expired' | 'cancelled'
+  sent_at: string
+  effective_at: string | null
+  expires_at: string | null
+  peril_type: 'weather' | 'air_quality' | null
+  severity: AlertSeverity | null
+  category: string | null
+  headline: string | null
+  description: string | null
+  area_name: string | null
+  area_geojson: MapOverlay['geometry']
+  latitude: number | null
+  longitude: number | null
+  source_url: string | null
+}
+
+export type AirQualityObservation = {
+  id: string
+  source: 'bmkg'
+  station_id: string
+  station_name: string
+  latitude: number | null
+  longitude: number | null
+  pollutant: 'pm25'
+  value: number
+  unit: 'ug/m3'
+  category: 'Baik' | 'Sedang' | 'Tidak Sehat' | 'Sangat Tidak Sehat' | 'Berbahaya'
+  observed_at: string
+  source_url: string | null
+  stale: boolean
+  ingested_at: string
+}
+
+export type AirQualityObservationsResponse = {
+  data: AirQualityObservation[]
+  meta: { count: number; limit: number; latest: boolean; source_active: boolean }
+}
+
+export async function getOfficialAlerts(
+  source: 'bmkg_cap' | 'bmkg_air_quality',
+): Promise<OfficialAlert[]> {
+  const response = await request<{ data: OfficialAlert[] }>(
+    '/official-alerts?source=' + encodeURIComponent(source) + '&status=active&limit=20',
+  )
+  return response.data
+}
+
+export async function getAirQualityObservations(): Promise<AirQualityObservationsResponse> {
+  return request<AirQualityObservationsResponse>(
+    '/air-quality/observations?source=bmkg&latest=true&limit=50',
+  )
+}
+
 export type RegionalHistoryProfile = {
   administrative_code: string
   period: { from: string; to: string }
@@ -258,6 +317,7 @@ export type OfficialSourceSetting = {
   attribution: string
   terms_url: string | null
   poll_interval_seconds: number
+  expected_interval_seconds: number
   notes: string | null
   last_dry_run_at: string | null
   last_dry_run_valid: boolean | null
@@ -280,6 +340,7 @@ export async function updateOfficialSourceSetting(
     custom_api_url: string | null
     api_token?: string
     poll_interval_seconds: number
+    expected_interval_seconds: number
     change_reason?: string
   },
 ): Promise<void> {
@@ -297,6 +358,8 @@ export type OfficialSourcePreview = {
   record_count: number
   valid_count: number
   invalid_count: number
+  warning_count: number
+  observation_count: number
   errors: string[]
   raw_sample: unknown
   mapped_sample: Record<string, unknown>[]
@@ -329,8 +392,28 @@ export async function dryRunOfficialSource(source: string): Promise<OfficialSour
   return response.data
 }
 
-export async function activateOfficialSource(source: string): Promise<void> {
-  await request(`/settings/official-sources/${encodeURIComponent(source)}/activate`, { method: 'POST' })
+export type OfficialSourceActivationInput = {
+  approval_reference: string
+  approval_note: string
+}
+
+export async function activateOfficialSource(
+  source: string,
+  input: OfficialSourceActivationInput,
+): Promise<void> {
+  const approvalReference = input.approval_reference.trim()
+  const approvalNote = input.approval_note.trim()
+  if (!approvalReference || !approvalNote) {
+    throw new Error('Approval reference dan catatan wajib diisi.')
+  }
+  await request(`/settings/official-sources/${encodeURIComponent(source)}/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      approval_reference: approvalReference,
+      approval_note: approvalNote,
+    }),
+  })
 }
 
 export type OfficialSourceHistory = {

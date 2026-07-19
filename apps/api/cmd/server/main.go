@@ -68,6 +68,7 @@ func main() {
 	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
 	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
 	router.GET("/api/v1/official-alerts", apihttp.OfficialAlerts(dbPool))
+	router.GET("/api/v1/air-quality/observations", apihttp.AirQualityObservations(dbPool))
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())
 	router.GET("/api/v1/evacuation-locations/import/template", apihttp.EvacuationImportTemplate())
@@ -238,6 +239,7 @@ func main() {
 		ewsMe.POST("/channels/:channel/test", apihttp.EWSMeChannelTest(
 			dbPool, cfg.WorkerBaseURL, cfg.WorkerAPIToken,
 		))
+		ewsMe.GET("/active-warnings", apihttp.EWSMeActiveWarnings(dbPool))
 		ewsMe.GET("/notifications", apihttp.EWSMeNotifications(dbPool))
 		ewsMe.POST("/notifications/:id/acknowledge", apihttp.EWSMeNotificationAcknowledge(dbPool))
 	}

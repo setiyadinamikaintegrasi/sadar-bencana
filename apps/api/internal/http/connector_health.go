@@ -12,16 +12,18 @@ import (
 // seconds. Threshold = 2× the scheduler's poll interval for that source type.
 var connectorThresholds = map[string]int{
 	// Hazard — IngestScheduler every 5 min (300s) × 2
-	"bmkg":       600,
-	"bmkg_cap":   600,
-	"inatews":    600,
-	"pvmbg":      600,
-	"bnpb":       1800,
-	"inarisk":    86400,
-	"usgs":       600,
-	"gdacs_fl":   600,
-	"gdacs_vo":   600,
-	"nasa_firms": 600,
+	"bmkg":     600,
+	"bmkg_cap": 600,
+	// BMKG air quality is expected hourly (3600s) × 2.
+	"bmkg_air_quality": 7200,
+	"inatews":          600,
+	"pvmbg":            600,
+	"bnpb":             1800,
+	"inarisk":          86400,
+	"usgs":             600,
+	"gdacs_fl":         600,
+	"gdacs_vo":         600,
+	"nasa_firms":       600,
 	// News — NewsScheduler every 15 min (900s) × 2
 	"antara":    1800,
 	"detik":     1800,
@@ -109,10 +111,48 @@ func ConnectorHealthHandler(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
+		const sourceIntervalsQuery = `
+			SELECT source_name, expected_interval_seconds
+			FROM official_source_settings
+		`
+		intervalRows, err := db.QueryContext(c.Request.Context(), sourceIntervalsQuery)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "database_query_failed",
+				"message": err.Error(),
+			})
+			return
+		}
+		defer intervalRows.Close()
+
+		dynamicThresholds := make(map[string]int)
+		for intervalRows.Next() {
+			var name string
+			var expectedInterval int
+			if err := intervalRows.Scan(&name, &expectedInterval); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "row_scan_failed",
+					"message": err.Error(),
+				})
+				return
+			}
+			dynamicThresholds[name] = 2 * expectedInterval
+		}
+		if err := intervalRows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "rows_iteration_failed",
+				"message": err.Error(),
+			})
+			return
+		}
+
 		now := time.Now().UTC()
 		result := make([]ConnectorHealth, 0, len(connectorThresholds))
 
 		for name, threshold := range connectorThresholds {
+			if configuredThreshold, ok := dynamicThresholds[name]; ok {
+				threshold = configuredThreshold
+			}
 			ch := ConnectorHealth{
 				Name:             name,
 				ThresholdSeconds: threshold,

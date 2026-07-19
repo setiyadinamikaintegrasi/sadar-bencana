@@ -2,11 +2,22 @@ import { useCallback, useEffect, useState } from 'react'
 import { getConnectorHealth, type ConnectorHealth } from '../../lib/api/client'
 
 const REFRESH_INTERVAL_MS = 30_000
+const INACTIVE_OFFICIAL_CONNECTORS = new Set(['bmkg_cap', 'bmkg_air_quality'])
+
+export const HAZARD_CONNECTORS = [
+  'bmkg',
+  'bmkg_cap',
+  'bmkg_air_quality',
+  'usgs',
+  'gdacs_fl',
+  'gdacs_vo',
+  'nasa_firms',
+] as const
 
 const CATEGORIES = [
   {
     label: 'Hazard',
-    names: ['bmkg', 'usgs', 'gdacs_fl', 'gdacs_vo', 'nasa_firms'],
+    names: HAZARD_CONNECTORS,
   },
   {
     label: 'News',
@@ -17,6 +28,36 @@ const CATEGORIES = [
     names: ['aisstream', 'vesselfinder', 'opensky'],
   },
 ] as const
+
+export function connectorRowsForCategory(
+  names: readonly string[],
+  byName: Map<string, ConnectorHealth>,
+): ConnectorHealth[] {
+  return names.map((name) => {
+    const connector = byName.get(name)
+    if (connector) {
+      const isApiSynthesizedMissing = INACTIVE_OFFICIAL_CONNECTORS.has(name)
+        && connector.status === 'stale'
+        && connector.last_polled_at === null
+        && connector.items_fetched === 0
+        && connector.error_message === null
+        && connector.updated_at === null
+      return isApiSynthesizedMissing
+        ? { ...connector, error_message: 'Belum aktif' }
+        : connector
+    }
+    if (!INACTIVE_OFFICIAL_CONNECTORS.has(name)) return undefined
+    return {
+      name,
+      status: 'stale' as const,
+      last_polled_at: null,
+      items_fetched: 0,
+      error_message: 'Belum aktif',
+      threshold_seconds: 0,
+      updated_at: null,
+    }
+  }).filter((connector): connector is ConnectorHealth => connector !== undefined)
+}
 
 const statusConfig = {
   ok: { dot: '●', label: 'OK', dotClass: 'text-emerald-400', textClass: 'text-emerald-300' },
@@ -74,7 +115,7 @@ function CategoryCard({
   names: readonly string[]
   byName: Map<string, ConnectorHealth>
 }) {
-  const connectors = names.map((n) => byName.get(n)).filter(Boolean) as ConnectorHealth[]
+  const connectors = connectorRowsForCategory(names, byName)
   const errorCount = connectors.filter((c) => c.status === 'error').length
   const staleCount = connectors.filter((c) => c.status === 'stale').length
 
@@ -133,14 +174,19 @@ function CategoryCard({
         </table>
       </div>
 
-      {/* Mobile card list */}
-      <div className="space-y-3 md:hidden">
+      {/* Mobile divided list */}
+      <div
+        role="list"
+        aria-label={`${label} connectors`}
+        className="divide-y divide-slate-800 border-y border-slate-800 md:hidden"
+      >
         {connectors.map((c) => {
           const cfg = statusConfig[c.status]
           return (
             <div
               key={c.name}
-              className="rounded-xl border border-slate-800 bg-slate-950/40 p-4"
+              role="listitem"
+              className="py-3"
             >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-sm font-medium text-slate-200">{c.name}</span>

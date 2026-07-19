@@ -8,7 +8,7 @@ import os
 import time
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -56,10 +56,13 @@ _setup_logging()
 from alerts import evaluate_and_create_alerts
 from alerts.lifecycle_delivery import (
     enqueue_official_alert_revision,
+    expire_and_enqueue_official_alert_revisions,
+    persist_official_alert_revision,
     process_due_deliveries,
 )
 from connectors.aisstream import AISStreamConnector
 from connectors.bmkg import BMKGConnector
+from connectors.bmkg_air_quality import BMKGAirQualityConnector, parse_air_quality_payload
 from connectors.bmkg_cap import BMKG_ATTRIBUTION, BMKGCAPConnector
 from connectors.gdacs_flood import GDACSFloodConnector
 from connectors.gdacs_volcano import GDACSVolcanoConnector
@@ -84,15 +87,26 @@ from connectors.vesselfinder import VesselFinderConnector
 from correlation_pipeline import correlate_ingested_events
 from db.health import upsert_connector_health
 from db.assets import fetch_aircraft, fetch_vessels, upsert_aircraft, upsert_vessels
+from db.air_quality import (
+    delete_old_air_quality_observations,
+    upsert_air_quality_observation,
+)
 from db.briefings import save_briefing
 from db.events import fetch_top_events, upsert_events
 from db.evidence import create_impact_report, create_risk_context, create_source_record
 from normalizers.events import merge_events_by_proximity
 from db.news import fetch_news, upsert_news_items
-from db.official_alerts import expire_official_alert_revisions
 from db.official_alerts import upsert_official_alert
 from db.pool import close_pool, get_pool, init_pool
-from db.source_settings import resolve_source_setting
+from db.source_settings import (
+    acquire_source_poll_slot,
+    capture_worker_shadow_persistence_counts,
+    complete_source_poll,
+    record_worker_shadow_evidence,
+    resolve_source_setting,
+    source_write_is_allowed,
+    worker_shadow_persistence_deltas,
+)
 from db.scoring_context import load_risk_scoring_contexts
 from geo.locator import extract_location
 from models.event import EarthquakeEvent
@@ -337,30 +351,142 @@ def _masked_email(value: str) -> str:
     return f"{local[:1]}***@{domain}"
 
 
-async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
-    setting = await resolve_source_setting(pool, "bmkg_cap")
+async def _official_alert_topology_errors(
+    pool: asyncpg.Pool,
+    alerts: list[Any],
+) -> list[str]:
+    """Validate polygon topology with the same PostGIS primitive as persistence."""
+    errors: list[str] = []
+    async with pool.acquire() as connection:
+        for alert in alerts:
+            if alert.area_geojson is None:
+                continue
+            try:
+                valid = await connection.fetchval(
+                    """SELECT ST_IsValid(
+                           ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)
+                       )""",
+                    json.dumps(alert.area_geojson, separators=(",", ":")),
+                )
+                if not valid:
+                    errors.append(
+                        f"warning {alert.source_alert_id}: "
+                        "area_geojson topology is invalid"
+                    )
+            except Exception as exc:
+                errors.append(
+                    f"warning {alert.source_alert_id}: "
+                    f"area_geojson topology validation failed: {exc}"
+                )
+    return errors
+
+
+async def _bmkg_cap_cycle(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+) -> int:
+    try:
+        setting = await resolve_source_setting(pool, "bmkg_cap")
+    except Exception as exc:
+        logger.warning("BMKG CAP settings resolution failed closed: %s", exc)
+        return 0
     if setting is not None:
         if not setting.enabled or not setting.api_url:
             return 0
         rss_url, api_token = setting.api_url, setting.api_token
+        run_mode = setting.run_mode
+        config_version = getattr(setting, "config_version", None)
+        poll_interval_seconds = setting.poll_interval_seconds
     else:
         if not _env_enabled("CONNECTOR_BMKG_CAP_ENABLED"):
             return 0
         rss_url, api_token = "https://www.bmkg.go.id/alerts/nowcast/id", None
+        run_mode = "active"
+        config_version = None
+        poll_interval_seconds = 600
 
-    connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
+    poll_context = acquire_source_poll_slot(
+        pool,
+        "bmkg_cap",
+        config_version=config_version,
+        poll_interval_seconds=poll_interval_seconds,
+        now=now,
+    )
+    try:
+        poll_slot = await poll_context.__aenter__()
+    except Exception as exc:
+        logger.warning("BMKG CAP poll reservation failed closed: %s", exc)
+        return 0
+    if poll_slot is None:
+        await poll_context.__aexit__(None, None, None)
+        return 0
+
+    shadow_before = None
+    try:
+        if run_mode == "dry_run" and config_version is not None:
+            shadow_before = await capture_worker_shadow_persistence_counts(
+                pool,
+                "bmkg_cap",
+            )
+    except Exception:
+        await poll_context.__aexit__(*sys.exc_info())
+        raise
+
+    try:
+        connector = BMKGCAPConnector(rss_url=rss_url, api_token=api_token)
+    except Exception as exc:
+        try:
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=0,
+                error_message=str(exc),
+            )
+        finally:
+            await poll_context.__aexit__(*sys.exc_info())
+        logger.warning("BMKG CAP connector construction failed: %s", exc)
+        return 0
     try:
         alerts, detail_errors = await connector.fetch_active()
+        if run_mode == "dry_run" and config_version is not None:
+            detail_errors = [
+                *detail_errors,
+                *await _official_alert_topology_errors(pool, alerts),
+            ]
+        error_message = "; ".join(detail_errors[:3]) if detail_errors else None
+        if run_mode == "dry_run":
+            if setting is not None and config_version is not None:
+                shadow_after = await capture_worker_shadow_persistence_counts(
+                    pool,
+                    "bmkg_cap",
+                )
+                await record_worker_shadow_evidence(
+                    pool,
+                    setting,
+                    success=not detail_errors,
+                    item_count=len(alerts),
+                    errors=detail_errors,
+                    persistence_counts=worker_shadow_persistence_deltas(
+                        shadow_before or {},
+                        shadow_after,
+                    ),
+                )
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=len(alerts),
+                error_message=error_message,
+            )
+            return 0
+
         created = 0
         for alert in alerts:
-            source_url = str(alert.raw_payload.get("source_url") or "")
-            correlation_id = disaster_correlation_id(
-                alert.source,
-                alert.source_alert_id,
-            )
-            await create_source_record(
-                pool,
-                SourceRecordInput(
+            try:
+                source_url = str(alert.raw_payload.get("source_url") or "")
+                correlation_id = disaster_correlation_id(
+                    alert.source,
+                    alert.source_alert_id,
+                )
+                source_record = SourceRecordInput(
                     source_name="bmkg_cap",
                     source_record_id=alert.source_alert_id,
                     source_type="official",
@@ -369,45 +495,252 @@ async def _bmkg_cap_cycle(pool: asyncpg.Pool) -> int:
                     observed_at=alert.effective_at,
                     published_at=alert.sent_at,
                     raw_payload=alert.raw_payload,
-                ),
-            )
-            await record_observation(
-                pool,
-                correlation_id=correlation_id,
-                stage="raw_source_ingested",
-                source_name=alert.source,
-                peril_type="weather",
-            )
-            official_row, was_created = await upsert_official_alert(pool, alert)
-            created += int(was_created)
-            await record_observation(
-                pool,
-                correlation_id=correlation_id,
-                stage="official_alert_revision",
-                source_name=alert.source,
-                peril_type="weather",
-                metadata={
-                    "revision": official_row.get("revision"),
-                    "created": was_created,
-                },
-            )
-            if was_created and _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
-                await enqueue_official_alert_revision(pool, official_row)
+                )
+                if config_version is None:
+                    await create_source_record(pool, source_record)
+                    official_row, was_created = await upsert_official_alert(
+                        pool,
+                        alert,
+                    )
+                    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
+                        await enqueue_official_alert_revision(pool, official_row)
+                    allowed = True
+                else:
+                    official_row, was_created, allowed = (
+                        await persist_official_alert_revision(
+                            pool,
+                            alert,
+                            source_record=source_record,
+                            source_name="bmkg_cap",
+                            expected_config_version=config_version,
+                            delivery_enabled=_env_enabled(
+                                "EWS_LIFECYCLE_DELIVERY_ENABLED"
+                            ),
+                        )
+                    )
+                if not allowed:
+                    break
+                created += int(was_created)
+                await record_observation(
+                    pool,
+                    correlation_id=correlation_id,
+                    stage="raw_source_ingested",
+                    source_name=alert.source,
+                    peril_type="weather",
+                )
+                await record_observation(
+                    pool,
+                    correlation_id=correlation_id,
+                    stage="official_alert_revision",
+                    source_name=alert.source,
+                    peril_type="weather",
+                    metadata={
+                        "revision": official_row.get("revision"),
+                        "created": was_created,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "BMKG CAP record %s rejected during persistence: %s",
+                    alert.source_alert_id,
+                    exc,
+                )
 
-        error_message = "; ".join(detail_errors[:3]) if detail_errors else None
-        await upsert_connector_health(
-            pool,
-            "bmkg_cap",
-            len(alerts),
-            error_message,
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=len(alerts),
+            error_message=error_message,
         )
         return created
     except Exception as exc:
-        await upsert_connector_health(pool, "bmkg_cap", 0, str(exc))
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=0,
+            error_message=str(exc),
+        )
         logger.warning("BMKG CAP fetch failed: %s", exc)
         return 0
     finally:
-        await connector.close()
+        try:
+            await connector.close()
+        finally:
+            await poll_context.__aexit__(*sys.exc_info())
+
+
+async def _persist_air_quality_observation(
+    pool: asyncpg.Pool,
+    observation: Any,
+    *,
+    expected_config_version: int,
+) -> bool:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if not await source_write_is_allowed(
+                conn,
+                "bmkg_air_quality",
+                expected_config_version,
+            ):
+                return False
+            await upsert_air_quality_observation(
+                pool,
+                observation,
+                connection=conn,
+            )
+            return True
+
+
+async def _bmkg_air_quality_cycle(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    try:
+        setting = await resolve_source_setting(pool, "bmkg_air_quality")
+    except Exception as exc:
+        logger.warning("BMKG air-quality settings resolution failed closed: %s", exc)
+        return {"warnings": 0, "observations": 0}
+    if setting is None or not setting.enabled or not setting.api_url:
+        return {"warnings": 0, "observations": 0}
+    poll_context = acquire_source_poll_slot(
+        pool,
+        "bmkg_air_quality",
+        config_version=setting.config_version,
+        poll_interval_seconds=setting.poll_interval_seconds,
+        now=now,
+    )
+    try:
+        poll_slot = await poll_context.__aenter__()
+    except Exception as exc:
+        logger.warning("BMKG air-quality poll reservation failed closed: %s", exc)
+        return {"warnings": 0, "observations": 0}
+    if poll_slot is None:
+        await poll_context.__aexit__(None, None, None)
+        return {"warnings": 0, "observations": 0}
+
+    shadow_before = None
+    try:
+        if setting.run_mode == "dry_run":
+            shadow_before = await capture_worker_shadow_persistence_counts(
+                pool,
+                "bmkg_air_quality",
+            )
+    except Exception:
+        await poll_context.__aexit__(*sys.exc_info())
+        raise
+
+    connector = None
+    try:
+        connector = BMKGAirQualityConnector(
+            setting.api_url,
+            api_token=setting.api_token,
+        )
+        payload = await connector.fetch_payload()
+        warnings, observations, record_errors = parse_air_quality_payload(
+            payload,
+            setting.field_mapping,
+        )
+        if setting.run_mode == "dry_run":
+            record_errors = [
+                *record_errors,
+                *await _official_alert_topology_errors(pool, warnings),
+            ]
+        health_error = "; ".join(record_errors[:3]) if record_errors else None
+        if setting.run_mode == "dry_run":
+            shadow_after = await capture_worker_shadow_persistence_counts(
+                pool,
+                "bmkg_air_quality",
+            )
+            await record_worker_shadow_evidence(
+                pool,
+                setting,
+                success=not record_errors,
+                item_count=len(warnings) + len(observations),
+                errors=record_errors,
+                persistence_counts=worker_shadow_persistence_deltas(
+                    shadow_before or {},
+                    shadow_after,
+                ),
+            )
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=len(warnings) + len(observations),
+                error_message=health_error,
+            )
+            return {"warnings": 0, "observations": 0}
+
+        created_warnings = 0
+        for warning in warnings:
+            try:
+                source_record = SourceRecordInput(
+                    source_name="bmkg_air_quality",
+                    source_record_id=warning.source_alert_id,
+                    source_type="official",
+                    source_url=warning.source_url,
+                    attribution=BMKG_ATTRIBUTION,
+                    observed_at=warning.effective_at,
+                    published_at=warning.sent_at,
+                    raw_payload=warning.raw_payload,
+                )
+                _, created, allowed = await persist_official_alert_revision(
+                    pool,
+                    warning,
+                    source_record=source_record,
+                    source_name="bmkg_air_quality",
+                    expected_config_version=setting.config_version,
+                    delivery_enabled=_env_enabled(
+                        "EWS_LIFECYCLE_DELIVERY_ENABLED"
+                    ),
+                )
+                if not allowed:
+                    return {"warnings": 0, "observations": 0}
+                created_warnings += int(created)
+            except Exception as exc:
+                logger.warning(
+                    "BMKG air-quality warning %s rejected during persistence: %s",
+                    warning.source_alert_id,
+                    exc,
+                )
+
+        for observation in observations:
+            try:
+                allowed = await _persist_air_quality_observation(
+                    pool,
+                    observation,
+                    expected_config_version=setting.config_version,
+                )
+                if not allowed:
+                    return {"warnings": created_warnings, "observations": 0}
+            except Exception as exc:
+                logger.warning(
+                    "BMKG air-quality observation %s rejected during persistence: %s",
+                    observation.station_id,
+                    exc,
+                )
+
+        await delete_old_air_quality_observations(pool)
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=len(warnings) + len(observations),
+            error_message=health_error,
+        )
+        return {
+            "warnings": created_warnings,
+            "observations": len(observations),
+        }
+    except Exception as exc:
+        await complete_source_poll(
+            poll_slot,
+            items_fetched=0,
+            error_message=str(exc),
+        )
+        logger.warning("BMKG air-quality fetch failed: %s", exc)
+        return {"warnings": 0, "observations": 0}
+    finally:
+        try:
+            if connector is not None:
+                await connector.close()
+        finally:
+            await poll_context.__aexit__(*sys.exc_info())
 
 
 async def _remaining_official_sources_cycle(pool: asyncpg.Pool) -> int:
@@ -507,6 +840,8 @@ async def _ingest_cycle(pool: asyncpg.Pool) -> dict[str, int]:
     sub-connector in the connector_health table. Raises on any failure.
     """
     official_alerts = await _bmkg_cap_cycle(pool)
+    air_quality_counts = await _bmkg_air_quality_cycle(pool)
+    official_alerts += air_quality_counts["warnings"]
     official_alerts += await _remaining_official_sources_cycle(pool)
 
     # ---- Earthquake sources (BMKG + USGS with geo-aware merge) ----
@@ -824,10 +1159,10 @@ async def _news_poll_cycle() -> int:
 
 async def _expire_official_alerts_once() -> int:
     pool = get_pool()
-    expired = await expire_official_alert_revisions(pool)
-    if _env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"):
-        for revision in expired:
-            await enqueue_official_alert_revision(pool, revision)
+    expired = await expire_and_enqueue_official_alert_revisions(
+        pool,
+        delivery_enabled=_env_enabled("EWS_LIFECYCLE_DELIVERY_ENABLED"),
+    )
     return len(expired)
 
 

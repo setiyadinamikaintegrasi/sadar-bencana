@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import AsyncIterator
 
 import asyncpg
+
+logger = logging.getLogger(__name__)
+
+
+class MissingSourceSettingError(RuntimeError):
+    """The control plane exists but has no row for a required source."""
 
 
 @dataclass(frozen=True)
@@ -21,14 +32,79 @@ class ResolvedSourceSetting:
     adapter_version: str
     field_mapping: dict[str, str]
     config_version: int
+    poll_interval_seconds: int
+    expected_interval_seconds: int
+    last_polled_at: datetime | None
+
+
+@dataclass(frozen=True)
+class SourcePollSlot:
+    source_name: str
+    connection: asyncpg.Connection
 
 
 _ENV_URLS = {
+    "bmkg_air_quality": "BMKG_AIR_QUALITY_FEED_URL",
     "inatews": "INATEWS_FEED_URL",
     "pvmbg": "PVMBG_FEED_URL",
     "bnpb": "BNPB_FEED_URL",
     "inarisk": "INARISK_FEED_URL",
 }
+
+_WORKER_SHADOW_COUNT_SQL = {
+    "official_alerts": "SELECT count(*) FROM official_alerts WHERE source = $1",
+    "air_quality_observations": (
+        "SELECT count(*) FROM air_quality_observations WHERE source = $1"
+    ),
+    "ews_notification_log": (
+        "SELECT count(*) FROM ews_notification_log WHERE source = $1"
+    ),
+    "source_records": "SELECT count(*) FROM source_records WHERE source_name = $1",
+    "disaster_observability_events": (
+        "SELECT count(*) FROM disaster_observability_events WHERE source_name = $1"
+    ),
+}
+
+_PERSISTED_SOURCE_NAMES = {
+    ("bmkg_air_quality", "air_quality_observations"): "bmkg",
+}
+
+_POLL_DUE_SQL = """
+SELECT EXISTS (
+    SELECT 1
+    FROM official_source_settings source_setting
+    LEFT JOIN connector_health health ON health.name = source_setting.source_name
+    WHERE source_setting.source_name = $1
+      AND source_setting.enabled = TRUE
+      AND source_setting.run_mode IN ('active', 'dry_run')
+      AND source_setting.config_version = $2
+      AND (
+          health.last_polled_at IS NULL
+          OR health.last_polled_at <= $3::timestamptz - ($4 * interval '1 second')
+      )
+)
+"""
+
+_LEGACY_POLL_DUE_SQL = """
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM connector_health
+    WHERE name = $1
+      AND last_polled_at > $2::timestamptz - ($3 * interval '1 second')
+)
+"""
+
+_COMPLETE_POLL_SQL = """
+INSERT INTO connector_health (
+    name, last_polled_at, items_fetched, error_message, updated_at
+)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (name) DO UPDATE SET
+    last_polled_at = EXCLUDED.last_polled_at,
+    items_fetched = EXCLUDED.items_fetched,
+    error_message = EXCLUDED.error_message,
+    updated_at = now()
+"""
 
 
 async def resolve_source_setting(
@@ -38,20 +114,42 @@ async def resolve_source_setting(
     key = os.getenv("OFFICIAL_SOURCE_SETTINGS_KEY", "")
     try:
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
+            try:
+                row = await conn.fetchrow(
+                    """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
                           attribution, run_mode, adapter_version, field_mapping,
-                          config_version,
+                          config_version, poll_interval_seconds,
+                          expected_interval_seconds,
+                          (SELECT last_polled_at FROM connector_health
+                           WHERE name = oss.source_name) AS last_polled_at,
                           CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
                             THEN pgp_sym_decrypt(api_token_encrypted, $2) END AS api_token
-                   FROM official_source_settings WHERE source_name=$1""",
-                source_name,
-                key,
-            )
-    except Exception:
+                       FROM official_source_settings oss WHERE oss.source_name=$1""",
+                    source_name,
+                    key,
+                )
+            except asyncpg.UndefinedColumnError:
+                row = await conn.fetchrow(
+                    """SELECT source_name, enabled, mode, default_api_url, custom_api_url,
+                              attribution, run_mode, adapter_version, field_mapping,
+                              config_version, 600 AS poll_interval_seconds,
+                              expected_interval_seconds,
+                              (SELECT last_polled_at FROM connector_health
+                               WHERE name = oss.source_name) AS last_polled_at,
+                              CASE WHEN api_token_encrypted IS NOT NULL AND $2 <> ''
+                                THEN pgp_sym_decrypt(api_token_encrypted, $2) END AS api_token
+                       FROM official_source_settings oss WHERE oss.source_name=$1""",
+                    source_name,
+                    key,
+                )
+    except asyncpg.UndefinedTableError:
+        # A pre-control-plane database intentionally uses legacy environment
+        # configuration. All other read/decryption failures remain fail-closed.
         return None
     if row is None:
-        return None
+        raise MissingSourceSettingError(
+            f"official source setting row is missing: {source_name}"
+        )
     mode = row["mode"]
     environment_url = os.getenv(_ENV_URLS.get(source_name, ""), "").strip() or None
     if mode == "custom_api":
@@ -70,7 +168,7 @@ async def resolve_source_setting(
     }
     return ResolvedSourceSetting(
         source_name=source_name,
-        enabled=run_mode != "disabled",
+        enabled=bool(row["enabled"]) and run_mode != "disabled",
         api_url=api_url,
         api_token=row["api_token"],
         mode=mode,
@@ -79,7 +177,195 @@ async def resolve_source_setting(
         adapter_version=str(row.get("adapter_version") or "v1"),
         field_mapping=mapping,
         config_version=int(row.get("config_version") or 1),
+        poll_interval_seconds=int(row.get("poll_interval_seconds") or 600),
+        expected_interval_seconds=int(row.get("expected_interval_seconds") or 600),
+        last_polled_at=row.get("last_polled_at"),
     )
 
 
-__all__ = ["ResolvedSourceSetting", "resolve_source_setting"]
+async def source_write_is_allowed(
+    connection: asyncpg.Connection,
+    source_name: str,
+    config_version: int,
+) -> bool:
+    """Lock and verify the active config before writes in the same transaction."""
+    row = await connection.fetchrow(
+        """SELECT enabled, run_mode, config_version
+           FROM official_source_settings
+           WHERE source_name = $1
+           FOR SHARE""",
+        source_name,
+    )
+    if row is None:
+        return False
+    return (
+        bool(row["enabled"])
+        and str(row["run_mode"]) == "active"
+        and int(row["config_version"]) == config_version
+    )
+
+
+@asynccontextmanager
+async def acquire_source_poll_slot(
+    pool: asyncpg.Pool,
+    source_name: str,
+    *,
+    config_version: int | None,
+    poll_interval_seconds: int,
+    now: datetime | None = None,
+) -> AsyncIterator[SourcePollSlot | None]:
+    """Hold a crash-releasing session lock across one due network poll."""
+    checked_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    lock_key = f"official-source-poll:{source_name}"
+    async with pool.acquire() as connection:
+        locked = bool(
+            await connection.fetchval(
+                "SELECT pg_try_advisory_lock(hashtextextended($1, 0))",
+                lock_key,
+            )
+        )
+        if not locked:
+            yield None
+            return
+        try:
+            if config_version is None:
+                due = await connection.fetchval(
+                    _LEGACY_POLL_DUE_SQL,
+                    source_name,
+                    checked_at,
+                    poll_interval_seconds,
+                )
+            else:
+                due = await connection.fetchval(
+                    _POLL_DUE_SQL,
+                    source_name,
+                    config_version,
+                    checked_at,
+                    poll_interval_seconds,
+                )
+            yield SourcePollSlot(source_name, connection) if due else None
+        finally:
+            try:
+                await asyncio.shield(
+                    connection.execute(
+                        "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+                        lock_key,
+                    )
+                )
+            except Exception:
+                # A dead session has already released its advisory locks.
+                logger.warning("poll lock session closed for source %s", source_name)
+
+
+async def complete_source_poll(
+    slot: SourcePollSlot,
+    *,
+    items_fetched: int,
+    error_message: str | None,
+    completed_at: datetime | None = None,
+) -> None:
+    """Publish connector health only after a network poll has completed."""
+    completion_time = (completed_at or datetime.now(timezone.utc)).astimezone(
+        timezone.utc
+    )
+    await slot.connection.execute(
+        _COMPLETE_POLL_SQL,
+        slot.source_name,
+        completion_time,
+        items_fetched,
+        error_message,
+    )
+
+
+async def record_worker_shadow_evidence(
+    pool: asyncpg.Pool,
+    setting: ResolvedSourceSetting,
+    *,
+    success: bool,
+    item_count: int,
+    errors: list[str],
+    persistence_counts: dict[str, int],
+) -> None:
+    """Record config-qualified worker dry-run evidence for activation gates."""
+    normalized_counts = {
+        table: int(persistence_counts.get(table, 0))
+        for table in _WORKER_SHADOW_COUNT_SQL
+    }
+    zero_persistence = all(count == 0 for count in normalized_counts.values())
+    evidence_errors = list(errors)
+    if not zero_persistence:
+        evidence_errors.append("unexpected_shadow_persistence")
+    metadata = json.dumps(
+        {
+            "stage": "worker_shadow",
+            "config_version": setting.config_version,
+            "adapter_version": setting.adapter_version,
+            "item_count": item_count,
+            "error_count": len(evidence_errors),
+            "errors": evidence_errors[:3],
+            "zero_persistence": zero_persistence,
+            "persistence_counts": normalized_counts,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    try:
+        async with pool.acquire() as connection:
+            await connection.execute(
+                """INSERT INTO official_source_setting_audit
+                 (source_name, action, config_version, success, actor_email, metadata)
+               VALUES ($1, 'dry_run', $2, $3, $4, $5::jsonb)""",
+                setting.source_name,
+                setting.config_version,
+                success and zero_persistence,
+                "worker@sadarbencana.local",
+                metadata,
+            )
+    except asyncpg.UndefinedTableError:
+        logger.warning(
+            "worker-shadow audit table unavailable for source %s",
+            setting.source_name,
+        )
+
+
+async def capture_worker_shadow_persistence_counts(
+    pool: asyncpg.Pool,
+    source_name: str,
+) -> dict[str, int]:
+    """Measure source-scoped persistence tables used by the activation gate."""
+    async with pool.acquire() as connection:
+        counts: dict[str, int] = {}
+        for table, sql in _WORKER_SHADOW_COUNT_SQL.items():
+            persisted_source = _PERSISTED_SOURCE_NAMES.get(
+                (source_name, table),
+                source_name,
+            )
+            counts[table] = int(
+                await connection.fetchval(sql, persisted_source)
+            )
+        return counts
+
+
+def worker_shadow_persistence_deltas(
+    before: dict[str, int],
+    after: dict[str, int],
+) -> dict[str, int]:
+    return {
+        table: int(after.get(table, 0)) - int(before.get(table, 0))
+        for table in _WORKER_SHADOW_COUNT_SQL
+    }
+
+
+__all__ = [
+    "MissingSourceSettingError",
+    "ResolvedSourceSetting",
+    "SourcePollSlot",
+    "acquire_source_poll_slot",
+    "capture_worker_shadow_persistence_counts",
+    "complete_source_poll",
+    "record_worker_shadow_evidence",
+    "resolve_source_setting",
+    "source_write_is_allowed",
+    "worker_shadow_persistence_deltas",
+]

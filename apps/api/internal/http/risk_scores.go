@@ -24,12 +24,13 @@ type RiskScore struct {
 // riskScoresQuery selects the top 50 event risk scores joined with their
 // matching event rows, ordered by score descending. The LEFT JOIN keeps rows
 // whose entity_id has no corresponding event.
-const riskScoresQuery = `
+var riskScoresQuery = `
 SELECT rs.entity_id, rs.score, rs.factors, rs.calculated_at,
        e.place, e.magnitude, e.source
 FROM risk_scores rs
 LEFT JOIN events e ON rs.entity_id = e.event_id
 WHERE rs.entity_type = 'event'
+  AND ` + productionEventSQLPredicate("e.source", "rs.entity_id") + `
 ORDER BY rs.score DESC
 LIMIT 50
 `
@@ -84,6 +85,13 @@ func RiskScores(db *sql.DB) gin.HandlerFunc {
 			rs.Place = nullStringPtr(place)
 			rs.Magnitude = nullFloat64Ptr(magnitude)
 			rs.Source = nullStringPtr(source)
+			sourceValue := ""
+			if rs.Source != nil {
+				sourceValue = *rs.Source
+			}
+			if isNonProductionEvent(sourceValue, rs.EntityID) {
+				continue
+			}
 			scores = append(scores, rs)
 		}
 

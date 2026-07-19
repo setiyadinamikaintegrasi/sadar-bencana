@@ -27,18 +27,40 @@ type OfficialAlert struct {
 	PreviousAlertID *string         `json:"previous_alert_id"`
 	IsCurrent       bool            `json:"is_current"`
 	IngestedAt      time.Time       `json:"ingested_at"`
+	PerilType       *string         `json:"peril_type"`
+	Severity        *string         `json:"severity"`
+	Category        *string         `json:"category"`
+	AreaName        *string         `json:"area_name"`
+	Latitude        *float64        `json:"latitude"`
+	Longitude       *float64        `json:"longitude"`
+	SourceURL       *string         `json:"source_url"`
 }
 
 const officialAlertsQuery = `
 SELECT id, source, source_alert_id, revision, message_type, status, sent_at,
        effective_at, expires_at, headline, description, area_geojson,
-       previous_alert_id, is_current, ingested_at
+       previous_alert_id, is_current, ingested_at, peril_type, severity,
+       category, area_name, latitude, longitude, source_url
 FROM official_alerts
 WHERE ($1 = '' OR source = $1)
   AND ($2 = '' OR status = $2)
   AND ($3::boolean OR is_current = TRUE)
+  AND ($4 = '' OR peril_type = $4)
+  AND (
+    status <> 'active'
+    OR (
+      (effective_at IS NULL OR effective_at <= now())
+      AND EXISTS (
+        SELECT 1
+        FROM official_source_settings s
+        WHERE s.source_name = official_alerts.source
+          AND s.enabled = TRUE
+          AND s.run_mode = 'active'
+      )
+    )
+  )
 ORDER BY sent_at DESC, revision DESC
-LIMIT $4
+LIMIT $5
 `
 
 var officialAlertStatuses = map[string]bool{
@@ -46,6 +68,11 @@ var officialAlertStatuses = map[string]bool{
 	"updated":   true,
 	"expired":   true,
 	"cancelled": true,
+}
+
+var officialAlertPerilTypes = map[string]bool{
+	"weather":     true,
+	"air_quality": true,
 }
 
 func officialAlertLimit(raw string) (int, bool) {
@@ -72,10 +99,18 @@ func OfficialAlerts(db *sql.DB) gin.HandlerFunc {
 
 		source := strings.ToLower(strings.TrimSpace(c.Query("source")))
 		status := strings.ToLower(strings.TrimSpace(c.Query("status")))
+		perilType := strings.ToLower(strings.TrimSpace(c.Query("peril_type")))
 		if status != "" && !officialAlertStatuses[status] {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":   "invalid_status",
 				"message": "status must be active, updated, expired, or cancelled",
+			})
+			return
+		}
+		if perilType != "" && !officialAlertPerilTypes[perilType] {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "invalid_peril_type",
+				"message": "peril_type must be weather or air_quality",
 			})
 			return
 		}
@@ -108,6 +143,7 @@ func OfficialAlerts(db *sql.DB) gin.HandlerFunc {
 			source,
 			status,
 			includeHistory,
+			perilType,
 			limit,
 		)
 		if err != nil {
@@ -123,7 +159,8 @@ func OfficialAlerts(db *sql.DB) gin.HandlerFunc {
 		for rows.Next() {
 			var alert OfficialAlert
 			var effectiveAt, expiresAt sql.NullTime
-			var headline, description, previousAlertID sql.NullString
+			var headline, description, previousAlertID, perilType, severity, category, areaName, sourceURL sql.NullString
+			var latitude, longitude sql.NullFloat64
 			var areaGeoJSON []byte
 			if err := rows.Scan(
 				&alert.ID,
@@ -141,6 +178,13 @@ func OfficialAlerts(db *sql.DB) gin.HandlerFunc {
 				&previousAlertID,
 				&alert.IsCurrent,
 				&alert.IngestedAt,
+				&perilType,
+				&severity,
+				&category,
+				&areaName,
+				&latitude,
+				&longitude,
+				&sourceURL,
 			); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":   "row_scan_failed",
@@ -158,6 +202,13 @@ func OfficialAlerts(db *sql.DB) gin.HandlerFunc {
 			alert.Headline = nullStringPtr(headline)
 			alert.Description = nullStringPtr(description)
 			alert.PreviousAlertID = nullStringPtr(previousAlertID)
+			alert.PerilType = nullStringPtr(perilType)
+			alert.Severity = nullStringPtr(severity)
+			alert.Category = nullStringPtr(category)
+			alert.AreaName = nullStringPtr(areaName)
+			alert.Latitude = nullFloat64Ptr(latitude)
+			alert.Longitude = nullFloat64Ptr(longitude)
+			alert.SourceURL = nullStringPtr(sourceURL)
 			if len(areaGeoJSON) > 0 {
 				alert.AreaGeoJSON = json.RawMessage(areaGeoJSON)
 			}

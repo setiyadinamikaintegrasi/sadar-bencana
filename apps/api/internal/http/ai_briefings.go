@@ -769,6 +769,13 @@ func loadFallbackRiskScores(ctx context.Context, db *sql.DB) ([]RiskScore, error
 		rs.Place = nullStringPtr(place)
 		rs.Magnitude = nullFloat64Ptr(magnitude)
 		rs.Source = nullStringPtr(source)
+		sourceValue := ""
+		if rs.Source != nil {
+			sourceValue = *rs.Source
+		}
+		if isNonProductionEvent(sourceValue, rs.EntityID) {
+			continue
+		}
 		scores = append(scores, rs)
 		if len(scores) == 3 {
 			break
