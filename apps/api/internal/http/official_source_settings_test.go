@@ -317,7 +317,7 @@ func TestActiveSourceIngestionChangesForceDryRunInUpdateHandler(t *testing.T) {
 					"admin@example.test", "",
 				).
 				WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(8))
-			mock.ExpectExec("INSERT INTO official_source_setting_audit").
+			mock.ExpectExec(`(?s)INSERT INTO official_source_setting_audit.*jsonb_build_object\('run_mode',\$4::text,'adapter_version',\$5::text\)`).
 				WithArgs("bmkg_air_quality", "admin@example.test", 8, "dry_run", body["adapter_version"]).
 				WillReturnResult(sqlmock.NewResult(1, 1))
 			mock.ExpectCommit()

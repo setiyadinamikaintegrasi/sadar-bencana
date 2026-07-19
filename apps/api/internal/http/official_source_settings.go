@@ -283,7 +283,7 @@ func OfficialSourceSettingUpdate(db *sql.DB, encryptionKey string) gin.HandlerFu
 		_, err = tx.ExecContext(c.Request.Context(), `
 			INSERT INTO official_source_setting_audit
 			  (source_name, action, actor_email, config_version, success, metadata)
-			VALUES ($1,'update',$2,$3,TRUE,jsonb_build_object('run_mode',$4,'adapter_version',$5))`,
+			VALUES ($1,'update',$2,$3,TRUE,jsonb_build_object('run_mode',$4::text,'adapter_version',$5::text))`,
 			source, AuthEmail(c), version, runMode, adapterVersion)
 		if err != nil || tx.Commit() != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database_audit_failed"})
