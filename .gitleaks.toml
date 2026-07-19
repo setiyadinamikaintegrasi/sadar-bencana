@@ -12,3 +12,14 @@ commits = [
 paths = [
   '''README\.md$''',
 ]
+
+[[allowlists]]
+description = "Email idempotency UUID fixture detected as a generic API key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = [
+  "6a1e50a2babd60a70ba77ff3aa7a6d24787dff0f",
+]
+paths = [
+  '''apps/worker/tests/alerts/test_email_channel\.py$''',
+]
