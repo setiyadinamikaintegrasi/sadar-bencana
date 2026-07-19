@@ -1412,6 +1412,18 @@ func TestSourcePreviewPinsPublicIPAndPreservesHostAndSNI(t *testing.T) {
 	}
 }
 
+func TestPinnedOfficialSourceURLUsesResolvedAddress(t *testing.T) {
+	parsed, err := url.Parse("https://iklim.bmkg.go.id/api/air-quality?station=kmy3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target := pinnedOfficialSourceURL(parsed, "8.8.8.8")
+	if target != "https://8.8.8.8:443/api/air-quality?station=kmy3" {
+		t.Fatalf("unexpected pinned request URL: %q", target)
+	}
+}
+
 func TestSourcePreviewDoesNotExposeCredentialsFromNonJSONBody(t *testing.T) {
 	server := httptest.NewTLSServer(stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -1471,11 +1483,6 @@ func TestExecuteSourcePreviewReadsBMKGCAPRSSIndex(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
-	if err != nil {
-		t.Fatalf("split test server host: %v", err)
-	}
-
 	originalLookup := lookupOfficialSourceIPs
 	originalDial := dialOfficialSourceContext
 	originalTLSConfig := officialSourceTLSConfig
@@ -1501,7 +1508,7 @@ func TestExecuteSourcePreviewReadsBMKGCAPRSSIndex(t *testing.T) {
 
 	result, err := executeSourcePreview(ctx, sourceRuntimeConfig{
 		Source:         "bmkg_cap",
-		Endpoint:       "https://bmkg.go.id:" + port + "/alerts/nowcast/id",
+		Endpoint:       "https://bmkg.go.id/alerts/nowcast/id",
 		AdapterVersion: "v1",
 		FieldMapping:   map[string]string{},
 	})

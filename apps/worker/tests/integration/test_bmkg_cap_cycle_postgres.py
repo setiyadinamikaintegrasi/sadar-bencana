@@ -155,6 +155,7 @@ async def isolated_cap_cycle_database():
     admin = await asyncpg.connect(TEST_DATABASE_URL)
     pool = None
     try:
+        await admin.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
         await admin.execute(f'CREATE SCHEMA "{schema}"')
         pool = await asyncpg.create_pool(
             TEST_DATABASE_URL,

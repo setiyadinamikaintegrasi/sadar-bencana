@@ -59,6 +59,21 @@ func TestAirQualityEndpointRequiresApprovedHTTPS443URL(t *testing.T) {
 	}
 }
 
+func TestOfficialSourceEndpointRejectsNonStandardHTTPSPort(t *testing.T) {
+	for _, test := range []struct {
+		source   string
+		endpoint string
+	}{
+		{source: "bmkg_cap", endpoint: "https://www.bmkg.go.id:8443/alerts/nowcast/id"},
+		{source: "pvmbg", endpoint: "https://magma.esdm.go.id:8443/feed"},
+		{source: "bnpb", endpoint: "https://data.bnpb.go.id:8443/feed"},
+	} {
+		if approvedSourceEndpoint(test.source, test.endpoint) {
+			t.Fatalf("non-standard HTTPS port accepted for %s: %s", test.source, test.endpoint)
+		}
+	}
+}
+
 func TestOfficialSourceSettingUpdateRejectsCredentialsInEndpointURL(t *testing.T) {
 	for _, endpoint := range []string{
 		"https://operator:secret@iklim.bmkg.go.id/api/air-quality",

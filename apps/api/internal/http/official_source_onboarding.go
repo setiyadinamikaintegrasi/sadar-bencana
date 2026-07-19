@@ -113,11 +113,7 @@ func fetchOfficialSource(
 		}
 	}
 	pinnedIP := addresses[0].IP.String()
-	port := parsed.Port()
-	if port == "" {
-		port = "443"
-	}
-	pinnedAddress := net.JoinHostPort(pinnedIP, port)
+	pinnedAddress := net.JoinHostPort(pinnedIP, "443")
 	transport := &http.Transport{
 		Proxy:             nil,
 		DisableKeepAlives: true,
@@ -133,7 +129,9 @@ func fetchOfficialSource(
 			return http.ErrUseLastResponse
 		},
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	request, err := http.NewRequestWithContext(
+		ctx, http.MethodGet, pinnedOfficialSourceURL(parsed, pinnedIP), nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +141,18 @@ func fetchOfficialSource(
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	return client.Do(request)
+}
+
+func pinnedOfficialSourceURL(parsed *url.URL, pinnedIP string) string {
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	target := "https://" + net.JoinHostPort(pinnedIP, "443") + path
+	if parsed.ForceQuery || parsed.RawQuery != "" {
+		target += "?" + parsed.RawQuery
+	}
+	return target
 }
 
 func validateAdapterConfiguration(source, version string, mapping map[string]string) error {

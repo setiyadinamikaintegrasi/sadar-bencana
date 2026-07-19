@@ -388,7 +388,7 @@ func approvedSourceEndpoint(source, raw string) bool {
 		endpointURLContainsCredentials(parsed) || !approvedSourceHost(source, parsed.Hostname()) {
 		return false
 	}
-	if source == "bmkg_air_quality" && parsed.Port() != "" && parsed.Port() != "443" {
+	if parsed.Port() != "" && parsed.Port() != "443" {
 		return false
 	}
 	return true
