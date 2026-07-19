@@ -355,24 +355,52 @@ async def _official_alert_topology_errors(
     pool: asyncpg.Pool,
     alerts: list[Any],
 ) -> list[str]:
-    """Validate polygon topology with the same PostGIS primitive as persistence."""
+    """Repair invalid polygon topology and report geometries that remain unsafe."""
     errors: list[str] = []
     async with pool.acquire() as connection:
         for alert in alerts:
             if alert.area_geojson is None:
                 continue
             try:
-                valid = await connection.fetchval(
-                    """SELECT ST_IsValid(
-                           ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)
-                       )""",
+                result = await connection.fetchrow(
+                    """WITH source AS (
+                           SELECT ST_SetSRID(
+                               ST_GeomFromGeoJSON($1::text), 4326
+                           ) AS geometry
+                       ), normalized AS (
+                           SELECT NOT ST_IsValid(geometry) AS repaired,
+                                  CASE WHEN ST_IsValid(geometry) THEN geometry
+                                       ELSE ST_Multi(ST_CollectionExtract(
+                                           ST_MakeValid(geometry), 3
+                                       ))
+                                  END AS geometry
+                           FROM source
+                       )
+                       SELECT repaired,
+                              GeometryType(geometry) AS geometry_type,
+                              ST_IsValid(geometry) AS valid,
+                              ST_IsEmpty(geometry) AS empty,
+                              ST_AsGeoJSON(geometry) AS geojson
+                       FROM normalized""",
                     json.dumps(alert.area_geojson, separators=(",", ":")),
                 )
-                if not valid:
+                geometry_type = str(result["geometry_type"] or "").upper()
+                if (
+                    not result["valid"]
+                    or result["empty"]
+                    or geometry_type not in {"POLYGON", "MULTIPOLYGON"}
+                ):
                     errors.append(
                         f"warning {alert.source_alert_id}: "
                         "area_geojson topology is invalid"
                     )
+                    continue
+                if result["repaired"]:
+                    alert.area_geojson = json.loads(result["geojson"])
+                    if isinstance(alert.raw_payload, dict):
+                        alert.raw_payload["area_geometry_normalization"] = (
+                            "postgis_st_makevalid"
+                        )
             except Exception as exc:
                 errors.append(
                     f"warning {alert.source_alert_id}: "
@@ -448,11 +476,8 @@ async def _bmkg_cap_cycle(
         return 0
     try:
         alerts, detail_errors = await connector.fetch_active()
-        if run_mode == "dry_run" and config_version is not None:
-            detail_errors = [
-                *detail_errors,
-                *await _official_alert_topology_errors(pool, alerts),
-            ]
+        topology_errors = await _official_alert_topology_errors(pool, alerts)
+        detail_errors = [*detail_errors, *topology_errors]
         error_message = "; ".join(detail_errors[:3]) if detail_errors else None
         if run_mode == "dry_run":
             if setting is not None and config_version is not None:
@@ -471,6 +496,14 @@ async def _bmkg_cap_cycle(
                         shadow_after,
                     ),
                 )
+            await complete_source_poll(
+                poll_slot,
+                items_fetched=len(alerts),
+                error_message=error_message,
+            )
+            return 0
+
+        if topology_errors:
             await complete_source_poll(
                 poll_slot,
                 items_fetched=len(alerts),

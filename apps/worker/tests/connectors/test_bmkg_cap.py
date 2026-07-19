@@ -224,6 +224,10 @@ async def test_active_cycle_persists_observations_and_enqueues_new_alert(monkeyp
     assert persist.await_args.args == (pool, alert)
     assert persist.await_args.kwargs["source_name"] == "bmkg_cap"
     assert persist.await_args.kwargs["expected_config_version"] == 7
+    dependencies["_official_alert_topology_errors"].assert_awaited_once_with(
+        pool,
+        [alert],
+    )
     dependencies["complete_source_poll"].assert_awaited_once_with(
         ANY,
         items_fetched=1,
