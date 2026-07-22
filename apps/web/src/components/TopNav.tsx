@@ -1,114 +1,139 @@
-// apps/web/src/components/TopNav.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { ChevronDown, GitFork, Menu as MenuIcon, X } from 'lucide-react'
 import BrandLogo from './BrandLogo'
-
-const PRIMARY_TABS = [
-  { label: 'Executive Overview', icon: '◼' },
-  { label: 'Events', icon: '●' },
-  { label: 'Alerts', icon: '◆' },
-] as const
-
-const OVERFLOW_TABS = [
-  { label: 'Daftar Risiko', icon: '▲' },
-  { label: 'Briefing', icon: '◇' },
-  { label: 'AI Copilot', icon: '✦' },
-  { label: 'Early Warning', icon: '◔' },
-  { label: 'Lokasi Evakuasi', icon: '⛑' },
-  { label: 'Belajar Siaga', icon: '◉' },
-  { label: 'Source Health', icon: '◈' },
-  { label: 'Riwayat Wilayah', icon: '▦' },
-  { label: 'Sumber Resmi', icon: '⚙' },
-  { label: 'Admin EWS', icon: '⚙' },
-  { label: 'Admin Evakuasi', icon: '⚙' },
-] as const
+import {
+  GITHUB_REPOSITORY_URL,
+  PRIMARY_NAV_ITEMS,
+  SECONDARY_NAV_GROUPS,
+  type Section,
+} from '../navigation'
 
 interface TopNavProps {
-  activeSection: string
-  onNavigate: (section: string) => void
+  activeSection: Section
+  onNavigate: (section: Section) => void
 }
 
 export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
-  const [overflowOpen, setOverflowOpen] = useState(false)
-  const isOverflowActive = OVERFLOW_TABS.some((t) => t.label === activeSection)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const isSecondaryActive = SECONDARY_NAV_GROUPS.some((group) =>
+    group.items.some((item) => item.section === activeSection),
+  )
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [menuOpen])
+
+  const navigate = (section: Section) => {
+    onNavigate(section)
+    setMenuOpen(false)
+  }
 
   return (
     <header className="fixed inset-x-0 top-0 z-10 hidden border-b border-slate-800 bg-slate-900 md:flex md:h-14 md:items-center md:gap-0 md:px-6">
-      {/* Logo */}
       <button
         type="button"
-        onClick={() => onNavigate('Executive Overview')}
+        onClick={() => navigate('Executive Overview')}
         className="mr-2 flex h-14 shrink-0 items-center border-r border-slate-800 pr-5"
         aria-label="Buka Executive Overview"
       >
         <BrandLogo className="h-8 w-auto" />
       </button>
 
-      {/* Primary tabs */}
-      <nav className="flex flex-1 items-stretch h-14">
-        {PRIMARY_TABS.map((tab) => {
-          const isActive = tab.label === activeSection
+      <nav aria-label="Navigasi utama" className="flex h-14 flex-1 items-stretch">
+        {PRIMARY_NAV_ITEMS.map(({ section, desktopLabel, icon: Icon }) => {
+          const isActive = section === activeSection
+
           return (
             <button
-              key={tab.label}
+              key={section}
               type="button"
-              onClick={() => onNavigate(tab.label)}
+              onClick={() => navigate(section)}
+              aria-current={isActive ? 'page' : undefined}
               className={`flex items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
                 isActive
                   ? 'border-indigo-400 text-indigo-300'
                   : 'border-transparent text-slate-400 hover:text-slate-100'
               }`}
             >
-              <span className="text-xs">{tab.icon}</span>
-              {tab.label}
+              <Icon aria-hidden="true" className="h-4 w-4" />
+              {desktopLabel}
             </button>
           )
         })}
+
+        <div className="relative flex h-14 items-stretch">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-expanded={menuOpen}
+            aria-controls="secondary-navigation"
+            className={`flex items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
+              isSecondaryActive || menuOpen
+                ? 'border-indigo-400 text-indigo-300'
+                : 'border-transparent text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            {menuOpen ? <X aria-hidden="true" className="h-4 w-4" /> : <MenuIcon aria-hidden="true" className="h-4 w-4" />}
+            Menu
+            <ChevronDown aria-hidden="true" className="h-4 w-4" />
+          </button>
+
+          {menuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-[15]"
+                onClick={() => setMenuOpen(false)}
+                aria-hidden="true"
+              />
+              <div
+                id="secondary-navigation"
+                className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-slate-700 bg-slate-900 py-2 shadow-2xl shadow-slate-950/60"
+              >
+                {SECONDARY_NAV_GROUPS.map(({ label, items }) => (
+                  <section key={label} aria-labelledby={`secondary-${label}`} className="px-2 py-1">
+                    <h2 id={`secondary-${label}`} className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {label}
+                    </h2>
+                    {items.map(({ section, desktopLabel, icon: Icon }) => (
+                      <button
+                        key={section}
+                        type="button"
+                        onClick={() => navigate(section)}
+                        aria-current={section === activeSection ? 'page' : undefined}
+                        className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm font-medium transition ${
+                          section === activeSection
+                            ? 'text-indigo-300'
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+                        }`}
+                      >
+                        <Icon aria-hidden="true" className="h-4 w-4 text-slate-500" />
+                        {desktopLabel}
+                      </button>
+                    ))}
+                  </section>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </nav>
 
-      {/* Overflow dropdown */}
-      <div className="relative h-14 flex items-stretch">
-        <button
-          type="button"
-          onClick={() => setOverflowOpen((v) => !v)}
-          className={`flex items-center gap-1 border-b-2 px-4 text-sm font-medium transition ${
-            isOverflowActive || overflowOpen
-              ? 'border-indigo-400 text-indigo-300'
-              : 'border-transparent text-slate-400 hover:text-slate-100'
-          }`}
-        >
-          ···
-          <span className="text-[10px] ml-0.5">▾</span>
-        </button>
-
-        {overflowOpen && (
-          <>
-            <div
-              className="fixed inset-0 z-[15]"
-              onClick={() => setOverflowOpen(false)}
-            />
-            <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-xl border border-slate-700 bg-slate-900 py-2 shadow-2xl shadow-slate-950/60">
-              {OVERFLOW_TABS.map((tab) => (
-                <button
-                  key={tab.label}
-                  type="button"
-                  onClick={() => {
-                    onNavigate(tab.label)
-                    setOverflowOpen(false)
-                  }}
-                  className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm font-medium transition ${
-                    tab.label === activeSection
-                      ? 'text-indigo-300'
-                      : 'text-slate-300 hover:text-slate-100'
-                  }`}
-                >
-                  <span className="text-xs text-slate-500">{tab.icon}</span>
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+      <a
+        href={GITHUB_REPOSITORY_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="ml-4 flex shrink-0 items-center gap-2 text-sm font-medium text-slate-400 transition hover:text-slate-100"
+      >
+        <GitFork aria-hidden="true" className="h-4 w-4" />
+        <span>GitHub · Open Source</span>
+      </a>
     </header>
   )
 }
