@@ -36,14 +36,19 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
   }
 
   return (
-    <header className="fixed inset-x-0 top-0 z-10 hidden border-b border-slate-800 bg-slate-900 md:flex md:h-14 md:items-center md:gap-0 md:px-6">
+    <header className="fixed inset-x-0 top-0 z-10 hidden border-b border-slate-800 bg-slate-900 md:flex md:h-14 md:items-center md:gap-0 md:px-3 lg:px-6">
       <button
         type="button"
         onClick={() => navigate('Executive Overview')}
-        className="mr-2 flex h-14 shrink-0 items-center border-r border-slate-800 pr-5"
+        className="mr-1 flex h-14 shrink-0 items-center border-r border-slate-800 pr-3 lg:mr-2 lg:pr-5"
         aria-label="Buka Executive Overview"
       >
-        <BrandLogo className="h-8 w-auto" />
+        <span className="md:block lg:hidden">
+          <BrandLogo variant="mark" decorative className="h-7 w-7 shrink-0" />
+        </span>
+        <span className="hidden lg:block">
+          <BrandLogo variant="horizontal" decorative className="h-8 w-auto" />
+        </span>
       </button>
 
       <nav aria-label="Navigasi utama" className="flex h-14 flex-1 items-stretch">
@@ -56,7 +61,7 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
               type="button"
               onClick={() => navigate(section)}
               aria-current={isActive ? 'page' : undefined}
-              className={`flex items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
+              className={`flex items-center border-b-2 text-sm font-medium transition md:gap-1 md:px-2 lg:gap-2 lg:px-4 ${
                 isActive
                   ? 'border-indigo-400 text-indigo-300'
                   : 'border-transparent text-slate-400 hover:text-slate-100'
@@ -74,7 +79,7 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
             onClick={() => setMenuOpen((open) => !open)}
             aria-expanded={menuOpen}
             aria-controls="secondary-navigation"
-            className={`flex items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
+            className={`flex items-center border-b-2 text-sm font-medium transition md:gap-1 md:px-2 lg:gap-2 lg:px-4 ${
               isSecondaryActive || menuOpen
                 ? 'border-indigo-400 text-indigo-300'
                 : 'border-transparent text-slate-400 hover:text-slate-100'
@@ -129,10 +134,11 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
         href={GITHUB_REPOSITORY_URL}
         target="_blank"
         rel="noreferrer"
-        className="ml-4 flex shrink-0 items-center gap-2 text-sm font-medium text-slate-400 transition hover:text-slate-100"
+        aria-label="GitHub Open Source"
+        className="ml-2 flex shrink-0 items-center text-sm font-medium text-slate-400 transition hover:text-slate-100 lg:ml-4"
       >
-        <GitFork aria-hidden="true" className="h-4 w-4" />
-        <span>GitHub · Open Source</span>
+        <GitFork aria-hidden="true" className="h-4 w-4 shrink-0" />
+        <span className="hidden xl:inline xl:pl-2">GitHub · Open Source</span>
       </a>
     </header>
   )

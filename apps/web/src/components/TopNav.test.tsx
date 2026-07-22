@@ -14,9 +14,26 @@ describe('TopNav', () => {
     expect(screen.getByRole('navigation', { name: 'Navigasi utama' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Early Warning' }).getAttribute('aria-current')).toBe('page')
 
-    const github = screen.getByRole('link', { name: /GitHub.*Open Source/i })
+    const github = screen.getByRole('link', { name: 'GitHub Open Source' })
     expect(github.getAttribute('href')).toBe(GITHUB_REPOSITORY_URL)
     expect(github.getAttribute('target')).toBe('_blank')
+    expect(github.getAttribute('rel')).toBe('noreferrer')
+    expect(github.querySelector('svg')).toBeTruthy()
+    expect(github.querySelector('span')?.className).toContain('hidden')
+    expect(github.querySelector('span')?.className).toContain('xl:inline')
+
+    const header = screen.getByRole('banner')
+    expect(header.className).toContain('md:px-3')
+    expect(header.className).toContain('lg:px-6')
+
+    const logos = header.querySelectorAll('img')
+    expect(logos).toHaveLength(2)
+    expect(logos[0].getAttribute('src')).toBe('/brand/logo-mark.svg')
+    expect(logos[1].getAttribute('src')).toBe('/brand/logo-horizontal.svg')
+    expect(logos[0].parentElement?.className).toContain('md:block')
+    expect(logos[0].parentElement?.className).toContain('lg:hidden')
+    expect(logos[1].parentElement?.className).toContain('hidden')
+    expect(logos[1].parentElement?.className).toContain('lg:block')
   })
 
   it('opens grouped secondary navigation and closes after navigating', () => {
