@@ -92,4 +92,59 @@ describe('App mobile navigation', () => {
     expect(screen.getByText('Analisis')).toBeTruthy()
     expect(screen.getByText('Administrasi')).toBeTruthy()
   })
+
+  it('opens a labelled modal, focuses its first control, and uses a stable five-column bar', () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', { name: 'Navigasi mobile' })
+    expect(navigation.className).toContain('grid-cols-5')
+    for (const button of within(navigation).getAllByRole('button')) {
+      expect(button.className).toContain('min-h-16')
+      expect(button.className).toContain('grid-rows-[20px_24px]')
+    }
+
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Menu' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Menu navigasi' })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Events' }))
+    expect(screen.getByRole('main', { hidden: true }).getAttribute('aria-hidden')).toBe('true')
+    expect(navigation.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('contains Tab navigation within the mobile modal', () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', { name: 'Navigasi mobile' })
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Menu' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Menu navigasi' })
+    const firstControl = within(dialog).getByRole('button', { name: 'Events' })
+    const lastControl = within(dialog).getByRole('button', { name: 'Tutup' })
+
+    lastControl.focus()
+    fireEvent.keyDown(lastControl, { key: 'Tab' })
+    expect(document.activeElement).toBe(firstControl)
+
+    firstControl.focus()
+    fireEvent.keyDown(firstControl, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(lastControl)
+  })
+
+  it('returns focus to Menu after Escape dismisses the mobile modal', () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', { name: 'Navigasi mobile' })
+    const menu = within(navigation).getByRole('button', { name: 'Menu' })
+    menu.focus()
+    fireEvent.click(menu)
+    expect(screen.getByRole('dialog', { name: 'Menu navigasi' })).toBeTruthy()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Menu navigasi' })).toBeNull()
+    expect(document.activeElement).toBe(menu)
+    expect(screen.getByRole('main').getAttribute('aria-hidden')).toBeNull()
+    expect(navigation.getAttribute('aria-hidden')).toBeNull()
+  })
 })

@@ -27,6 +27,19 @@ import {
   type Section,
 } from './navigation'
 
+const focusableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ')
+
+function getFocusableElements(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector))
+}
+
 function AIProtected({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
   if (loading) {
@@ -49,6 +62,9 @@ function App() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(null)
   const officialAlertFocusNonce = useRef(0)
+  const menuTriggerRef = useRef<HTMLButtonElement>(null)
+  const mobileMenuDialogRef = useRef<HTMLDivElement>(null)
+  const shouldRestoreMenuFocus = useRef(false)
 
   const navigate = (section: Section) => {
     setActiveSection(section)
@@ -59,16 +75,46 @@ function App() {
     group.items.some((item) => item.section === activeSection),
   )
 
+  const dismissMoreMenu = useCallback(() => {
+    shouldRestoreMenuFocus.current = true
+    setMoreOpen(false)
+  }, [])
+
   useEffect(() => {
-    if (!moreOpen) return
+    if (!moreOpen) {
+      if (shouldRestoreMenuFocus.current) {
+        menuTriggerRef.current?.focus()
+        shouldRestoreMenuFocus.current = false
+      }
+      return
+    }
+
+    getFocusableElements(mobileMenuDialogRef.current ?? document.body)[0]?.focus()
 
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMoreOpen(false)
+      if (event.key === 'Escape') dismissMoreMenu()
     }
 
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [moreOpen])
+  }, [dismissMoreMenu, moreOpen])
+
+  const trapMenuFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab' || !mobileMenuDialogRef.current) return
+
+    const focusableElements = getFocusableElements(mobileMenuDialogRef.current)
+    const first = focusableElements[0]
+    const last = focusableElements[focusableElements.length - 1]
+    if (!first || !last) return
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
 
   const showOfficialAlertOnMap = (id: string) => {
     officialAlertFocusNonce.current += 1
@@ -82,13 +128,14 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Desktop top nav — hidden on mobile */}
-      <TopNav activeSection={activeSection} onNavigate={navigate} />
+      <div aria-hidden={moreOpen ? 'true' : undefined}>
+        {/* Desktop top nav — hidden on mobile */}
+        <TopNav activeSection={activeSection} onNavigate={navigate} />
 
-      {/* Main content */}
-      <div className="flex min-h-screen flex-col md:pt-14">
-        {/* Mobile-only header */}
-        <header className="flex min-h-14 items-center gap-3 border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:hidden">
+        {/* Main content */}
+        <div className="flex min-h-screen flex-col md:pt-14">
+          {/* Mobile-only header */}
+          <header className="flex min-h-14 items-center gap-3 border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:hidden">
           <BrandLogo variant="mark" decorative className="h-7 w-7 shrink-0" />
           <h2 className="min-w-0 text-lg font-semibold text-slate-50">{activeSection}</h2>
           <a
@@ -100,9 +147,9 @@ function App() {
           >
             <GitFork aria-hidden="true" className="h-5 w-5" />
           </a>
-        </header>
+          </header>
 
-        <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
+          <main aria-hidden={moreOpen ? 'true' : undefined} className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
           {activeSection === 'Executive Overview' ? (
             <ExecutiveOverview
               initialOfficialAlertFocus={officialAlertFocus}
@@ -139,10 +186,11 @@ function App() {
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>
             </section>
           )}
-        </main>
+          </main>
+        </div>
       </div>
 
-      <nav aria-label="Navigasi mobile" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-slate-800 bg-slate-900 md:hidden">
+      <nav aria-hidden={moreOpen ? 'true' : undefined} aria-label="Navigasi mobile" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-slate-800 bg-slate-900 md:hidden">
         {PRIMARY_NAV_ITEMS.map(({ section, mobileLabel, icon: Icon }) => {
           const isActive = section === activeSection
           return (
@@ -161,6 +209,7 @@ function App() {
           )
         })}
         <button
+          ref={menuTriggerRef}
           type="button"
           onClick={() => setMoreOpen(true)}
           aria-expanded={moreOpen}
@@ -178,13 +227,15 @@ function App() {
         <>
           <div
             className="fixed inset-0 z-30 bg-black/60 md:hidden"
-            onClick={() => setMoreOpen(false)}
+            onClick={dismissMoreMenu}
           />
           <div
+            ref={mobileMenuDialogRef}
             id="mobile-secondary-navigation"
             role="dialog"
             aria-modal="true"
             aria-label="Menu navigasi"
+            onKeyDown={trapMenuFocus}
             className="fixed inset-x-0 bottom-0 z-40 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-slate-800 bg-slate-900 p-6 md:hidden"
           >
             <div className="space-y-4">
@@ -216,7 +267,7 @@ function App() {
             </div>
             <button
               type="button"
-              onClick={() => setMoreOpen(false)}
+              onClick={dismissMoreMenu}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 py-3 text-sm font-medium text-slate-300 transition hover:border-slate-600"
             >
               <X aria-hidden="true" className="h-4 w-4" />
