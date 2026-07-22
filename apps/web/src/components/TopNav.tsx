@@ -39,7 +39,7 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
     <header className="fixed inset-x-0 top-0 z-10 hidden border-b border-slate-800 bg-slate-900 md:flex md:h-14 md:items-center md:gap-0 md:px-3 lg:px-6">
       <button
         type="button"
-        onClick={() => navigate('Executive Overview')}
+        onClick={() => onNavigate('Executive Overview')}
         className="mr-1 flex h-14 shrink-0 items-center border-r border-slate-800 pr-3 lg:mr-2 lg:pr-5"
         aria-label="Buka Executive Overview"
       >
@@ -47,7 +47,7 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
           <BrandLogo variant="mark" decorative className="h-7 w-7 shrink-0" />
         </span>
         <span className="hidden lg:block">
-          <BrandLogo variant="horizontal" decorative className="h-8 w-auto" />
+          <BrandLogo className="h-8 w-auto" />
         </span>
       </button>
 
