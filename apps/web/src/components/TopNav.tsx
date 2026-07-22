@@ -135,10 +135,11 @@ export default function TopNav({ activeSection, onNavigate }: TopNavProps) {
         target="_blank"
         rel="noreferrer"
         aria-label="GitHub Open Source"
-        className="ml-2 flex shrink-0 items-center text-sm font-medium text-slate-400 transition hover:text-slate-100 lg:ml-4"
+        className="ml-2 flex shrink-0 items-center gap-1.5 text-sm font-medium text-slate-400 transition hover:text-slate-100 lg:ml-4"
       >
         <GitFork aria-hidden="true" className="h-4 w-4 shrink-0" />
-        <span className="hidden xl:inline xl:pl-2">GitHub · Open Source</span>
+        <span>GitHub</span>
+        <span className="hidden xl:inline">· Open Source</span>
       </a>
     </header>
   )

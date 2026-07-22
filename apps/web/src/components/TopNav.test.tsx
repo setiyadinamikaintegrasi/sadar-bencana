@@ -19,8 +19,9 @@ describe('TopNav', () => {
     expect(github.getAttribute('target')).toBe('_blank')
     expect(github.getAttribute('rel')).toBe('noreferrer')
     expect(github.querySelector('svg')).toBeTruthy()
-    expect(github.querySelector('span')?.className).toContain('hidden')
-    expect(github.querySelector('span')?.className).toContain('xl:inline')
+    expect(screen.getByText('GitHub').className).not.toContain('hidden')
+    expect(screen.getByText('· Open Source').className).toContain('hidden')
+    expect(screen.getByText('· Open Source').className).toContain('xl:inline')
 
     const header = screen.getByRole('banner')
     expect(header.className).toContain('md:px-3')

@@ -67,6 +67,9 @@ function App() {
   const shouldRestoreMenuFocus = useRef(false)
 
   const navigate = (section: Section) => {
+    if (moreOpen) {
+      shouldRestoreMenuFocus.current = true
+    }
     setActiveSection(section)
     setMoreOpen(false)
   }

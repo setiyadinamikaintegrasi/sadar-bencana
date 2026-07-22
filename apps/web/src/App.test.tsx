@@ -148,4 +148,19 @@ describe('App mobile navigation', () => {
     expect(screen.getByRole('main').getAttribute('aria-hidden')).toBeNull()
     expect(navigation.getAttribute('aria-hidden')).toBeNull()
   })
+
+  it('returns focus to Menu after selecting a mobile secondary destination', () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', { name: 'Navigasi mobile' })
+    const menu = within(navigation).getByRole('button', { name: 'Menu' })
+    menu.focus()
+    fireEvent.click(menu)
+
+    const dialog = screen.getByRole('dialog', { name: 'Menu navigasi' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Events' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Menu navigasi' })).toBeNull()
+    expect(document.activeElement).toBe(menu)
+  })
 })
