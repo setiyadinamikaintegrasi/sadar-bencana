@@ -1,5 +1,6 @@
 // apps/web/src/App.tsx
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { GitFork, Menu as MenuIcon, X } from 'lucide-react'
 import AlertsPage from './features/alerts/AlertsPage'
 import BriefingPage from './features/briefing/BriefingPage'
 import CopilotPage from './features/copilot/CopilotPage'
@@ -19,25 +20,12 @@ import BrandLogo from './components/BrandLogo'
 import TopNav from './components/TopNav'
 import type { OverlayFocusRequest } from './components/RiskMap'
 import { useAuth } from './lib/auth/AuthProvider'
-
-const sections = [
-  { label: 'Executive Overview', icon: '◼' },
-  { label: 'Events', icon: '●' },
-  { label: 'Daftar Risiko', icon: '▲' },
-  { label: 'Alerts', icon: '◆' },
-  { label: 'Briefing', icon: '◇' },
-  { label: 'AI Copilot', icon: '✦' },
-  { label: 'Early Warning', icon: '◔' },
-  { label: 'Lokasi Evakuasi', icon: '⛑' },
-  { label: 'Belajar Siaga', icon: '◉' },
-  { label: 'Source Health', icon: '◈' },
-  { label: 'Riwayat Wilayah', icon: '▦' },
-  { label: 'Sumber Resmi', icon: '⚙' },
-  { label: 'Admin EWS', icon: '⚙' },
-  { label: 'Admin Evakuasi', icon: '⚙' },
-] as const
-
-type Section = (typeof sections)[number]['label']
+import {
+  GITHUB_REPOSITORY_URL,
+  PRIMARY_NAV_ITEMS,
+  SECONDARY_NAV_GROUPS,
+  type Section,
+} from './navigation'
 
 function AIProtected({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -56,36 +44,31 @@ function AIProtected({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-const bottomTabs = [
-  { label: 'Overview', section: 'Executive Overview' as Section, icon: '◼' },
-  { label: 'Events', section: 'Events' as Section, icon: '●' },
-  { label: 'Alerts', section: 'Alerts' as Section, icon: '◆' },
-] as const
-
-const moreSections: { label: string; section: Section; icon: string }[] = [
-  { label: 'Daftar Risiko', section: 'Daftar Risiko', icon: '▲' },
-  { label: 'Briefing', section: 'Briefing', icon: '◇' },
-  { label: 'AI Copilot', section: 'AI Copilot', icon: '✦' },
-  { label: 'Early Warning', section: 'Early Warning', icon: '◔' },
-  { label: 'Lokasi Evakuasi', section: 'Lokasi Evakuasi', icon: '⛑' },
-  { label: 'Belajar Siaga', section: 'Belajar Siaga', icon: '◉' },
-  { label: 'Source Health', section: 'Source Health', icon: '◈' },
-  { label: 'Riwayat Wilayah', section: 'Riwayat Wilayah', icon: '▦' },
-  { label: 'Sumber Resmi', section: 'Sumber Resmi', icon: '⚙' },
-  { label: 'Admin EWS', section: 'Admin EWS', icon: '⚙' },
-  { label: 'Admin Evakuasi', section: 'Admin Evakuasi', icon: '⚙' },
-]
-
 function App() {
   const [activeSection, setActiveSection] = useState<Section>('Executive Overview')
   const [moreOpen, setMoreOpen] = useState(false)
   const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(null)
   const officialAlertFocusNonce = useRef(0)
 
-  const navigate = (section: string) => {
-    setActiveSection(section as Section)
+  const navigate = (section: Section) => {
+    setActiveSection(section)
     setMoreOpen(false)
   }
+
+  const isSecondaryActive = SECONDARY_NAV_GROUPS.some((group) =>
+    group.items.some((item) => item.section === activeSection),
+  )
+
+  useEffect(() => {
+    if (!moreOpen) return
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMoreOpen(false)
+    }
+
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [moreOpen])
 
   const showOfficialAlertOnMap = (id: string) => {
     officialAlertFocusNonce.current += 1
@@ -108,6 +91,15 @@ function App() {
         <header className="flex min-h-14 items-center gap-3 border-b border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur md:hidden">
           <BrandLogo variant="mark" decorative className="h-7 w-7 shrink-0" />
           <h2 className="min-w-0 text-lg font-semibold text-slate-50">{activeSection}</h2>
+          <a
+            href={GITHUB_REPOSITORY_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="GitHub Open Source"
+            className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100"
+          >
+            <GitFork aria-hidden="true" className="h-5 w-5" />
+          </a>
         </header>
 
         <main className="flex-1 px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
@@ -150,66 +142,84 @@ function App() {
         </main>
       </div>
 
-      {/* Mobile bottom tab bar — unchanged */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-slate-800 bg-slate-900 md:hidden">
-        {bottomTabs.map((tab) => {
-          const isActive = tab.section === activeSection
+      <nav aria-label="Navigasi mobile" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-slate-800 bg-slate-900 md:hidden">
+        {PRIMARY_NAV_ITEMS.map(({ section, mobileLabel, icon: Icon }) => {
+          const isActive = section === activeSection
           return (
             <button
-              key={tab.section}
+              key={section}
               type="button"
-              onClick={() => navigate(tab.section)}
-              className={`flex flex-1 flex-col items-center gap-1 py-3 text-xs font-medium transition ${
+              onClick={() => navigate(section)}
+              aria-current={isActive ? 'page' : undefined}
+              className={`grid min-h-16 w-full grid-rows-[20px_24px] place-items-center py-2 text-xs font-medium transition ${
                 isActive ? 'text-indigo-300' : 'text-slate-500'
               }`}
             >
-              <span className="text-base leading-none">{tab.icon}</span>
-              <span>{tab.label}</span>
+              <Icon aria-hidden="true" className="h-5 w-5" />
+              <span>{mobileLabel}</span>
             </button>
           )
         })}
         <button
           type="button"
           onClick={() => setMoreOpen(true)}
-          className={`flex flex-1 flex-col items-center gap-1 py-3 text-xs font-medium transition ${
-            moreSections.some((s) => s.section === activeSection) ? 'text-indigo-300' : 'text-slate-500'
+          aria-expanded={moreOpen}
+          aria-controls="mobile-secondary-navigation"
+          className={`grid min-h-16 w-full grid-rows-[20px_24px] place-items-center py-2 text-xs font-medium transition ${
+            isSecondaryActive || moreOpen ? 'text-indigo-300' : 'text-slate-500'
           }`}
         >
-          <span className="text-base leading-none">···</span>
-          <span>More</span>
+          <MenuIcon aria-hidden="true" className="h-5 w-5" />
+          <span>Menu</span>
         </button>
       </nav>
 
-      {/* More sheet */}
       {moreOpen && (
         <>
           <div
             className="fixed inset-0 z-30 bg-black/60 md:hidden"
             onClick={() => setMoreOpen(false)}
           />
-          <div className="fixed inset-x-0 bottom-0 z-40 rounded-t-2xl border-t border-slate-800 bg-slate-900 p-6 md:hidden">
-            <div className="space-y-2">
-              {moreSections.map((item) => (
-                <button
-                  key={item.section}
-                  type="button"
-                  onClick={() => navigate(item.section)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
-                    activeSection === item.section
-                      ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-inset ring-indigo-400/40'
-                      : 'text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <span className="text-xs text-slate-500">{item.icon}</span>
-                  <span>{item.section}</span>
-                </button>
+          <div
+            id="mobile-secondary-navigation"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu navigasi"
+            className="fixed inset-x-0 bottom-0 z-40 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-slate-800 bg-slate-900 p-6 md:hidden"
+          >
+            <div className="space-y-4">
+              {SECONDARY_NAV_GROUPS.map(({ label, items }) => (
+                <section key={label} aria-labelledby={`mobile-secondary-${label}`}>
+                  <h2 id={`mobile-secondary-${label}`} className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {label}
+                  </h2>
+                  <div className="space-y-1">
+                    {items.map(({ section, mobileLabel, icon: Icon }) => (
+                      <button
+                        key={section}
+                        type="button"
+                        onClick={() => navigate(section)}
+                        aria-current={activeSection === section ? 'page' : undefined}
+                        className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
+                          activeSection === section
+                            ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-inset ring-indigo-400/40'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <Icon aria-hidden="true" className="h-4 w-4 text-slate-500" />
+                        <span>{mobileLabel}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
             <button
               type="button"
               onClick={() => setMoreOpen(false)}
-              className="mt-4 w-full rounded-xl border border-slate-700 bg-slate-800 py-3 text-sm font-medium text-slate-300 transition hover:border-slate-600"
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 py-3 text-sm font-medium text-slate-300 transition hover:border-slate-600"
             >
+              <X aria-hidden="true" className="h-4 w-4" />
               Tutup
             </button>
           </div>

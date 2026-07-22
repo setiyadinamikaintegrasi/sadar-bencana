@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OverlayFocusRequest } from './components/RiskMap'
+import { GITHUB_REPOSITORY_URL } from './navigation'
 import App from './App'
 
 vi.mock('./components/TopNav', () => ({
@@ -66,5 +67,29 @@ describe('App EWS map navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ke Dashboard' }))
 
     expect(screen.getByTestId('dashboard-focus').textContent).toBe('none')
+  })
+})
+
+describe('App mobile navigation', () => {
+  it('prioritizes public safety workflows and exposes grouped secondary navigation', () => {
+    render(<App />)
+
+    const navigation = screen.getByRole('navigation', { name: 'Navigasi mobile' })
+    expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Overview', 'Early Warning', 'Evakuasi', 'Belajar', 'Menu',
+    ])
+
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Early Warning' }))
+    expect(screen.getByRole('button', { name: 'Lihat warning di peta' })).toBeTruthy()
+
+    const github = screen.getByRole('link', { name: 'GitHub Open Source' })
+    expect(github.getAttribute('href')).toBe(GITHUB_REPOSITORY_URL)
+    expect(github.getAttribute('target')).toBe('_blank')
+    expect(github.getAttribute('rel')).toBe('noreferrer')
+
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Menu' }))
+    expect(screen.getByText('Pemantauan')).toBeTruthy()
+    expect(screen.getByText('Analisis')).toBeTruthy()
+    expect(screen.getByText('Administrasi')).toBeTruthy()
   })
 })
