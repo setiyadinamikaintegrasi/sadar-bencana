@@ -86,6 +86,7 @@ describe('App mobile navigation', () => {
     expect(github.getAttribute('href')).toBe(GITHUB_REPOSITORY_URL)
     expect(github.getAttribute('target')).toBe('_blank')
     expect(github.getAttribute('rel')).toBe('noreferrer')
+    expect(github.textContent).toContain('GitHub')
 
     fireEvent.click(within(navigation).getByRole('button', { name: 'Menu' }))
     expect(screen.getByText('Pemantauan')).toBeTruthy()

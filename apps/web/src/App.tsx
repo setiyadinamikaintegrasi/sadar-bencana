@@ -143,9 +143,10 @@ function App() {
             target="_blank"
             rel="noreferrer"
             aria-label="GitHub Open Source"
-            className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center text-slate-400 transition hover:text-slate-100"
+            className="ml-auto flex h-9 shrink-0 items-center gap-1.5 px-2 text-slate-400 transition hover:text-slate-100"
           >
             <GitFork aria-hidden="true" className="h-5 w-5" />
+            <span className="text-xs font-medium">GitHub</span>
           </a>
           </header>
 
