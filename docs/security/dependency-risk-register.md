@@ -28,3 +28,28 @@ Kontrol sementara:
 
 Risiko ini harus ditinjau kembali paling lambat **4 Agustus 2026**, atau lebih
 awal ketika pembaruan upstream tersedia.
+
+## GHSA-frvp-7c67-39w9 — Hono Node server path traversal
+
+| Field | Nilai |
+|---|---|
+| Severity | Moderate |
+| Dependency | `@hono/node-server` |
+| Introduced by | Mastra melalui `@mastra/deployer` dan `@modelcontextprotocol/sdk` |
+| Directly imported | Tidak |
+| Status | Diterima sementara |
+| Review cadence | Mingguan melalui Dependabot dan workflow Security |
+
+Advisory ini berdampak pada host Windows yang menggunakan `serve-static`
+dengan encoded backslash. Deployment produksi Sadar Bencana berjalan di
+Linux, dan aplikasi tidak mengimpor adapter tersebut secara langsung.
+
+Kontrol sementara:
+
+- CI tetap gagal untuk advisory npm berlevel high atau critical.
+- Mastra hanya mendengarkan pada bridge Docker internal, bukan alamat publik.
+- Upgrade dilakukan setelah Mastra mendukung `@hono/node-server >= 2.0.5`
+  tanpa memerlukan penurunan atau perubahan mayor yang tidak teruji.
+
+Risiko ini harus ditinjau kembali paling lambat **12 Agustus 2026**, atau lebih
+awal ketika pembaruan upstream tersedia.
