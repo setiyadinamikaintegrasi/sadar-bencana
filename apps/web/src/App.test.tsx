@@ -92,6 +92,7 @@ describe('App mobile navigation', () => {
     expect(screen.getByText('Pemantauan')).toBeTruthy()
     expect(screen.getByText('Analisis')).toBeTruthy()
     expect(screen.getByText('Administrasi')).toBeTruthy()
+    expect(within(screen.getByRole('dialog', { name: 'Menu navigasi' })).getByRole('button', { name: 'Teknologi & Lisensi' })).toBeTruthy()
   })
 
   it('opens a labelled modal, focuses its first control, and uses a stable five-column bar', () => {

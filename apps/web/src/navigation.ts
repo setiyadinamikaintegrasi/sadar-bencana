@@ -4,6 +4,7 @@ import {
   FileText,
   GraduationCap,
   History,
+  Info,
   LayoutDashboard,
   MapPinned,
   Radio,
@@ -29,6 +30,7 @@ export type Section =
   | 'Sumber Resmi'
   | 'Admin EWS'
   | 'Admin Evakuasi'
+  | 'Teknologi & Lisensi'
 
 export type NavigationItem = {
   section: Section
@@ -76,6 +78,7 @@ export const SECONDARY_NAV_GROUPS = [
       { section: 'Sumber Resmi', desktopLabel: 'Sumber Resmi', mobileLabel: 'Sumber Resmi', icon: Settings },
       { section: 'Admin EWS', desktopLabel: 'Admin EWS', mobileLabel: 'Admin EWS', icon: Radio },
       { section: 'Admin Evakuasi', desktopLabel: 'Admin Evakuasi', mobileLabel: 'Admin Evakuasi', icon: MapPinned },
+      { section: 'Teknologi & Lisensi', desktopLabel: 'Teknologi & Lisensi', mobileLabel: 'Teknologi & Lisensi', icon: Info },
     ],
   },
 ] as const satisfies readonly NavigationGroup[]
