@@ -15,6 +15,7 @@ import EwsAdminSettingsPage from './features/settings/EwsAdminSettingsPage'
 import EvacuationPage from './features/evacuation/EvacuationPage'
 import EvacuationAdminPage from './features/evacuation/EvacuationAdminPage'
 import LearningPage from './features/learning/LearningPage'
+import TechnologyAttributionPage from './features/about/TechnologyAttributionPage'
 import LoginGate from './features/ews/LoginGate'
 import BrandLogo from './components/BrandLogo'
 import TopNav from './components/TopNav'
@@ -185,6 +186,8 @@ function App() {
             <EwsAdminSettingsPage />
           ) : activeSection === 'Admin Evakuasi' ? (
             <EvacuationAdminPage />
+          ) : activeSection === 'Teknologi & Lisensi' ? (
+            <TechnologyAttributionPage />
           ) : (
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-slate-950/40">
               <p className="text-lg font-medium text-slate-100">{activeSection} — coming soon</p>
