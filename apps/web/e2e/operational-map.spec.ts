@@ -1,5 +1,11 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
+const FIXTURE_ACCESS_TOKEN = 'fixture.eyJzdWIiOiJmaXh0dXJlLW93bmVyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature'
+const FIXTURE_BEARER_TOKEN = `Bearer ${FIXTURE_ACCESS_TOKEN}`
+const FIXTURE_SUPABASE_STORAGE_KEY = 'sb-fixture-auth-token'
+const LOCAL_ORIGIN = 'http://127.0.0.1:4173'
+const FIXTURE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
+
 const LOCAL_STYLE = {
   version: 8,
   sources: {},
@@ -34,7 +40,7 @@ const eventFeature = {
 const privateFeature = (layer: 'watch-zones' | 'personal-assets') => ({
   type: 'Feature',
   id: `${layer}:fixture-owner`,
-  geometry: { type: 'Point', coordinates: [106.83, -6.19] },
+  geometry: { type: 'Point', coordinates: [118, -2.5] },
   properties: {
     id: `${layer}:fixture-owner`,
     layer,
@@ -49,7 +55,7 @@ function collection(layer: string, features: unknown[], truncated = false) {
   return { type: 'FeatureCollection', layer, features, truncated }
 }
 
-function responseFor(pathname: string): unknown {
+function responseFor(pathname: string): unknown | undefined {
   if (pathname === '/api/v1/events') {
     return {
       data: [{
@@ -79,8 +85,9 @@ function responseFor(pathname: string): unknown {
   }
   if (pathname === '/api/v1/alerts') return { data: [], meta: { count: 0, unacknowledged: 0 } }
   if (pathname === '/api/v1/risk-scores') return { data: [], meta: { count: 0, limit: 0 } }
-  if (pathname === '/api/v1/connector-health') return { data: [] }
+  if (pathname === '/api/v1/health/connectors') return { data: [] }
   if (pathname === '/api/v1/map/overlays') return { data: [] }
+  if (pathname === '/api/v1/map/overlays/me') return { data: [] }
   if (pathname === '/api/v1/news') return { data: [], meta: { count: 0, limit: 0 } }
   if (pathname === '/api/v1/official-alerts') return { data: [] }
   if (pathname === '/api/v1/air-quality/observations') {
@@ -91,26 +98,71 @@ function responseFor(pathname: string): unknown {
   if (pathname === '/api/v1/map/operations/air-quality') return collection('air-quality', [])
   if (pathname === '/api/v1/me/map/watch-zones') return collection('watch-zones', [privateFeature('watch-zones')])
   if (pathname === '/api/v1/me/map/personal-assets') return collection('personal-assets', [privateFeature('personal-assets')])
-  return { data: [] }
+  return undefined
 }
 
-async function fulfillFixture(route: Route): Promise<void> {
-  const requestUrl = new URL(route.request().url())
-  await route.fulfill({ contentType: 'application/json', body: JSON.stringify(responseFor(requestUrl.pathname)) })
+type FixtureState = {
+  deniedRequests: string[]
+  privateAuthorizations: string[]
+  rejectedPrivateRequests: string[]
+  unknownApiPaths: string[]
 }
 
-async function installFixtures(page: Page): Promise<void> {
-  await page.route('https://tiles.openfreemap.org/**', async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(LOCAL_STYLE) })
+async function installFixtures(page: Page): Promise<FixtureState> {
+  const state: FixtureState = {
+    deniedRequests: [],
+    privateAuthorizations: [],
+    rejectedPrivateRequests: [],
+    unknownApiPaths: [],
+  }
+
+  await page.route('**/*', async (route: Route) => {
+    const requestUrl = new URL(route.request().url())
+    if (requestUrl.origin === LOCAL_ORIGIN) {
+      if (!requestUrl.pathname.startsWith('/api/v1/')) {
+        await route.continue()
+        return
+      }
+
+      const response = responseFor(requestUrl.pathname)
+      if (response === undefined) {
+        state.unknownApiPaths.push(requestUrl.pathname)
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'unknown fixture API request' }) })
+        return
+      }
+
+      if (requestUrl.pathname.startsWith('/api/v1/me/map/')) {
+        const authorization = route.request().headers().authorization
+        if (authorization !== FIXTURE_BEARER_TOKEN) {
+          state.rejectedPrivateRequests.push(requestUrl.pathname)
+          await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'fixture authentication required' }) })
+          return
+        }
+        state.privateAuthorizations.push(authorization)
+      }
+
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(response) })
+      return
+    }
+
+    if (requestUrl.href === FIXTURE_STYLE_URL) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(LOCAL_STYLE) })
+      return
+    }
+
+    state.deniedRequests.push(requestUrl.href)
+    await route.abort('blockedbyclient')
   })
-  await page.route('**/api/v1/**', fulfillFixture)
-  await page.route('https://placeholder.supabase.co/**', async (route) => route.abort('blockedbyclient'))
+  return state
+}
+
+function expectKnownApiRequests(state: FixtureState): void {
+  expect(state.unknownApiPaths).toEqual([])
 }
 
 function ownerSession() {
-  const encodedPayload = btoa(JSON.stringify({ sub: 'fixture-owner', exp: 4_102_444_800 }))
   return {
-    access_token: `fixture.${encodedPayload}.signature`,
+    access_token: FIXTURE_ACCESS_TOKEN,
     refresh_token: 'fixture-refresh-token',
     expires_at: 4_102_444_800,
     expires_in: 2_000_000_000,
@@ -127,11 +179,12 @@ function ownerSession() {
   }
 }
 
-async function openMap(page: Page): Promise<void> {
-  await installFixtures(page)
+async function openMap(page: Page): Promise<FixtureState> {
+  const fixtures = await installFixtures(page)
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Executive Risk Map' })).toBeVisible()
   await expect(page.locator('.operational-map__canvas canvas.maplibregl-canvas')).toBeVisible()
+  return fixtures
 }
 
 test('loads the public operational map with visible controls on desktop and mobile', async ({ page }, testInfo) => {
@@ -140,7 +193,7 @@ test('loads the public operational map with visible controls on desktop and mobi
     if (new URL(request.url()).pathname.startsWith('/api/v1/me/map/')) privateRequests.push(request.url())
   })
 
-  await openMap(page)
+  const fixtures = await openMap(page)
 
   await expect(page.getByRole('complementary', { name: 'Lapisan peta' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Gempa \(1\)/ })).toBeVisible()
@@ -155,21 +208,36 @@ test('loads the public operational map with visible controls on desktop and mobi
   }
   await expect(page.locator('.operational-map__canvas')).toHaveScreenshot(`${testInfo.project.name}-public-map.png`)
   expect(privateRequests).toEqual([])
+  expectKnownApiRequests(fixtures)
 })
 
 test('shows selected event attribution and the visible truncation notice', async ({ page }) => {
-  await openMap(page)
+  const fixtures = await openMap(page)
 
   await page.getByRole('button', { name: 'Fokuskan di peta' }).click()
   const detailSheet = page.getByRole('dialog', { name: 'Detail peta' })
   await expect(detailSheet).toBeVisible()
   await expect(detailSheet.getByText('BMKG fixture attribution')).toBeVisible()
   await expect(page.getByText('Hasil dibatasi untuk area ini.')).toBeVisible()
+  expectKnownApiRequests(fixtures)
+})
+
+test('rejects private map feeds without the exact fixture bearer token', async ({ page }) => {
+  const fixtures = await openMap(page)
+
+  const status = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/me/map/watch-zones')
+    return response.status
+  })
+
+  expect(status).toBe(401)
+  expect(fixtures.rejectedPrivateRequests).toEqual(['/api/v1/me/map/watch-zones'])
+  expectKnownApiRequests(fixtures)
 })
 
 test('loads owner-only layers for a logged-in owner', async ({ page }) => {
   await page.addInitScript((session) => {
-    window.localStorage.setItem('sb-placeholder-auth-token', JSON.stringify(session))
+    window.localStorage.setItem('sb-fixture-auth-token', JSON.stringify(session))
   }, ownerSession())
   const ownerRequests: string[] = []
   page.on('request', (request) => {
@@ -177,12 +245,24 @@ test('loads owner-only layers for a logged-in owner', async ({ page }) => {
     if (pathname.startsWith('/api/v1/me/map/')) ownerRequests.push(pathname)
   })
 
-  await openMap(page)
+  const fixtures = await openMap(page)
 
   await expect.poll(() => [...new Set(ownerRequests)].sort()).toEqual([
     '/api/v1/me/map/personal-assets',
     '/api/v1/me/map/watch-zones',
   ])
+  expect(fixtures.privateAuthorizations).toEqual([FIXTURE_BEARER_TOKEN, FIXTURE_BEARER_TOKEN])
+
+  const canvas = page.locator('.operational-map__canvas canvas.maplibregl-canvas')
+  await canvas.scrollIntoViewIfNeeded()
+  const bounds = await canvas.boundingBox()
+  expect(bounds).not.toBeNull()
+  await canvas.click({
+    position: { x: (bounds?.width ?? 0) / 2, y: (bounds?.height ?? 0) / 2 },
+    force: true,
+  })
+  await expect(page.getByRole('dialog', { name: 'Detail peta' })).toContainText('Aset pemilik')
+  expectKnownApiRequests(fixtures)
 })
 
 test('falls back when WebGL is unavailable and keeps mobile navigation unobscured', async ({ page }, testInfo) => {
@@ -193,14 +273,19 @@ test('falls back when WebGL is unavailable and keeps mobile navigation unobscure
       return getContext.call(this, contextId, ...args as [])
     }
   })
-  await installFixtures(page)
+  const fixtures = await installFixtures(page)
   await page.goto('/')
 
-  await expect(page.getByRole('alert')).toContainText('Peta tidak tersedia')
+  const fallback = page.getByRole('alert')
+  await expect(fallback).toContainText('Peta tidak tersedia')
   if (testInfo.project.name === 'mobile-chromium') {
-    await testInfo.attach('mobile-webgl-fallback', {
-      body: await page.screenshot({ fullPage: true }),
-      contentType: 'image/png',
-    })
+    await fallback.scrollIntoViewIfNeeded()
+    const fallbackBounds = await fallback.boundingBox()
+    const navigationBounds = await page.getByRole('navigation', { name: 'Navigasi mobile' }).boundingBox()
+    expect(fallbackBounds).not.toBeNull()
+    expect(navigationBounds).not.toBeNull()
+    expect((fallbackBounds?.y ?? 0) + (fallbackBounds?.height ?? 0)).toBeLessThanOrEqual((navigationBounds?.y ?? 0) - 8)
+    await expect(fallback).toHaveScreenshot('mobile-webgl-fallback.png')
   }
+  expectKnownApiRequests(fixtures)
 })

@@ -204,4 +204,8 @@
   .operational-map__status {
     bottom: 0.75rem;
   }
+
+  .operational-map__fallback {
+    bottom: calc(4rem + 0.75rem);
+  }
 }

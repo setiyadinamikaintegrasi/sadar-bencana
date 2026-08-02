@@ -7,7 +7,6 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
-  snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}{ext}',
   use: {
     baseURL: 'http://127.0.0.1:4173',
     screenshot: 'only-on-failure',
@@ -24,6 +23,8 @@ export default defineConfig({
     env: {
       VITE_API_BASE_URL: '/api/v1',
       VITE_OPERATIONAL_MAP_ENGINE: 'maplibre',
+      VITE_SUPABASE_URL: 'https://fixture.supabase.co',
+      VITE_SUPABASE_ANON_KEY: 'fixture-anon-key',
     },
   },
 })

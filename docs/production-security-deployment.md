@@ -219,30 +219,43 @@ part of a source checkout update.
 ### Approved CSP origins
 
 The deployed web application calls its API at `/api/v1`, so `connect-src
-'self'` covers `https://sadarbencana.id/api/v1`. The browser also needs the
-exact Supabase project URL used for `VITE_SUPABASE_URL` and the reviewed
-OpenFreeMap style host. Do not use wildcard Supabase or basemap origins.
+'self'` covers `https://sadarbencana.id/api/v1`. The approved Supabase origin
+is `https://njqvgshkdhxcfllhmeey.supabase.co`; this is the historical
+production release hostname and must match the configured web build value
+before a proxy change. Do not use wildcard Supabase or basemap origins.
 
 ```text
-connect-src 'self' https://<production-project-ref>.supabase.co https://tiles.openfreemap.org;
+connect-src 'self' https://njqvgshkdhxcfllhmeey.supabase.co https://tiles.openfreemap.org;
 img-src 'self' data: blob: https://tiles.openfreemap.org;
 worker-src 'self' blob:;
 ```
 
-Replace `<production-project-ref>` with the one hostname already configured in
-the production web build. `https://tiles.openfreemap.org` covers the reviewed
-constant style URL `https://tiles.openfreemap.org/styles/liberty` and its
-basemap resources. Keep the existing approved origins in each directive; the
-lines above are additions, not an instruction to remove unrelated application
-requirements.
+`https://tiles.openfreemap.org` covers the reviewed constant style URL
+`https://tiles.openfreemap.org/styles/liberty` and its basemap resources. Keep
+the existing approved origins in each directive; the lines above are additions,
+not an instruction to remove unrelated application requirements.
 
 MapLibre is bundled into the web asset. Do **not** add a CDN host, `unsafe-eval`,
 or any other relaxation to `script-src`. Preserve any stricter existing
 `worker-src` policy only if it already permits the bundled MapLibre worker;
 otherwise add `blob:` to `worker-src`, not to `script-src`.
 
-Before any Caddy edit, inspect the actual public header and compare it with the
-approved list above:
+Before any Caddy edit, validate the exact configured production build value.
+Run this in the protected deployment environment where `VITE_SUPABASE_URL` is
+defined for the web build; it fails closed for an unset value, a malformed URL,
+or any hostname other than the approved project:
+
+```bash
+approved_origin='https://njqvgshkdhxcfllhmeey.supabase.co'
+configured_origin="$(node -e 'const value = process.argv[1]; try { process.stdout.write(new URL(value).origin) } catch { process.exit(1) }' "${VITE_SUPABASE_URL:?VITE_SUPABASE_URL is required}")"
+test "$configured_origin" = "$approved_origin" || {
+  echo "Refusing MapLibre CSP rollout: VITE_SUPABASE_URL is not the approved project origin" >&2
+  exit 1
+}
+```
+
+Then inspect the actual public header and compare it with the approved list
+above:
 
 ```bash
 curl -fsSI https://sadarbencana.id/ | tr -d '\r' | grep -i '^content-security-policy:'
