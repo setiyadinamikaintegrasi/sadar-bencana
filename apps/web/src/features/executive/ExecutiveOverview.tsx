@@ -5,8 +5,13 @@ import MagnitudeFilter from '../../components/MagnitudeFilter'
 import RiskMap, {
   isOverlayActiveAt,
   nextOverlayFocusRequest,
+  operationalMapPerils,
   type OverlayFocusRequest,
+  type PerilFilter,
 } from '../../components/RiskMap'
+import OperationalMap from '../map/OperationalMap'
+import { getOperationalMapEngine } from '../../config/mapEngine'
+import { useAuth } from '../../lib/auth/AuthProvider'
 import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
 import BmkgWarningsPanel from './BmkgWarningsPanel'
@@ -150,6 +155,8 @@ export default function ExecutiveOverview({
   initialOfficialAlertFocus?: OverlayFocusRequest | null
   onOfficialAlertFocusCleared: () => void
 }) {
+  const { session } = useAuth()
+  const mapEngine = getOperationalMapEngine()
   const [events, setEvents] = useState<Event[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [news, setNews] = useState<NewsItem[]>([])
@@ -168,7 +175,7 @@ export default function ExecutiveOverview({
   const [error, setError] = useState<string | null>(null)
   const [minMagnitude, setMinMagnitude] = useState(0)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
-  const [activePerilFilter, setActivePerilFilter] = useState('all')
+  const [activePerilFilter, setActivePerilFilter] = useState<PerilFilter>('all')
   const [monitoringDeskHeight, setMonitoringDeskHeight] = useState<number | null>(null)
   const monitoringDeskRef = useRef<HTMLDivElement>(null)
 
@@ -493,18 +500,34 @@ export default function ExecutiveOverview({
             Loading map…
           </div>
         ) : (
-          <RiskMap
-            events={events}
-            news={news}
-            overlays={combinedMapOverlays}
-            activePerilFilter={activePerilFilter}
-            onFilterChange={setActivePerilFilter}
-            onEventClick={handleEventClick}
-            selectedEvent={selectedEvent}
-            selectedOverlayId={officialAlertFocus?.id}
-            overlayFocusNonce={officialAlertFocus?.nonce}
-            height="min(62vh, 560px)"
-          />
+          mapEngine === 'maplibre' ? (
+            <OperationalMap
+              mode="viewer"
+              initialLayers={['events', 'official-alerts', 'air-quality']}
+              perils={operationalMapPerils(activePerilFilter)}
+              authenticated={Boolean(session)}
+              privateLayers={session ? ['watch-zones', 'personal-assets'] : []}
+              onFeatureSelect={(feature) => {
+                if (feature.properties.layer !== 'events') return
+                const selected = events.find((event) => event.id === feature.id || event.id === feature.properties.id)
+                if (selected) handleEventClick(selected)
+              }}
+              className="h-[min(62vh,560px)]"
+            />
+          ) : (
+            <RiskMap
+              events={events}
+              news={news}
+              overlays={combinedMapOverlays}
+              activePerilFilter={activePerilFilter}
+              onFilterChange={setActivePerilFilter}
+              onEventClick={handleEventClick}
+              selectedEvent={selectedEvent}
+              selectedOverlayId={officialAlertFocus?.id}
+              overlayFocusNonce={officialAlertFocus?.nonce}
+              height="min(62vh, 560px)"
+            />
+          )
         )}
 
         <div className="mt-4 overflow-hidden rounded-2xl border border-orange-400/20 bg-gradient-to-r from-orange-500/10 via-slate-950/80 to-slate-950/80">

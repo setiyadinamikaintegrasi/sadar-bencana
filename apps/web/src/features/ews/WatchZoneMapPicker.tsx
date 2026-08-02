@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import { Circle, MapContainer, Marker, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
+import { getOperationalMapEngine } from '../../config/mapEngine'
+import MapLibreWatchZonePicker from './MapLibreWatchZonePicker'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
@@ -14,7 +16,7 @@ const markerIcon = L.divIcon({
     'background:#a78bfa;box-shadow:0 4px 12px rgba(0,0,0,0.5)"></div>',
 })
 
-interface WatchZoneMapPickerProps {
+export interface WatchZoneMapPickerProps {
   latitude: number | null
   longitude: number | null
   radiusKm: number
@@ -57,7 +59,7 @@ function ClickAndDragLayer({
   )
 }
 
-export default function WatchZoneMapPicker({
+export function LeafletWatchZoneMapPicker({
   latitude,
   longitude,
   radiusKm,
@@ -129,4 +131,10 @@ export default function WatchZoneMapPicker({
       </p>
     </div>
   )
+}
+
+export default function WatchZoneMapPicker(props: WatchZoneMapPickerProps) {
+  return getOperationalMapEngine() === 'maplibre'
+    ? <MapLibreWatchZonePicker {...props} />
+    : <LeafletWatchZoneMapPicker {...props} />
 }

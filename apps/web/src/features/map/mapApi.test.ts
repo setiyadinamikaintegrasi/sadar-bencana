@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchPublicMapLayer } from './mapApi'
+
+const apiClient = vi.hoisted(() => ({ request: vi.fn() }))
+
+vi.mock('../../lib/api/client', () => apiClient)
+
+import { fetchPrivateMapLayer, fetchPublicMapLayer } from './mapApi'
 
 const collection = (overrides: Record<string, unknown> = {}) => ({
   type: 'FeatureCollection',
@@ -31,9 +36,58 @@ const viewport = {
 }
 
 afterEach(() => {
+  apiClient.request.mockReset()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
+})
+
+describe('fetchPrivateMapLayer', () => {
+  it('uses the authenticated API transport for the fixed owner-only endpoint', async () => {
+    const body = collection({
+      layer: 'watch-zones',
+      features: [{
+        ...collection().features[0],
+        id: 'zone-1',
+        properties: {
+          ...collection().features[0].properties,
+          id: 'zone-1',
+          layer: 'watch-zones',
+          source: 'account',
+          attribution: 'Private account data',
+          verification_status: 'user-provided',
+        },
+      }],
+    })
+    apiClient.request.mockResolvedValue(body)
+    const publicFetch = vi.spyOn(globalThis, 'fetch')
+
+    await expect(fetchPrivateMapLayer('watch-zones', viewport)).resolves.toMatchObject({
+      layer: 'watch-zones',
+      state: 'ready',
+      collection: body,
+    })
+
+    expect(apiClient.request).toHaveBeenCalledWith(
+      '/me/map/watch-zones?bbox=106.7%2C-6.4%2C107.1%2C-6',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(publicFetch).not.toHaveBeenCalled()
+  })
+
+  it('does not request malformed viewports and rejects mismatched private collections', async () => {
+    await expect(fetchPrivateMapLayer('personal-assets', {
+      ...viewport,
+      bbox: [107.1, -6.4, 106.7, -6],
+    })).resolves.toEqual({ layer: 'personal-assets', state: 'unavailable' })
+    expect(apiClient.request).not.toHaveBeenCalled()
+
+    apiClient.request.mockResolvedValue(collection({ layer: 'events' }))
+    await expect(fetchPrivateMapLayer('personal-assets', viewport)).resolves.toEqual({
+      layer: 'personal-assets',
+      state: 'unavailable',
+    })
+  })
 })
 
 describe('fetchPublicMapLayer', () => {
@@ -52,6 +106,7 @@ describe('fetchPublicMapLayer', () => {
     )
     const [, init] = fetchMock.mock.calls[0]
     expect(new Headers(init?.headers).get('Authorization')).toBeNull()
+    expect(apiClient.request).not.toHaveBeenCalled()
   })
 
   it('maps the official-alert UI layer to the public alerts endpoint and sends an as-of time', async () => {

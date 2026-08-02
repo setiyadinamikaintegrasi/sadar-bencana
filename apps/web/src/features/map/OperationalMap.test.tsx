@@ -6,6 +6,7 @@ import OperationalMap from './OperationalMap'
 
 type MapEvent = {
   geolocateSource?: boolean
+  lngLat?: { lat: number; lng: number }
   features?: Array<{
     id?: string | number
     geometry: GeoJSON.Geometry
@@ -141,8 +142,16 @@ const maplibre = vi.hoisted(() => {
 
 vi.mock('maplibre-gl', () => ({ default: maplibre }))
 
+const privateApi = vi.hoisted(() => ({ fetchPrivateMapLayer: vi.fn() }))
+
+vi.mock('./mapApi', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./mapApi')>()
+  return { ...original, fetchPrivateMapLayer: privateApi.fetchPrivateMapLayer }
+})
+
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', TestResizeObserver)
+  privateApi.fetchPrivateMapLayer.mockReset()
 })
 
 afterEach(() => {
@@ -178,6 +187,130 @@ describe('OperationalMap', () => {
     render(<OperationalMap mode="picker" />)
 
     expect(maplibre.instances[0].addControl).not.toHaveBeenCalled()
+  })
+
+  it('does not request or expose private layers without an authenticated session', async () => {
+    render(<OperationalMap authenticated={false} privateLayers={['watch-zones', 'personal-assets']} />)
+
+    await act(async () => {
+      maplibre.instances[0].trigger('load')
+      await Promise.resolve()
+    })
+
+    expect(privateApi.fetchPrivateMapLayer).not.toHaveBeenCalled()
+    expect(screen.queryByRole('checkbox', { name: /watch zone|aset pribadi/i })).toBeNull()
+  })
+
+  it('removes private sources, click handlers, and selection immediately on logout', async () => {
+    privateApi.fetchPrivateMapLayer.mockImplementation((layer: 'watch-zones' | 'personal-assets') => Promise.resolve({
+      layer,
+      state: 'ready',
+      collection: {
+        type: 'FeatureCollection',
+        layer,
+        truncated: false,
+        features: [{
+          type: 'Feature',
+          id: `${layer}:1`,
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: `${layer}:1`,
+            layer,
+            label: layer === 'watch-zones' ? 'Zona rumah' : 'Gudang pribadi',
+            source: 'account',
+            attribution: 'Private account data',
+            verification_status: 'user-provided',
+          },
+        }],
+      },
+    }))
+    const { rerender } = render(
+      <OperationalMap authenticated privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />,
+    )
+    const map = maplibre.instances[0]
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(privateApi.fetchPrivateMapLayer).toHaveBeenCalledTimes(2)
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-private-watch-zones-source', expect.anything())
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-private-personal-assets-source', expect.anything())
+
+    act(() => map.trigger('click', {
+      features: [{
+        id: 'watch-zones:1',
+        geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+        properties: {
+          id: 'watch-zones:1', layer: 'watch-zones', label: 'Zona rumah', source: 'account', attribution: 'Private account data', verification_status: 'user-provided',
+        },
+      }],
+    }))
+    expect(screen.getByRole('heading', { name: 'Zona rumah' })).toBeTruthy()
+
+    rerender(<OperationalMap authenticated={false} privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />)
+
+    expect(screen.queryByRole('heading', { name: 'Zona rumah' })).toBeNull()
+    expect(map.removeSource).toHaveBeenCalledWith('operational-map-private-watch-zones-source')
+    expect(map.removeSource).toHaveBeenCalledWith('operational-map-private-personal-assets-source')
+    expect(map.off).toHaveBeenCalledWith('click', 'operational-map-private-watch-zones-outline', expect.any(Function))
+    expect(map.off).toHaveBeenCalledWith('click', 'operational-map-private-personal-assets-points', expect.any(Function))
+  })
+
+  it('keeps picker clicks and camera changes out of URL state', () => {
+    window.history.replaceState({}, '', '/?section=watch-zone')
+    const onPick = vi.fn()
+    render(<OperationalMap mode="picker" initialLayers={[]} onPick={onPick} />)
+    const map = maplibre.instances[0]
+
+    act(() => map.trigger('click', { lngLat: { lat: -6.2, lng: 106.8 } }))
+    act(() => map.trigger('moveend'))
+
+    expect(onPick).toHaveBeenCalledWith(-6.2, 106.8)
+    expect(window.location.search).toBe('?section=watch-zone')
+    expect(screen.queryByRole('checkbox')).toBeNull()
+  })
+
+  it('renders and removes transient local geometry without serializing it', async () => {
+    window.history.replaceState({}, '', '/?section=evacuation')
+    const localOverlay: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+        properties: { kind: 'user-position' },
+      }],
+    }
+    const { unmount } = render(<OperationalMap mode="picker" initialLayers={[]} localOverlay={localOverlay} />)
+    const map = maplibre.instances[0]
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-private-local-source', expect.objectContaining({ data: localOverlay }))
+    expect(window.location.search).toBe('?section=evacuation')
+    unmount()
+    expect(map.removeSource).toHaveBeenCalledWith('operational-map-private-local-source')
+  })
+
+  it('does not serialize a private programmatic focus movement in viewer mode', async () => {
+    window.history.replaceState({}, '', '/?section=evacuation')
+    render(<OperationalMap initialLayers={[]} focusCenter={[106.8, -6.2]} />)
+    const map = maplibre.instances[0]
+    map.getCenter = vi.fn(() => ({ lng: 106.8, lat: -6.2 }))
+    map.getZoom = vi.fn(() => 8)
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    expect(map.easeTo).toHaveBeenCalledWith({ center: [106.8, -6.2], zoom: 8 })
+
+    act(() => map.trigger('moveend'))
+    expect(window.location.search).toBe('?section=evacuation')
   })
 
   it('synchronizes camera changes without replacing unrelated URL parameters', () => {

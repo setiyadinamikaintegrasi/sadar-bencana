@@ -23,6 +23,8 @@ const { event, dashboardState } = vi.hoisted(() => {
       events: [event],
       mapOverlays: [] as Array<Record<string, unknown>>,
       weatherAlerts: [] as Array<Record<string, unknown>>,
+      mapEngine: 'leaflet' as 'leaflet' | 'maplibre',
+      session: { user: { id: 'user-1' } } as object | null,
     },
   }
 })
@@ -77,6 +79,26 @@ vi.mock('../../lib/api/client', () => ({
   getNews: vi.fn().mockResolvedValue([]),
   getRiskScores: vi.fn().mockResolvedValue({ data: [], meta: { count: 0, limit: 0 } }),
 }))
+vi.mock('../../config/mapEngine', () => ({
+  getOperationalMapEngine: () => dashboardState.mapEngine,
+}))
+vi.mock('../../lib/auth/AuthProvider', () => ({
+  useAuth: () => ({ session: dashboardState.session }),
+}))
+vi.mock('../map/OperationalMap', () => ({
+  default: ({ authenticated, initialLayers, perils }: {
+    authenticated?: boolean
+    initialLayers?: string[]
+    perils?: string[]
+  }) => (
+    <div
+      data-testid="operational-map"
+      data-authenticated={String(Boolean(authenticated))}
+      data-layers={initialLayers?.join(',')}
+      data-perils={perils?.join(',')}
+    />
+  ),
+}))
 vi.mock('./useBmkgWarnings', () => ({
   useBmkgWarnings: () => ({
     weatherAlerts: dashboardState.weatherAlerts,
@@ -128,6 +150,8 @@ beforeEach(() => {
   dashboardState.events = [event]
   dashboardState.mapOverlays = []
   dashboardState.weatherAlerts = [warning]
+  dashboardState.mapEngine = 'leaflet'
+  dashboardState.session = { user: { id: 'user-1' } }
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     disconnect() {}
@@ -140,6 +164,38 @@ afterEach(() => {
 })
 
 describe('ExecutiveOverview official warning navigation', () => {
+  it('keeps the existing Leaflet risk map as the default engine', async () => {
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: 'Pilih event biasa' })).toBeTruthy()
+    expect(screen.queryByTestId('operational-map')).toBeNull()
+  })
+
+  it('uses the operational map only for the MapLibre flag and gates private layers on session', async () => {
+    dashboardState.mapEngine = 'maplibre'
+    const { rerender } = render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    const operationalMap = await screen.findByTestId('operational-map')
+    expect(operationalMap.getAttribute('data-authenticated')).toBe('true')
+    expect(operationalMap.getAttribute('data-layers')).toBe('events,official-alerts,air-quality')
+    expect(operationalMap.getAttribute('data-perils')).toBe('')
+    expect(screen.queryByRole('button', { name: 'Pilih event biasa' })).toBeNull()
+
+    dashboardState.session = null
+    rerender(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+    expect(screen.getByTestId('operational-map').getAttribute('data-authenticated')).toBe('false')
+  })
+
+  it('drives MapLibre event requests from the existing executive peril selection', async () => {
+    dashboardState.mapEngine = 'maplibre'
+    dashboardState.events = [{ ...event, source: 'BMKG' }]
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Fokuskan di peta' }))
+
+    expect(screen.getByTestId('operational-map').getAttribute('data-perils')).toBe('earthquake')
+  })
+
   it('clears external focus on ordinary selection and honors a repeated focus nonce', async () => {
     const onFocusCleared = vi.fn()
     const { rerender } = render(

@@ -3,6 +3,7 @@ import { airQualityLayer } from './airQuality'
 import { evacuationsLayer } from './evacuations'
 import { eventsLayer } from './events'
 import { officialAlertsLayer } from './officialAlerts'
+import { privateLayerAdapters } from './private'
 
 const collection = (layer: 'events' | 'alerts' | 'air-quality' | 'evacuations') => ({
   type: 'FeatureCollection' as const,
@@ -89,5 +90,40 @@ describe('public operational map layer adapters', () => {
       id: 'operational-map-evacuations-points',
       layout: expect.objectContaining({ 'icon-image': 'operational-map-evacuations-icon' }),
     }))
+  })
+})
+
+describe('private operational map layer adapters', () => {
+  it('uses distinct subdued styles and removes every private artifact', () => {
+    const map = createMap()
+    const watchZones = privateLayerAdapters['watch-zones']
+    const personalAssets = privateLayerAdapters['personal-assets']
+    const privateCollection = (layer: 'watch-zones' | 'personal-assets') => ({
+      ...collection('events'),
+      layer,
+      features: collection('events').features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, layer },
+      })),
+    })
+
+    watchZones.apply(map as never, privateCollection('watch-zones') as never)
+    personalAssets.apply(map as never, privateCollection('personal-assets') as never)
+
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'operational-map-private-watch-zones-outline',
+      type: 'line',
+      paint: expect.objectContaining({ 'line-dasharray': [3, 2] }),
+    }))
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'operational-map-private-personal-assets-points',
+      type: 'circle',
+      paint: expect.objectContaining({ 'circle-color': '#0f766e' }),
+    }))
+
+    watchZones.remove(map as never)
+    personalAssets.remove(map as never)
+    expect(map.removeSource).toHaveBeenCalledWith(watchZones.sourceId)
+    expect(map.removeSource).toHaveBeenCalledWith(personalAssets.sourceId)
   })
 })

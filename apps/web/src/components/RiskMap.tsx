@@ -6,7 +6,11 @@ import type { Event, MapOverlay, NewsItem } from '../lib/api/client'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
-type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news'
+export type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news'
+
+export function operationalMapPerils(filter: PerilFilter): string[] {
+  return ['earthquake', 'wildfire', 'volcano', 'flood'].includes(filter) ? [filter] : []
+}
 
 const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; accent: string }> = [
   { key: 'all', label: 'Semua', icon: '◎', accent: 'text-indigo-200' },
@@ -363,8 +367,8 @@ interface RiskMapProps {
   events: Event[]
   news?: NewsItem[]
   overlays?: MapOverlay[]
-  activePerilFilter: string
-  onFilterChange: (filter: string) => void
+  activePerilFilter: PerilFilter
+  onFilterChange: (filter: PerilFilter) => void
   onEventClick: (event: Event) => void
   selectedEvent?: Event | null
   selectedOverlayId?: string | null

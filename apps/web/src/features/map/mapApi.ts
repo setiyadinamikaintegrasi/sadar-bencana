@@ -3,7 +3,9 @@ import type {
   OperationalMapFeatureCollection,
   OperationalMapWireLayer,
   PublicOperationalMapLayer,
+  PrivateOperationalMapLayer,
 } from './types'
+import { request } from '../../lib/api/client'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
 const MAXIMUM_VIEWPORT_DEGREES = 20
@@ -16,6 +18,11 @@ export const publicMapEndpoints = {
   'air-quality': '/map/operations/air-quality',
   evacuations: '/map/operations/evacuations',
 } as const satisfies Record<PublicOperationalMapLayer, string>
+
+export const privateMapEndpoints = {
+  'watch-zones': '/me/map/watch-zones',
+  'personal-assets': '/me/map/personal-assets',
+} as const satisfies Record<PrivateOperationalMapLayer, string>
 
 const publicMapWireLayers: Record<PublicOperationalMapLayer, OperationalMapWireLayer> = {
   events: 'events',
@@ -37,6 +44,12 @@ export type PublicMapLayerState = 'ready' | 'empty' | 'stale' | 'unavailable'
 
 export interface PublicMapLayerResult {
   layer: PublicOperationalMapLayer
+  state: PublicMapLayerState
+  collection?: OperationalMapFeatureCollection
+}
+
+export interface PrivateMapLayerResult {
+  layer: PrivateOperationalMapLayer
   state: PublicMapLayerState
   collection?: OperationalMapFeatureCollection
 }
@@ -219,6 +232,30 @@ export async function fetchPublicMapLayer(
     return {
       layer,
       state: hasStaleVintage(body) ? 'stale' : 'ready',
+      collection: body,
+    }
+  } catch {
+    return { layer, state: 'unavailable' }
+  }
+}
+
+export async function fetchPrivateMapLayer(
+  layer: PrivateOperationalMapLayer,
+  viewport: PublicMapViewport,
+  signal?: AbortSignal,
+): Promise<PrivateMapLayerResult> {
+  if (!validViewport(viewport)) return { layer, state: 'unavailable' }
+
+  const params = new URLSearchParams({ bbox: viewport.bbox.join(',') })
+  try {
+    const body = await request<unknown>(`${privateMapEndpoints[layer]}?${params.toString()}`, {
+      method: 'GET',
+      signal,
+    })
+    if (!isCollection(body, layer)) return { layer, state: 'unavailable' }
+    return {
+      layer,
+      state: body.features.length === 0 ? 'empty' : 'ready',
       collection: body,
     }
   } catch {
