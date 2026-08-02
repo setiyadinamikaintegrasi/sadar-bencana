@@ -191,7 +191,11 @@ func main() {
 	publicMap.GET("/alerts", apihttp.OperationMapAlerts(dbPool))
 	publicMap.GET("/air-quality", apihttp.OperationMapAirQuality(dbPool))
 	publicMap.GET("/evacuations", apihttp.OperationMapEvacuations(dbPool))
-	meMap := router.Group("/api/v1/me/map", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
+	meMap := router.Group(
+		"/api/v1/me/map",
+		apihttp.OperationMapPrivateNoStore(),
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+	)
 	{
 		meMap.GET("/watch-zones", apihttp.OperationMapWatchZones(dbPool))
 		meMap.GET("/personal-assets", apihttp.OperationMapPersonalAssets(dbPool))

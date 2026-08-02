@@ -31,10 +31,10 @@ type OperationMapFeatureProperties struct {
 	Label              string     `json:"label"`
 	PerilType          string     `json:"peril_type,omitempty"`
 	Severity           string     `json:"severity,omitempty"`
-	Source             string     `json:"source,omitempty"`
-	Attribution        string     `json:"attribution,omitempty"`
+	Source             string     `json:"source"`
+	Attribution        string     `json:"attribution"`
 	SourceURL          string     `json:"source_url,omitempty"`
-	VerificationStatus string     `json:"verification_status,omitempty"`
+	VerificationStatus string     `json:"verification_status"`
 	ObservedAt         *time.Time `json:"observed_at,omitempty"`
 	EffectiveAt        *time.Time `json:"effective_at,omitempty"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
@@ -66,6 +66,12 @@ WHERE auth_user_id = $1
   AND longitude BETWEEN $4 AND $5
 ORDER BY name ASC, id ASC
 `
+
+const (
+	operationMapPrivateSource             = "private"
+	operationMapPrivateAttribution        = "Authenticated user"
+	operationMapPrivateVerificationStatus = "user-provided"
+)
 
 // OperationMapFeature is a single WGS84 GeoJSON feature.
 type OperationMapFeature struct {
@@ -263,6 +269,15 @@ func writePublicOperationMapJSON(c *gin.Context, status int, payload any) {
 func writePrivateOperationMapJSON(c *gin.Context, status int, payload any) {
 	c.Header("Cache-Control", "no-store")
 	c.JSON(status, payload)
+}
+
+// OperationMapPrivateNoStore prevents caching for every private map response,
+// including authentication failures that abort before a route handler runs.
+func OperationMapPrivateNoStore() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Next()
+	}
 }
 
 func addOperationMapVary(c *gin.Context, value string) {
@@ -735,7 +750,12 @@ func OperationMapWatchZones(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 			features = append(features, operationMapPointFeature(id, "watch-zones", label, longitude, latitude,
-				OperationMapFeatureProperties{Category: "watch-zone"}))
+				OperationMapFeatureProperties{
+					Category:           "watch-zone",
+					Source:             operationMapPrivateSource,
+					Attribution:        operationMapPrivateAttribution,
+					VerificationStatus: operationMapPrivateVerificationStatus,
+				}))
 		}
 		if err := rows.Err(); err != nil {
 			operationMapError(c, http.StatusInternalServerError, "rows_iteration_failed")
@@ -776,7 +796,12 @@ func OperationMapPersonalAssets(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 			features = append(features, operationMapPointFeature(id, "personal-assets", name, longitude, latitude,
-				OperationMapFeatureProperties{Category: category}))
+				OperationMapFeatureProperties{
+					Category:           category,
+					Source:             operationMapPrivateSource,
+					Attribution:        operationMapPrivateAttribution,
+					VerificationStatus: operationMapPrivateVerificationStatus,
+				}))
 		}
 		if err := rows.Err(); err != nil {
 			operationMapError(c, http.StatusInternalServerError, "rows_iteration_failed")
