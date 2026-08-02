@@ -212,6 +212,33 @@ describe('OperationalMap', () => {
     expect(window.location.search).toBe('?section=dashboard&mapLayers=events&mapLng=106.812345&mapLat=-6.212345&mapZoom=16')
   })
 
+  it('aborts a geolocation-superseded request, keeps coordinates out of the URL, and schedules the replacement viewport load', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/?section=dashboard&mapLayers=events')
+    const requests: Array<{ signal: AbortSignal | undefined }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise<Response>(() => {
+      requests.push({ signal: init?.signal ?? undefined })
+    }))
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(1)
+
+    map.getCenter = vi.fn(() => ({ lng: 106.812345, lat: -6.212345 }))
+    map.getZoom = vi.fn(() => 16)
+    act(() => map.trigger('moveend', { geolocateSource: true }))
+
+    expect(requests[0].signal?.aborted).toBe(true)
+    expect(window.location.search).toBe('?section=dashboard&mapLayers=events')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+    })
+    expect(requests).toHaveLength(2)
+  })
+
   it('shows an accessible fallback when MapLibre cannot construct a map', () => {
     maplibre.Map.mockImplementationOnce(function MapConstructionFailure() {
       throw new Error('WebGL unavailable')
@@ -268,6 +295,7 @@ describe('OperationalMap', () => {
 
     render(<OperationalMap />)
     const map = maplibre.instances[0]
+    fetchMock.mockClear()
 
     await act(async () => {
       map.trigger('load')
@@ -559,6 +587,47 @@ describe('OperationalMap', () => {
     expect(screen.getByText('Data tersimpan, muat ulang gagal.')).toBeTruthy()
   })
 
+  it('retains ready collections, provenance, and truncation after a deferred viewport refresh becomes unavailable', async () => {
+    vi.useFakeTimers()
+    let failedRefresh = false
+    const deferredFailures: Array<(response: Response) => void> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const layer = String(url).includes('/alerts') ? 'alerts' : String(url).includes('/air-quality')
+        ? 'air-quality' : String(url).includes('/evacuations') ? 'evacuations' : 'events'
+      if (failedRefresh) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
+      return Promise.resolve(new Response(JSON.stringify({
+        type: 'FeatureCollection', layer, truncated: layer === 'events',
+        features: layer === 'events' ? [{
+          type: 'Feature', id: 'events:1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { id: 'events:1', layer: 'events', label: 'Jakarta', source: 'bmkg', attribution: 'BMKG', verification_status: 'official' },
+        }] : [],
+      }), { status: 200 }))
+    })
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    expect(screen.getByText('BMKG')).toBeTruthy()
+
+    failedRefresh = true
+    act(() => map.trigger('moveend'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+    })
+    expect(deferredFailures).toHaveLength(4)
+    for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Data tersimpan, muat ulang gagal.')).toBeTruthy()
+    expect(screen.getByText('BMKG')).toBeTruthy()
+    expect(screen.getByText('Hasil dibatasi untuk area ini.')).toBeTruthy()
+  })
+
   it('closes a selected evacuation detail when a successful refresh removes it', async () => {
     vi.useFakeTimers()
     let batch = 0
@@ -617,5 +686,23 @@ describe('OperationalMap', () => {
       />,
     )
     expect(screen.queryByRole('link', { name: 'Buka sumber' })).toBeNull()
+  })
+
+  it.each([
+    ['bmkg_cap', 'https://alerts.bmkg.go.id/cap/alert-1.xml'],
+    ['nasa_firms', 'https://firms.modaps.eosdis.nasa.gov/active_fire/'],
+    ['gdacs_fl', 'https://www.gdacs.org/events/123'],
+    ['gdacs_vo', 'https://gdacs.org/events/456'],
+  ])('renders reviewed source URL for the production %s identifier', (source, sourceUrl) => {
+    render(
+      <MapDetailSheet
+        feature={{
+          type: 'Feature', id: `${source}:1`, geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { id: `${source}:1`, layer: 'events', label: 'Jakarta', source, attribution: source, verification_status: 'official', source_url: sourceUrl },
+        }}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('link', { name: 'Buka sumber' }).getAttribute('href')).toBe(sourceUrl)
   })
 })

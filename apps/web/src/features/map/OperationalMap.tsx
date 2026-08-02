@@ -227,7 +227,11 @@ export default function OperationalMap({
     }
 
     const synchronizeView = (event?: { geolocateSource?: boolean }) => {
-      if (disposed || event?.geolocateSource || !map) return
+      if (disposed || !map) return
+      if (event?.geolocateSource) {
+        schedulePublicLayers()
+        return
+      }
 
       const center = map.getCenter()
       const nextState: MapViewState = {

@@ -9,9 +9,15 @@ interface MapDetailSheetProps {
 
 const approvedSourceHosts: Record<string, readonly string[]> = {
   bmkg: ['bmkg.go.id'],
+  bmkg_air_quality: ['bmkg.go.id'],
+  bmkg_cap: ['bmkg.go.id'],
+  inatews: ['bmkg.go.id'],
   usgs: ['usgs.gov'],
-  'nasa-firms': ['nasa.gov'],
+  'nasa-firms': ['firms.modaps.eosdis.nasa.gov'],
+  nasa_firms: ['firms.modaps.eosdis.nasa.gov'],
   osm: ['openstreetmap.org'],
+  gdacs_fl: ['gdacs.org'],
+  gdacs_vo: ['gdacs.org'],
 }
 
 function safeExternalUrl(source: string, value: string | undefined): string | undefined {
