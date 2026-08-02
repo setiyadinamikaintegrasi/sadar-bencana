@@ -69,4 +69,29 @@ describe('EvacuationPage map collection lifecycle', () => {
     expect(state.mapProps.locations).toEqual([])
     expect(screen.getByText(/Perbesar peta untuk memuat lokasi evakuasi/)).toBeTruthy()
   })
+
+  it('does not restore locations when an above-threshold request resolves after zooming below the gate', async () => {
+    let resolveLocations: ((locations: EvacuationLocation[]) => void) | undefined
+    state.fetchLocations.mockReturnValueOnce(new Promise<EvacuationLocation[]>((resolve) => {
+      resolveLocations = resolve
+    }))
+    render(<EvacuationPage />)
+    const bbox = { minLat: -6.4, maxLat: -6, minLon: 106.7, maxLon: 107.1 }
+
+    act(() => state.mapProps.onViewportChange(bbox, 12))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+    })
+    expect(state.fetchLocations).toHaveBeenCalledWith({ bbox })
+
+    act(() => state.mapProps.onViewportChange(bbox, 10))
+    expect(state.mapProps.locations).toEqual([])
+
+    await act(async () => {
+      resolveLocations?.([location])
+      await Promise.resolve()
+    })
+    expect(state.mapProps.locations).toEqual([])
+    expect(screen.getByText(/Perbesar peta untuk memuat lokasi evakuasi/)).toBeTruthy()
+  })
 })
