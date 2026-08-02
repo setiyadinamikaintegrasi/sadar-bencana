@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -219,10 +220,10 @@ func TestOperationMapPublicEventsReturnsBoundedSafeFeatures(t *testing.T) {
 
 	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
 	rows := sqlmock.NewRows([]string{
-		"event_id", "source", "event_type", "severity", "place", "event_time", "url", "latitude", "longitude",
+		"source", "event_id", "event_type", "severity", "place", "event_time", "url", "latitude", "longitude",
 	})
 	for range 2001 {
-		rows.AddRow("bmkg-20260802-1", "bmkg", "earthquake", "High", "Jakarta", now, "https://example.test/event", -6.2, 106.8)
+		rows.AddRow("bmkg", "bmkg-20260802-1", "earthquake", "High", "Jakarta", now, "https://example.test/event", -6.2, 106.8)
 	}
 	mock.ExpectQuery("(?s)FROM events.*event_time.*latitude.*longitude.*LIMIT \\$8").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), -6.4, -6.0, 106.7, 107.1, nil, 2001).
@@ -230,6 +231,71 @@ func TestOperationMapPublicEventsReturnsBoundedSafeFeatures(t *testing.T) {
 
 	body := requestOperationMap(t, OperationMapEvents(db), "/api/v1/map/operations/events?bbox=106.7,-6.4,107.1,-6.0&zoom=8")
 	assertOperationMapPublicFeatureCollection(t, body, "events", 2000, []float64{106.8, -6.2})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPublicEventsUsesSourceQualifiedIDsAndNullableFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	from := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	rows := sqlmock.NewRows([]string{
+		"source", "event_id", "event_type", "severity", "place", "event_time", "url", "latitude", "longitude",
+	}).
+		AddRow("bmkg", "shared-id", "earthquake", nil, nil, to, nil, -6.2, 106.8).
+		AddRow("usgs", "shared-id", "earthquake", "High", "Jakarta", to, "https://example.test/event", -6.2, 106.8)
+	productionPredicate := regexp.QuoteMeta(productionEventSQLPredicate("source", "event_id"))
+	mock.ExpectQuery("(?s)SELECT source, event_id.*WHERE "+productionPredicate+".*ORDER BY event_time DESC NULLS LAST, source ASC, event_id ASC.*LIMIT \\$8").
+		WithArgs(from, to, -6.4, -6.0, 106.7, 107.1, `{"earthquake"}`, 2001).
+		WillReturnRows(rows)
+
+	body := requestOperationMap(t, OperationMapEvents(db), "/api/v1/map/operations/events?bbox=106.7,-6.4,107.1,-6.0&from=2026-08-02T00:00:00Z&to=2026-08-02T01:00:00Z&perils=earthquake")
+	features := body["features"].([]any)
+	if got, want := []string{features[0].(map[string]any)["id"].(string), features[1].(map[string]any)["id"].(string)}, []string{"bmkg:shared-id", "usgs:shared-id"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("feature IDs = %#v, want %#v", got, want)
+	}
+	firstProperties := features[0].(map[string]any)["properties"].(map[string]any)
+	if got := firstProperties["label"]; got != "earthquake" {
+		t.Fatalf("NULL place label = %#v, want earthquake", got)
+	}
+	if _, exists := firstProperties["source_url"]; exists {
+		t.Fatalf("NULL URL serialized: %#v", firstProperties)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPublicAirQualityQueriesLatestAsOfSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	at := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
+	queryExpectation := `(?s)WITH latest AS.*DISTINCT ON \(o.station_id, o.pollutant\).*o.observed_at < COALESCE\(\$5::timestamptz, now\(\)\).*o.observed_at <= COALESCE\(\$5::timestamptz, now\(\)\).*LIMIT \$6`
+	mock.ExpectQuery(queryExpectation).
+		WithArgs(106.7, -6.4, 107.1, -6.0, at, 501).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "station_id", "station_name", "latitude", "longitude", "pollutant", "value", "unit", "category", "observed_at", "source_url", "stale", "ingested_at",
+		}).AddRow(
+			"observation-row", "bmkg", "station-1", "Jakarta Station", -6.2, 106.8, "pm25", 66.2, "ug/m3", "Tidak Sehat", at.Add(-time.Minute), "https://example.test/aq", false, at,
+		))
+
+	body := requestOperationMap(t, OperationMapAirQuality(db), "/api/v1/map/operations/air-quality?bbox=106.7,-6.4,107.1,-6.0&at=2026-08-02T00:00:00Z")
+	properties := body["features"].([]any)[0].(map[string]any)["properties"].(map[string]any)
+	if got := properties["stale"]; got != false {
+		t.Fatalf("stale = %#v, want false at the supplied snapshot time", got)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
@@ -245,12 +311,12 @@ func TestOperationMapPublicAlertsReturnsBoundedSafeFeatures(t *testing.T) {
 
 	at := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
 	rows := sqlmock.NewRows([]string{
-		"id", "source", "source_alert_id", "headline", "peril_type", "severity", "effective_at", "expires_at", "sent_at", "source_url", "area_geojson", "latitude", "longitude",
+		"source", "source_alert_id", "headline", "peril_type", "severity", "effective_at", "expires_at", "sent_at", "source_url", "geometry",
 	})
 	for range 201 {
-		rows.AddRow("alert-row", "bmkg", "bmkg-alert-1", "Heavy rain", "weather", "High", at, at.Add(time.Hour), at, "https://example.test/alert", []byte(`{"type":"Polygon","coordinates":[[[106.7,-6.4],[107.1,-6.4],[107.1,-6.0],[106.7,-6.4]]]}`), nil, nil)
+		rows.AddRow("bmkg", "bmkg-alert-1", "Heavy rain", "weather", "High", at, at.Add(time.Hour), at, "https://example.test/alert", []byte(`{"type":"Polygon","coordinates":[[[106.7,-6.4],[107.1,-6.4],[107.1,-6.0],[106.7,-6.4]]]}`))
 	}
-	mock.ExpectQuery("(?s)FROM official_alerts.*official_source_settings.*ST_MakeEnvelope.*LIMIT \\$6").
+	mock.ExpectQuery("(?s)WITH active_alerts AS.*FROM official_alerts.*status = 'active'.*is_current = TRUE.*s.enabled = TRUE.*s.run_mode = 'active'.*ST_MakeEnvelope.*LIMIT \\$6").
 		WithArgs(106.7, -6.4, 107.1, -6.0, at, 201).
 		WillReturnRows(rows)
 
@@ -270,12 +336,12 @@ func TestOperationMapPublicAlertsFallsBackToValidatedPointForInvalidAreaGeometry
 	defer db.Close()
 
 	at := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("(?s)FROM official_alerts.*official_source_settings.*ST_MakeEnvelope.*LIMIT \\$6").
+	mock.ExpectQuery("(?s)WITH active_alerts AS.*FROM official_alerts.*status = 'active'.*is_current = TRUE.*s.enabled = TRUE.*s.run_mode = 'active'.*ST_MakeEnvelope.*LIMIT \\$6").
 		WithArgs(106.7, -6.4, 107.1, -6.0, at, 201).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "source", "source_alert_id", "headline", "peril_type", "severity", "effective_at", "expires_at", "sent_at", "source_url", "area_geojson", "latitude", "longitude",
+			"source", "source_alert_id", "headline", "peril_type", "severity", "effective_at", "expires_at", "sent_at", "source_url", "geometry",
 		}).AddRow(
-			"alert-row", "bmkg", "bmkg-alert-1", "Heavy rain", "weather", "High", at, at.Add(time.Hour), at, "https://example.test/alert", []byte(`{"type":"Polygon","coordinates":null}`), -6.2, 106.8,
+			"bmkg", "bmkg-alert-1", "Heavy rain", "weather", "High", at, at.Add(time.Hour), at, "https://example.test/alert", []byte(`{"type":"Point","coordinates":[106.8,-6.2]}`),
 		))
 
 	body := requestOperationMap(t, OperationMapAlerts(db), "/api/v1/map/operations/alerts?bbox=106.7,-6.4,107.1,-6.0&at=2026-08-02T00:00:00Z")

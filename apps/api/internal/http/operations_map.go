@@ -259,7 +259,7 @@ func addOperationMapVary(c *gin.Context, value string) {
 }
 
 var operationMapEventsQuery = `
-SELECT event_id, source, event_type, severity, place, event_time, url, latitude, longitude
+SELECT source, event_id, event_type, severity, place, event_time, url, latitude, longitude
 FROM events
 WHERE ` + productionEventSQLPredicate("source", "event_id") + `
   AND event_time >= $1
@@ -267,56 +267,124 @@ WHERE ` + productionEventSQLPredicate("source", "event_id") + `
   AND latitude BETWEEN $3 AND $4
   AND longitude BETWEEN $5 AND $6
   AND ($7::text[] IS NULL OR event_type = ANY($7::text[]))
-ORDER BY event_time DESC NULLS LAST, event_id ASC
+ORDER BY event_time DESC NULLS LAST, source ASC, event_id ASC
 LIMIT $8
 `
 
 const operationMapAlertsQuery = `
-SELECT id, source, source_alert_id, headline, peril_type, severity, effective_at,
-       expires_at, sent_at, source_url, area_geojson, latitude, longitude
-FROM official_alerts
-WHERE status = 'active'
-  AND is_current = TRUE
-  AND (effective_at IS NULL OR effective_at <= COALESCE($5::timestamptz, now()))
-  AND (expires_at IS NULL OR expires_at >= COALESCE($5::timestamptz, now()))
-  AND EXISTS (
-    SELECT 1
-    FROM official_source_settings s
-    WHERE s.source_name = official_alerts.source
-      AND s.enabled = TRUE
-      AND s.run_mode = 'active'
-  )
-  AND (
-    (area_geojson IS NOT NULL AND ST_Intersects(
-      ST_SetSRID(ST_GeomFromGeoJSON(area_geojson::text), 4326),
-      ST_MakeEnvelope($1, $2, $3, $4, 4326)
-    ))
-    OR (latitude BETWEEN $2 AND $4 AND longitude BETWEEN $1 AND $3)
-  )
-ORDER BY sent_at DESC, source_alert_id ASC, revision DESC
+WITH active_alerts AS (
+  SELECT source, source_alert_id, revision, headline, peril_type, severity,
+         effective_at, expires_at, sent_at, source_url, area_geojson, latitude,
+         longitude
+  FROM official_alerts
+  WHERE status = 'active'
+    AND is_current = TRUE
+    AND (effective_at IS NULL OR effective_at <= COALESCE($5::timestamptz, now()))
+    AND (expires_at IS NULL OR expires_at >= COALESCE($5::timestamptz, now()))
+    AND EXISTS (
+      SELECT 1
+      FROM official_source_settings s
+      WHERE s.source_name = official_alerts.source
+        AND s.enabled = TRUE
+        AND s.run_mode = 'active'
+    )
+), area_candidates AS (
+  SELECT *, CASE
+    WHEN area_geojson IS NOT NULL
+      AND jsonb_typeof(area_geojson) = 'object'
+      AND (
+        (
+          area_geojson->>'type' = 'Polygon'
+          AND jsonb_typeof(area_geojson->'coordinates') = 'array'
+          AND jsonb_array_length(area_geojson->'coordinates') > 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(area_geojson->'coordinates') AS ring(value)
+            WHERE jsonb_typeof(ring.value) <> 'array'
+              OR jsonb_array_length(ring.value) < 4
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(ring.value) AS position(value)
+                WHERE jsonb_typeof(position.value) <> 'array'
+                  OR jsonb_array_length(position.value) < 2
+                  OR jsonb_typeof(position.value->0) <> 'number'
+                  OR jsonb_typeof(position.value->1) <> 'number'
+              )
+          )
+        )
+        OR (
+          area_geojson->>'type' = 'MultiPolygon'
+          AND jsonb_typeof(area_geojson->'coordinates') = 'array'
+          AND jsonb_array_length(area_geojson->'coordinates') > 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(area_geojson->'coordinates') AS polygon(value)
+            WHERE jsonb_typeof(polygon.value) <> 'array'
+              OR jsonb_array_length(polygon.value) = 0
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(polygon.value) AS ring(value)
+                WHERE jsonb_typeof(ring.value) <> 'array'
+                  OR jsonb_array_length(ring.value) < 4
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements(ring.value) AS position(value)
+                    WHERE jsonb_typeof(position.value) <> 'array'
+                      OR jsonb_array_length(position.value) < 2
+                      OR jsonb_typeof(position.value->0) <> 'number'
+                      OR jsonb_typeof(position.value->1) <> 'number'
+                  )
+              )
+          )
+        )
+      )
+    THEN ST_SetSRID(ST_GeomFromGeoJSON(area_geojson::text), 4326)
+  END AS area_geometry
+  FROM active_alerts
+), display_geometries AS (
+  SELECT *, CASE
+    WHEN area_geometry IS NOT NULL AND ST_IsValid(area_geometry) THEN area_geometry
+    WHEN latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180
+      THEN ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
+  END AS display_geometry
+  FROM area_candidates
+)
+SELECT source, source_alert_id, headline, peril_type, severity, effective_at,
+       expires_at, sent_at, source_url, ST_AsGeoJSON(display_geometry)::json AS geometry
+FROM display_geometries
+WHERE display_geometry IS NOT NULL
+  AND ST_Intersects(display_geometry, ST_MakeEnvelope($1, $2, $3, $4, 4326))
+ORDER BY sent_at DESC, source ASC, source_alert_id ASC, revision DESC
 LIMIT $6
 `
 
 const operationMapAirQualityQuery = `
-SELECT o.id, o.source, o.station_id, o.station_name, o.latitude, o.longitude,
-       o.pollutant, o.value, o.unit, o.category, o.observed_at, o.source_url,
-       (o.observed_at < now() - make_interval(secs => 2 * s.expected_interval_seconds)) AS stale,
-       o.ingested_at
-FROM air_quality_observations o
-JOIN official_source_settings s ON s.source_name = 'bmkg_air_quality'
-  AND s.enabled = TRUE
-  AND s.run_mode = 'active'
-WHERE o.latitude BETWEEN $2 AND $4
-  AND o.longitude BETWEEN $1 AND $3
-  AND ($5::timestamptz IS NULL OR o.observed_at <= $5)
-ORDER BY CASE o.category
+WITH latest AS (
+  SELECT DISTINCT ON (o.station_id, o.pollutant)
+         o.id, o.source, o.station_id, o.station_name, o.latitude, o.longitude,
+         o.pollutant, o.value, o.unit, o.category, o.observed_at, o.source_url,
+         (o.observed_at < COALESCE($5::timestamptz, now()) - make_interval(secs => 2 * s.expected_interval_seconds)) AS stale,
+         o.ingested_at
+  FROM air_quality_observations o
+  JOIN official_source_settings s ON s.source_name = 'bmkg_air_quality'
+    AND s.enabled = TRUE
+    AND s.run_mode = 'active'
+  WHERE o.latitude BETWEEN $2 AND $4
+    AND o.longitude BETWEEN $1 AND $3
+    AND o.observed_at <= COALESCE($5::timestamptz, now())
+  ORDER BY o.station_id, o.pollutant, o.observed_at DESC, o.id ASC
+)
+SELECT id, source, station_id, station_name, latitude, longitude, pollutant,
+       value, unit, category, observed_at, source_url, stale, ingested_at
+FROM latest
+ORDER BY CASE category
            WHEN 'Berbahaya' THEN 5 WHEN 'Sangat Tidak Sehat' THEN 4
            WHEN 'Tidak Sehat' THEN 3 WHEN 'Sedang' THEN 2 ELSE 1
          END DESC,
-         o.observed_at DESC,
-         o.station_id ASC,
-         o.pollutant ASC,
-         o.id ASC
+         observed_at DESC,
+         station_id ASC,
+         pollutant ASC,
+         id ASC
 LIMIT $6
 `
 
@@ -366,11 +434,12 @@ func OperationMapEvents(db *sql.DB) gin.HandlerFunc {
 
 		features := make([]OperationMapFeature, 0, operationMapEventLimit)
 		for rows.Next() {
-			var eventID, source, eventType, place, url string
+			var source, eventID, eventType string
 			var severity sql.NullString
+			var place, url sql.NullString
 			var eventTime time.Time
 			var latitude, longitude float64
-			if err := rows.Scan(&eventID, &source, &eventType, &severity, &place, &eventTime, &url, &latitude, &longitude); err != nil {
+			if err := rows.Scan(&source, &eventID, &eventType, &severity, &place, &eventTime, &url, &latitude, &longitude); err != nil {
 				status = http.StatusInternalServerError
 				operationMapError(c, status, "row_scan_failed")
 				return
@@ -379,13 +448,13 @@ func OperationMapEvents(db *sql.DB) gin.HandlerFunc {
 				truncated = true
 				break
 			}
-			features = append(features, operationMapPointFeature(eventID, "events", operationMapLabel(place, eventType), longitude, latitude,
+			features = append(features, operationMapPointFeature(operationMapSourceQualifiedID(source, eventID), "events", operationMapLabel(nullableOperationMapString(place), eventType), longitude, latitude,
 				OperationMapFeatureProperties{
 					PerilType:          eventType,
 					Severity:           nullableOperationMapString(severity),
 					Source:             source,
 					Attribution:        operationMapAttribution(source),
-					SourceURL:          url,
+					SourceURL:          nullableOperationMapString(url),
 					VerificationStatus: "source-reported",
 					ObservedAt:         operationMapTimePtr(eventTime),
 				}))
@@ -431,13 +500,12 @@ func OperationMapAlerts(db *sql.DB) gin.HandlerFunc {
 
 		features := make([]OperationMapFeature, 0, operationMapAlertLimit)
 		for rows.Next() {
-			var id, source, sourceAlertID string
+			var source, sourceAlertID string
 			var headline, perilType, severity, sourceURL sql.NullString
 			var effectiveAt, expiresAt sql.NullTime
 			var sentAt time.Time
-			var areaGeoJSON []byte
-			var latitude, longitude sql.NullFloat64
-			if err := rows.Scan(&id, &source, &sourceAlertID, &headline, &perilType, &severity, &effectiveAt, &expiresAt, &sentAt, &sourceURL, &areaGeoJSON, &latitude, &longitude); err != nil {
+			var geometry json.RawMessage
+			if err := rows.Scan(&source, &sourceAlertID, &headline, &perilType, &severity, &effectiveAt, &expiresAt, &sentAt, &sourceURL, &geometry); err != nil {
 				status = http.StatusInternalServerError
 				operationMapError(c, status, "row_scan_failed")
 				return
@@ -458,13 +526,7 @@ func OperationMapAlerts(db *sql.DB) gin.HandlerFunc {
 				EffectiveAt:        nullableOperationMapTime(effectiveAt),
 				ExpiresAt:          nullableOperationMapTime(expiresAt),
 			}
-			if validOperationMapAreaGeoJSON(areaGeoJSON) {
-				features = append(features, operationMapGeometryFeature(sourceAlertID, "alerts", operationMapLabel(nullableOperationMapString(headline), nullableOperationMapString(perilType)), json.RawMessage(areaGeoJSON), properties))
-				continue
-			}
-			if validOperationMapCoordinates(latitude, longitude) {
-				features = append(features, operationMapPointFeature(sourceAlertID, "alerts", operationMapLabel(nullableOperationMapString(headline), nullableOperationMapString(perilType)), longitude.Float64, latitude.Float64, properties))
-			}
+			features = append(features, operationMapGeometryFeature(operationMapSourceQualifiedID(source, sourceAlertID), "alerts", operationMapLabel(nullableOperationMapString(headline), nullableOperationMapString(perilType)), geometry, properties))
 		}
 		if err := rows.Err(); err != nil {
 			status = http.StatusInternalServerError
@@ -631,6 +693,10 @@ func operationMapGeometryFeature(id, layer, label string, geometry json.RawMessa
 	return OperationMapFeature{Type: "Feature", ID: id, Geometry: geometry, Properties: properties}
 }
 
+func operationMapSourceQualifiedID(source, id string) string {
+	return source + ":" + id
+}
+
 func operationMapError(c *gin.Context, status int, code string) {
 	c.JSON(status, gin.H{"error": code})
 }
@@ -705,57 +771,4 @@ func nullableOperationMapBool(value sql.NullBool) *bool {
 	}
 	result := value.Bool
 	return &result
-}
-
-func validOperationMapCoordinates(latitude, longitude sql.NullFloat64) bool {
-	return latitude.Valid && longitude.Valid && latitude.Float64 >= -90 && latitude.Float64 <= 90 && longitude.Float64 >= -180 && longitude.Float64 <= 180
-}
-
-func validOperationMapAreaGeoJSON(raw []byte) bool {
-	var geometry struct {
-		Type        string          `json:"type"`
-		Coordinates json.RawMessage `json:"coordinates"`
-	}
-	if json.Unmarshal(raw, &geometry) != nil {
-		return false
-	}
-	switch geometry.Type {
-	case "Polygon":
-		var polygon [][][]float64
-		return json.Unmarshal(geometry.Coordinates, &polygon) == nil && validOperationMapPolygon(polygon)
-	case "MultiPolygon":
-		var multiPolygon [][][][]float64
-		if json.Unmarshal(geometry.Coordinates, &multiPolygon) != nil || len(multiPolygon) == 0 {
-			return false
-		}
-		for _, polygon := range multiPolygon {
-			if !validOperationMapPolygon(polygon) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func validOperationMapPolygon(polygon [][][]float64) bool {
-	if len(polygon) == 0 {
-		return false
-	}
-	for _, ring := range polygon {
-		if len(ring) < 4 {
-			return false
-		}
-		for _, position := range ring {
-			if len(position) < 2 || math.IsNaN(position[0]) || math.IsInf(position[0], 0) || math.IsNaN(position[1]) || math.IsInf(position[1], 0) || position[0] < -180 || position[0] > 180 || position[1] < -90 || position[1] > 90 {
-				return false
-			}
-		}
-		first, last := ring[0], ring[len(ring)-1]
-		if first[0] != last[0] || first[1] != last[1] {
-			return false
-		}
-	}
-	return true
 }
