@@ -18,6 +18,9 @@ const approvedSourceHosts: Record<string, readonly string[]> = {
   osm: ['openstreetmap.org'],
   gdacs_fl: ['gdacs.org'],
   gdacs_vo: ['gdacs.org'],
+  petabencana: ['petabencana.id'],
+  gvp: ['volcano.si.edu'],
+  pvmbg: ['esdm.go.id'],
 }
 
 function safeExternalUrl(source: string, value: string | undefined): string | undefined {
