@@ -74,7 +74,8 @@ INSERT INTO official_alerts (
     ('00000000-0000-0000-0000-000000000001', 'bmkg', 'legacy-malformed', 1, 'active', now() - interval '3 minutes', now() - interval '5 minutes', now() + interval '1 hour', 'Legacy', 'weather', 'High', NULL, '{"type":"Polygon","coordinates":[]}', -6.2, 106.8, TRUE),
     ('00000000-0000-0000-0000-000000000002', 'bmkg', 'topology-invalid', 1, 'active', now() - interval '2 minutes', now() - interval '5 minutes', now() + interval '1 hour', 'Topology', 'weather', 'High', NULL, '{"type":"Polygon","coordinates":[[[106.7,-6.3],[107.0,-6.0],[106.7,-6.0],[107.0,-6.3],[106.7,-6.3]]]}', -6.2, 106.8, TRUE),
     ('00000000-0000-0000-0000-000000000003', 'bmkg', 'area-outside-point-inside', 1, 'active', now() - interval '1 minute', now() - interval '5 minutes', now() + interval '1 hour', 'Outside', 'weather', 'High', NULL, '{"type":"Polygon","coordinates":[[[139.5,35.5],[139.9,35.5],[139.9,35.9],[139.5,35.9],[139.5,35.5]]]}', -6.2, 106.8, TRUE),
-    ('00000000-0000-0000-0000-000000000004', 'bmkg', 'area-inside-point-outside', 1, 'active', now(), now() - interval '5 minutes', now() + interval '1 hour', 'Inside', 'weather', 'High', NULL, '{"type":"Polygon","coordinates":[[[106.7,-6.4],[107.1,-6.4],[107.1,-6.0],[106.7,-6.0],[106.7,-6.4]]]}', 35.7, 139.7, TRUE)
+    ('00000000-0000-0000-0000-000000000004', 'bmkg', 'area-inside-point-outside', 1, 'active', now(), now() - interval '5 minutes', now() + interval '1 hour', 'Inside', 'weather', 'High', NULL, '{"type":"Polygon","coordinates":[[[106.7,-6.4],[107.1,-6.4],[107.1,-6.0],[106.7,-6.0],[106.7,-6.4]]]}', 35.7, 139.7, TRUE),
+    ('00000000-0000-0000-0000-000000000005', 'bmkg', 'wgs84-invalid', 1, 'active', now() - interval '30 seconds', now() - interval '5 minutes', now() + interval '1 hour', 'Invalid bounds', 'weather', 'High', NULL, '{"type":"Polygon","coordinates":[[[106.7,-6.4],[200,-6.4],[200,-6.0],[106.7,-6.0],[106.7,-6.4]]]}', -6.2, 106.8, TRUE)
 `); err != nil {
 		t.Fatalf("create alerts: %v", err)
 	}
@@ -84,7 +85,7 @@ INSERT INTO official_alerts (
 	if _, exists := features["bmkg:area-outside-point-inside"]; exists {
 		t.Fatalf("out-of-bbox selected geometry was included: %#v", features)
 	}
-	for _, id := range []string{"bmkg:legacy-malformed", "bmkg:topology-invalid", "bmkg:area-inside-point-outside"} {
+	for _, id := range []string{"bmkg:legacy-malformed", "bmkg:topology-invalid", "bmkg:area-inside-point-outside", "bmkg:wgs84-invalid"} {
 		if _, exists := features[id]; !exists {
 			t.Fatalf("missing expected alert %q: %#v", id, features)
 		}
@@ -97,6 +98,9 @@ INSERT INTO official_alerts (
 	}
 	if got := features["bmkg:area-inside-point-outside"]["geometry"].(map[string]any)["type"]; got != "Polygon" {
 		t.Fatalf("area-inside geometry type = %#v, want Polygon", got)
+	}
+	if got := features["bmkg:wgs84-invalid"]["geometry"].(map[string]any)["type"]; got != "Point" {
+		t.Fatalf("WGS84-invalid geometry type = %#v, want Point fallback", got)
 	}
 }
 
@@ -117,7 +121,9 @@ INSERT INTO air_quality_observations (
 ) VALUES
     ('10000000-0000-0000-0000-000000000001', 'bmkg', 'station-1', 'Station 1', -6.2, 106.8, 'pm25', 160, 'ug/m3', 'Berbahaya', $1, NULL, $1),
     ('10000000-0000-0000-0000-000000000002', 'bmkg', 'station-1', 'Station 1', -6.2, 106.8, 'pm25', 66, 'ug/m3', 'Tidak Sehat', $2, NULL, $2),
-    ('10000000-0000-0000-0000-000000000003', 'bmkg', 'station-2', 'Station 2', -6.25, 106.85, 'pm25', 55, 'ug/m3', 'Sedang', $2, NULL, $2)
+    ('10000000-0000-0000-0000-000000000003', 'bmkg', 'station-2', 'Station 2', -6.25, 106.85, 'pm25', 55, 'ug/m3', 'Sedang', $2, NULL, $2),
+    ('10000000-0000-0000-0000-000000000004', 'bmkg', 'station-moving', 'Moving Station', -6.2, 106.8, 'pm25', 88, 'ug/m3', 'Tidak Sehat', $1, NULL, $1),
+    ('10000000-0000-0000-0000-000000000005', 'bmkg', 'station-moving', 'Moving Station', -7.2, 106.8, 'pm25', 44, 'ug/m3', 'Sedang', $2, NULL, $2)
 `, referenceTime.Add(-10*time.Minute), referenceTime.Add(-time.Minute)); err != nil {
 		t.Fatalf("create observations: %v", err)
 	}
@@ -145,6 +151,9 @@ INSERT INTO air_quality_observations (
 	}
 	if stationOne["stale"] != false {
 		t.Fatalf("station 1 stale = %#v, want false at supplied reference time", stationOne["stale"])
+	}
+	if seenIDs["bmkg:station-moving:pm25"] {
+		t.Fatalf("older in-bbox station position leaked after latest-as-of moved outside the viewport: %#v", seenIDs)
 	}
 }
 

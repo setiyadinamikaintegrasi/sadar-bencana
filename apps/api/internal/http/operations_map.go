@@ -309,6 +309,10 @@ WITH active_alerts AS (
                   OR jsonb_array_length(position.value) < 2
                   OR jsonb_typeof(position.value->0) <> 'number'
                   OR jsonb_typeof(position.value->1) <> 'number'
+                  OR position.value->0 < '-180'::jsonb
+                  OR position.value->0 > '180'::jsonb
+                  OR position.value->1 < '-90'::jsonb
+                  OR position.value->1 > '90'::jsonb
               )
           )
         )
@@ -333,6 +337,10 @@ WITH active_alerts AS (
                       OR jsonb_array_length(position.value) < 2
                       OR jsonb_typeof(position.value->0) <> 'number'
                       OR jsonb_typeof(position.value->1) <> 'number'
+                      OR position.value->0 < '-180'::jsonb
+                      OR position.value->0 > '180'::jsonb
+                      OR position.value->1 < '-90'::jsonb
+                      OR position.value->1 > '90'::jsonb
                   )
               )
           )
@@ -369,14 +377,14 @@ WITH latest AS (
   JOIN official_source_settings s ON s.source_name = 'bmkg_air_quality'
     AND s.enabled = TRUE
     AND s.run_mode = 'active'
-  WHERE o.latitude BETWEEN $2 AND $4
-    AND o.longitude BETWEEN $1 AND $3
-    AND o.observed_at <= COALESCE($5::timestamptz, now())
+  WHERE o.observed_at <= COALESCE($5::timestamptz, now())
   ORDER BY o.station_id, o.pollutant, o.observed_at DESC, o.id ASC
 )
 SELECT id, source, station_id, station_name, latitude, longitude, pollutant,
        value, unit, category, observed_at, source_url, stale, ingested_at
 FROM latest
+WHERE latitude BETWEEN $2 AND $4
+  AND longitude BETWEEN $1 AND $3
 ORDER BY CASE category
            WHEN 'Berbahaya' THEN 5 WHEN 'Sangat Tidak Sehat' THEN 4
            WHEN 'Tidak Sehat' THEN 3 WHEN 'Sedang' THEN 2 ELSE 1
