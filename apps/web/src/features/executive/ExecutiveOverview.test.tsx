@@ -1,8 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ExecutiveOverview from './ExecutiveOverview'
 
-const { event, dashboardState } = vi.hoisted(() => {
+const { event, dashboardState, operationalMapState } = vi.hoisted(() => {
   const event = {
     id: 'event-1',
     event_id: 'source-event-1',
@@ -26,6 +26,7 @@ const { event, dashboardState } = vi.hoisted(() => {
       mapEngine: 'leaflet' as 'leaflet' | 'maplibre',
       session: { user: { id: 'user-1' } } as object | null,
     },
+    operationalMapState: { props: {} as Record<string, unknown> },
   }
 })
 
@@ -86,18 +87,24 @@ vi.mock('../../lib/auth/AuthProvider', () => ({
   useAuth: () => ({ session: dashboardState.session }),
 }))
 vi.mock('../map/OperationalMap', () => ({
-  default: ({ authenticated, initialLayers, perils }: {
+  default: (props: {
     authenticated?: boolean
     initialLayers?: string[]
     perils?: string[]
-  }) => (
-    <div
-      data-testid="operational-map"
-      data-authenticated={String(Boolean(authenticated))}
-      data-layers={initialLayers?.join(',')}
-      data-perils={perils?.join(',')}
-    />
-  ),
+    visibleLayers?: string[]
+    privateOwnerKey?: string
+  }) => {
+    operationalMapState.props = props
+    return (
+      <div
+        data-testid="operational-map"
+        data-authenticated={String(Boolean(props.authenticated))}
+        data-owner={props.privateOwnerKey}
+        data-layers={(props.visibleLayers ?? props.initialLayers)?.join(',')}
+        data-perils={props.perils?.join(',')}
+      />
+    )
+  },
 }))
 vi.mock('./useBmkgWarnings', () => ({
   useBmkgWarnings: () => ({
@@ -140,7 +147,11 @@ vi.mock('../../components/RiskMap', async (importOriginal) => {
     ),
   }
 })
-vi.mock('./BmkgWarningsPanel', () => ({ default: () => null }))
+vi.mock('./BmkgWarningsPanel', () => ({
+  default: ({ onFocusAlert }: { onFocusAlert: (id: string) => void }) => (
+    <button type="button" onClick={() => onFocusAlert('warning-1')}>Pilih warning resmi</button>
+  ),
+}))
 vi.mock('./LiveVideoDesk', () => ({ default: () => null }))
 vi.mock('../../components/NewsPanel', () => ({ default: () => null }))
 vi.mock('../../components/SourceBadge', () => ({ default: () => null }))
@@ -177,6 +188,7 @@ describe('ExecutiveOverview official warning navigation', () => {
 
     const operationalMap = await screen.findByTestId('operational-map')
     expect(operationalMap.getAttribute('data-authenticated')).toBe('true')
+    expect(operationalMap.getAttribute('data-owner')).toBe('user-1')
     expect(operationalMap.getAttribute('data-layers')).toBe('events,official-alerts,air-quality')
     expect(operationalMap.getAttribute('data-perils')).toBe('')
     expect(screen.queryByRole('button', { name: 'Pilih event biasa' })).toBeNull()
@@ -194,6 +206,73 @@ describe('ExecutiveOverview official warning navigation', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Fokuskan di peta' }))
 
     expect(screen.getByTestId('operational-map').getAttribute('data-perils')).toBe('earthquake')
+    expect((operationalMapState.props.focusRequest as { id: string }).id).toBe('BMKG:source-event-1')
+  })
+
+  it('adapts source-qualified map feature IDs and warning actions into controlled focus requests', async () => {
+    dashboardState.mapEngine = 'maplibre'
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+    await screen.findByTestId('operational-map')
+
+    act(() => {
+      ;(operationalMapState.props.onFeatureSelect as (feature: Record<string, unknown>) => void)({
+        type: 'Feature',
+        id: 'usgs:source-event-1',
+        geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+        properties: {
+          id: 'usgs:source-event-1', layer: 'events', label: 'Jakarta', source: 'usgs', attribution: 'USGS', verification_status: 'source-reported',
+        },
+      })
+    })
+    expect((operationalMapState.props.focusRequest as { id: string }).id).toBe('usgs:source-event-1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pilih warning resmi' }))
+    expect((operationalMapState.props.focusRequest as { id: string }).id).toBe('bmkg_cap:source-warning-1')
+  })
+
+  it('exposes every Executive map control and applies it to MapLibre layers', async () => {
+    dashboardState.mapEngine = 'maplibre'
+    dashboardState.mapOverlays = [overlay({
+      id: 'static-risk-1',
+      layer_class: 'static_risk',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[[106.7, -6.3], [106.9, -6.3], [106.9, -6.1], [106.7, -6.3]]],
+      },
+    })]
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+    await screen.findByTestId('operational-map')
+
+    const filters = [
+      ['Semua', []],
+      ['Gempa', ['earthquake']],
+      ['Karhutla', ['wildfire']],
+      ['Vulkanik', ['volcano']],
+      ['Banjir', ['flood']],
+      ['News', []],
+    ] as const
+    for (const [name, expectedPerils] of filters) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${name}`) })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }))
+      expect(operationalMapState.props.perils).toEqual(expectedPerils)
+      if (name === 'News') expect(operationalMapState.props.visibleLayers).not.toContain('events')
+      else expect(operationalMapState.props.visibleLayers).toContain('events')
+    }
+    fireEvent.click(screen.getByRole('button', { name: /^Semua/ }))
+    expect(operationalMapState.props.perils).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Warning resmi' }))
+    expect(operationalMapState.props.visibleLayers).not.toContain('official-alerts')
+    fireEvent.click(screen.getByRole('button', { name: 'Watch zone' }))
+    expect(operationalMapState.props.privateLayers).toEqual(['personal-assets'])
+    expect((operationalMapState.props.localOverlay as GeoJSON.FeatureCollection).features).toEqual([
+      expect.objectContaining({ id: 'static-risk-1' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Kajian risiko' }))
+    expect((operationalMapState.props.localOverlay as GeoJSON.FeatureCollection).features).toEqual([])
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Waktu lifecycle peta' }), { target: { value: '24' } })
+    expect(typeof operationalMapState.props.mapTime).toBe('string')
   })
 
   it('clears external focus on ordinary selection and honors a repeated focus nonce', async () => {

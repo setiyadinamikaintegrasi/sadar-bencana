@@ -21,6 +21,7 @@ type MapLibreTestInstance = {
   addLayer: ReturnType<typeof vi.fn>
   addSource: ReturnType<typeof vi.fn>
   easeTo: ReturnType<typeof vi.fn>
+  fitBounds: ReturnType<typeof vi.fn>
   getBounds: ReturnType<typeof vi.fn>
   getCenter: ReturnType<typeof vi.fn>
   getLayer: ReturnType<typeof vi.fn>
@@ -76,6 +77,7 @@ const maplibre = vi.hoisted(() => {
         setData: vi.fn(),
       })),
       easeTo: vi.fn(),
+      fitBounds: vi.fn(),
       getBounds: vi.fn(() => ({ getWest: () => 106.7, getSouth: () => -6.4, getEast: () => 107.1, getNorth: () => -6 })),
       getCenter: vi.fn(() => {
         assertLive()
@@ -190,7 +192,7 @@ describe('OperationalMap', () => {
   })
 
   it('does not request or expose private layers without an authenticated session', async () => {
-    render(<OperationalMap authenticated={false} privateLayers={['watch-zones', 'personal-assets']} />)
+    render(<OperationalMap authenticated={false} privateOwnerKey={undefined} privateLayers={['watch-zones', 'personal-assets']} />)
 
     await act(async () => {
       maplibre.instances[0].trigger('load')
@@ -225,7 +227,7 @@ describe('OperationalMap', () => {
       },
     }))
     const { rerender } = render(
-      <OperationalMap authenticated privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />,
+      <OperationalMap authenticated privateOwnerKey="user-a" privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />,
     )
     const map = maplibre.instances[0]
 
@@ -249,13 +251,122 @@ describe('OperationalMap', () => {
     }))
     expect(screen.getByRole('heading', { name: 'Zona rumah' })).toBeTruthy()
 
-    rerender(<OperationalMap authenticated={false} privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />)
+    rerender(<OperationalMap authenticated={false} privateOwnerKey={undefined} privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />)
 
     expect(screen.queryByRole('heading', { name: 'Zona rumah' })).toBeNull()
     expect(map.removeSource).toHaveBeenCalledWith('operational-map-private-watch-zones-source')
     expect(map.removeSource).toHaveBeenCalledWith('operational-map-private-personal-assets-source')
     expect(map.off).toHaveBeenCalledWith('click', 'operational-map-private-watch-zones-outline', expect.any(Function))
     expect(map.off).toHaveBeenCalledWith('click', 'operational-map-private-personal-assets-points', expect.any(Function))
+  })
+
+  it('clears owner A artifacts and aborts its requests before loading owner B', async () => {
+    const pending: Array<{ signal?: AbortSignal; resolve: (value: unknown) => void }> = []
+    privateApi.fetchPrivateMapLayer.mockImplementation((layer: 'watch-zones' | 'personal-assets', _viewport: unknown, signal?: AbortSignal) => {
+      if (privateApi.fetchPrivateMapLayer.mock.calls.length <= 2) return Promise.resolve({
+        layer,
+        state: 'ready',
+        collection: {
+          type: 'FeatureCollection', layer, truncated: false,
+          features: layer === 'watch-zones' ? [{
+            type: 'Feature', id: 'zone-a', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+            properties: { id: 'zone-a', layer, label: 'Zona milik A', source: 'account', attribution: 'Private account data', verification_status: 'user-provided' },
+          }] : [],
+        },
+      })
+      return new Promise((resolve) => pending.push({ signal, resolve }))
+    })
+    const { rerender } = render(
+      <OperationalMap authenticated privateOwnerKey="user-a" privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />,
+    )
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => map.trigger('click', { features: [{
+      id: 'zone-a', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+      properties: { id: 'zone-a', layer: 'watch-zones', label: 'Zona milik A', source: 'account', attribution: 'Private account data', verification_status: 'user-provided' },
+    }] }))
+    expect(screen.getByRole('heading', { name: 'Zona milik A' })).toBeTruthy()
+
+    act(() => map.trigger('moveend'))
+    expect(pending).toHaveLength(2)
+    rerender(<OperationalMap authenticated privateOwnerKey="user-b" privateLayers={['watch-zones', 'personal-assets']} initialLayers={[]} />)
+
+    expect(pending.slice(0, 2).every((request) => request.signal?.aborted)).toBe(true)
+    expect(screen.queryByRole('heading', { name: 'Zona milik A' })).toBeNull()
+    expect(map.removeSource).toHaveBeenCalledWith('operational-map-private-watch-zones-source')
+    expect(privateApi.fetchPrivateMapLayer).toHaveBeenCalledTimes(6)
+  })
+
+  it('closes private selection after a successful refresh removes it', async () => {
+    let refresh = false
+    privateApi.fetchPrivateMapLayer.mockImplementation((layer: 'watch-zones' | 'personal-assets') => Promise.resolve({
+      layer,
+      state: refresh ? 'empty' : 'ready',
+      collection: {
+        type: 'FeatureCollection', layer, truncated: false,
+        features: !refresh && layer === 'watch-zones' ? [{
+          type: 'Feature', id: 'zone-1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { id: 'zone-1', layer, label: 'Zona lama', source: 'account', attribution: 'Private account data', verification_status: 'user-provided' },
+        }] : [],
+      },
+    }))
+    render(<OperationalMap authenticated privateOwnerKey="user-a" privateLayers={['watch-zones']} initialLayers={[]} />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    act(() => map.trigger('click', { features: [{
+      id: 'zone-1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+      properties: { id: 'zone-1', layer: 'watch-zones', label: 'Zona lama', source: 'account', attribution: 'Private account data', verification_status: 'user-provided' },
+    }] }))
+    expect(screen.getByRole('heading', { name: 'Zona lama' })).toBeTruthy()
+
+    refresh = true
+    await act(async () => {
+      map.trigger('moveend')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('heading', { name: 'Zona lama' })).toBeNull()
+  })
+
+  it('updates private selection from a successful replacement refresh', async () => {
+    let label = 'Zona lama'
+    privateApi.fetchPrivateMapLayer.mockImplementation((layer: 'watch-zones' | 'personal-assets') => Promise.resolve({
+      layer,
+      state: 'ready',
+      collection: {
+        type: 'FeatureCollection', layer, truncated: false,
+        features: [{
+          type: 'Feature', id: 'zone-1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { id: 'zone-1', layer, label, source: 'account', attribution: 'Private account data', verification_status: 'user-provided' },
+        }],
+      },
+    }))
+    render(<OperationalMap authenticated privateOwnerKey="user-a" privateLayers={['watch-zones']} initialLayers={[]} />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    act(() => map.trigger('click', { features: [{
+      id: 'zone-1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+      properties: { id: 'zone-1', layer: 'watch-zones', label, source: 'account', attribution: 'Private account data', verification_status: 'user-provided' },
+    }] }))
+
+    label = 'Zona diperbarui'
+    await act(async () => {
+      map.trigger('moveend')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('heading', { name: 'Zona diperbarui' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Zona lama' })).toBeNull()
   })
 
   it('keeps picker clicks and camera changes out of URL state', () => {
@@ -487,6 +598,136 @@ describe('OperationalMap', () => {
       })
     })
     expect(screen.getByRole('heading', { name: 'Peringatan Jakarta' })).toBeTruthy()
+  })
+
+  it('uses a controlled public collection without fetching and replaces its rendered data', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const collection = {
+      type: 'FeatureCollection' as const,
+      layer: 'evacuations' as const,
+      truncated: false,
+      features: [{
+        type: 'Feature' as const,
+        id: 'evacuation-1',
+        geometry: { type: 'Point' as const, coordinates: [106.8, -6.2] },
+        properties: {
+          id: 'evacuation-1', layer: 'evacuations' as const, label: 'Shelter Jakarta', source: 'manual', attribution: 'SadarBencana', verification_status: 'operator-managed',
+        },
+      }],
+    }
+    const { rerender } = render(
+      <OperationalMap
+        initialLayers={['evacuations']}
+        visibleLayers={['evacuations']}
+        controlledCollections={{ evacuations: collection }}
+      />,
+    )
+    const map = maplibre.instances[0]
+    fetchMock.mockClear()
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(map.addSource).toHaveBeenCalledWith(
+      'operational-map-evacuations-source',
+      expect.objectContaining({ data: collection }),
+    )
+
+    const emptyCollection = { ...collection, features: [] }
+    rerender(
+      <OperationalMap
+        initialLayers={['evacuations']}
+        visibleLayers={['evacuations']}
+        controlledCollections={{ evacuations: emptyCollection }}
+      />,
+    )
+    const source = (map.getSource as unknown as (id: string) => { setData: ReturnType<typeof vi.fn> })(
+      'operational-map-evacuations-source',
+    )
+    expect(source.setData).toHaveBeenCalledWith(emptyCollection)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('selects and refocuses a source-qualified controlled feature request', async () => {
+    const eventFeature = {
+      type: 'Feature' as const,
+      id: 'usgs:source-event-1',
+      geometry: { type: 'Point' as const, coordinates: [106.8, -6.2] },
+      properties: {
+        id: 'usgs:source-event-1', layer: 'events' as const, label: 'Gempa Jakarta', source: 'usgs', attribution: 'USGS', verification_status: 'source-reported',
+      },
+    }
+    const collection = {
+      type: 'FeatureCollection' as const,
+      layer: 'events' as const,
+      truncated: false,
+      features: [eventFeature],
+    }
+    const { rerender } = render(
+      <OperationalMap
+        initialLayers={['events']}
+        controlledCollections={{ events: collection }}
+        focusRequest={{ id: 'usgs:source-event-1', geometry: eventFeature.geometry, nonce: 1 }}
+      />,
+    )
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    expect(screen.getByRole('heading', { name: 'Gempa Jakarta' })).toBeTruthy()
+    expect(map.easeTo).toHaveBeenCalledWith({ center: [106.8, -6.2], zoom: 7 })
+
+    rerender(
+      <OperationalMap
+        initialLayers={['events']}
+        controlledCollections={{ events: collection }}
+        focusRequest={{ id: 'usgs:source-event-1', geometry: eventFeature.geometry, nonce: 2 }}
+      />,
+    )
+    expect(map.easeTo).toHaveBeenCalledTimes(2)
+  })
+
+  it('selects a qualified official-alert response and fits its polygon focus', async () => {
+    const geometry = {
+      type: 'Polygon' as const,
+      coordinates: [[[106.7, -6.3], [106.9, -6.3], [106.9, -6.1], [106.7, -6.3]]],
+    }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      type: 'FeatureCollection',
+      layer: 'alerts',
+      truncated: false,
+      features: [{
+        type: 'Feature',
+        id: 'bmkg_cap:source-warning-1',
+        geometry,
+        properties: {
+          id: 'bmkg_cap:source-warning-1', layer: 'alerts', label: 'Peringatan BMKG', source: 'bmkg_cap', attribution: 'BMKG', verification_status: 'official',
+        },
+      }],
+    }), { status: 200 }))
+    render(
+      <OperationalMap
+        initialLayers={['official-alerts']}
+        focusRequest={{ id: 'bmkg_cap:source-warning-1', geometry, nonce: 1 }}
+      />,
+    )
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByRole('heading', { name: 'Peringatan BMKG' })).toBeTruthy()
+    expect(map.fitBounds).toHaveBeenCalledWith(
+      [[106.7, -6.3], [106.9, -6.1]],
+      { padding: 32, maxZoom: 9 },
+    )
   })
 
   it('renders only known public layer toggles with stale, truncation, and attribution indicators', () => {

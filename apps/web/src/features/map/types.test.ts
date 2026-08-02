@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { OperationalMapFeatureCollection } from './types'
+import { sourceQualifiedOperationalMapID, type OperationalMapFeatureCollection } from './types'
 
 describe('operational map wire contract', () => {
   it('accepts the API official-alert response layer independently from the UI layer key', () => {
@@ -24,5 +24,12 @@ describe('operational map wire contract', () => {
 
     expect(response.layer).toBe('alerts')
     expect(response.features[0].properties.layer).toBe('alerts')
+  })
+})
+
+describe('sourceQualifiedOperationalMapID', () => {
+  it('matches the operational map API ID contract for events and official alerts', () => {
+    expect(sourceQualifiedOperationalMapID('usgs', 'source-event-1')).toBe('usgs:source-event-1')
+    expect(sourceQualifiedOperationalMapID('bmkg_cap', 'source-warning-1')).toBe('bmkg_cap:source-warning-1')
   })
 })

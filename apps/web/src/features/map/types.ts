@@ -25,6 +25,10 @@ export const OPERATIONAL_MAP_WIRE_LAYERS = [
 
 export type OperationalMapWireLayer = typeof OPERATIONAL_MAP_WIRE_LAYERS[number]
 
+export function sourceQualifiedOperationalMapID(source: string, sourceID: string): string {
+  return `${source}:${sourceID}`
+}
+
 export interface OperationalMapFeatureProperties {
   id: string
   layer: OperationalMapWireLayer

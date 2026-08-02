@@ -9,7 +9,7 @@ import { eventsLayer } from './layers/events'
 import { officialAlertsLayer } from './layers/officialAlerts'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
-import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
+import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
 
 // This public style is a reviewed application constant, never user-controlled input.
 export const OPERATIONAL_MAP_BASE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
@@ -18,8 +18,14 @@ const OPERATIONAL_MAP_ID_PREFIX = 'operational-map-'
 
 export type OperationalMapMode = 'viewer' | 'picker'
 export type OperationalMapStatus = 'loading' | 'empty' | 'stale' | 'unavailable'
+export type OperationalMapFocusRequest = {
+  id?: string
+  geometry?: GeoJSON.Geometry
+  nonce: number
+}
 
 const MAP_REFRESH_DEBOUNCE_MS = 250
+const EMPTY_CONTROLLED_COLLECTIONS: Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>> = {}
 
 const layerAdapters = {
   events: eventsLayer,
@@ -33,14 +39,39 @@ export interface OperationalMapProps {
   status?: OperationalMapStatus
   className?: string
   initialLayers?: readonly PublicOperationalMapLayer[]
+  visibleLayers?: readonly PublicOperationalMapLayer[]
+  controlledCollections?: Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>>
+  showLegend?: boolean
   perils?: readonly string[]
+  mapTime?: string | null
   authenticated?: boolean
+  privateOwnerKey?: string
   privateLayers?: readonly PrivateOperationalMapLayer[]
   onPick?: (latitude: number, longitude: number) => void
   onFeatureSelect?: (feature: OperationalMapFeature) => void
   onViewportChange?: (viewport: PublicMapViewport) => void
   localOverlay?: GeoJSON.FeatureCollection
   focusCenter?: readonly [number, number]
+  focusRequest?: OperationalMapFocusRequest | null
+}
+
+function geometryBounds(geometry: GeoJSON.Geometry): [[number, number], [number, number]] | undefined {
+  if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon' && geometry.type !== 'LineString' && geometry.type !== 'MultiLineString') return undefined
+  const points: number[][] = []
+  const collect = (coordinates: unknown): void => {
+    if (!Array.isArray(coordinates)) return
+    if (coordinates.length >= 2 && typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
+      points.push(coordinates as number[])
+      return
+    }
+    coordinates.forEach(collect)
+  }
+  collect(geometry.coordinates)
+  if (points.length === 0) return undefined
+  return [
+    [Math.min(...points.map((point) => point[0])), Math.min(...points.map((point) => point[1]))],
+    [Math.max(...points.map((point) => point[0])), Math.max(...points.map((point) => point[1]))],
+  ]
 }
 
 function statusMessage(status: OperationalMapStatus): string {
@@ -130,31 +161,45 @@ export default function OperationalMap({
   status,
   className = '',
   initialLayers,
+  visibleLayers,
+  controlledCollections = EMPTY_CONTROLLED_COLLECTIONS,
+  showLegend = true,
   perils = [],
+  mapTime,
   authenticated = false,
+  privateOwnerKey,
   privateLayers = [],
   onPick,
   onFeatureSelect,
   onViewportChange,
   localOverlay,
   focusCenter,
+  focusRequest,
 }: OperationalMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const viewStateRef = useRef<MapViewState>({
     ...readMapViewState(),
-    ...(initialLayers ? { mapLayers: [...initialLayers] } : {}),
+    ...(visibleLayers ? { mapLayers: [...visibleLayers] } : initialLayers ? { mapLayers: [...initialLayers] } : {}),
     ...(focusCenter ? { mapLng: focusCenter[0], mapLat: focusCenter[1] } : {}),
+    ...(mapTime !== undefined ? { mapTime: mapTime ?? undefined } : {}),
   })
   const enabledLayersRef = useRef<PublicOperationalMapLayer[]>(viewStateRef.current.mapLayers)
   const perilsRef = useRef<readonly string[]>(perils)
-  const privateLayersRef = useRef<PrivateOperationalMapLayer[]>(authenticated ? [...privateLayers] : [])
+  const controlledCollectionsRef = useRef(controlledCollections)
+  const collectionsRef = useRef<Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>>>({})
+  const focusRequestRef = useRef(focusRequest)
+  const privateLayersRef = useRef<PrivateOperationalMapLayer[]>(authenticated && privateOwnerKey ? [...privateLayers] : [])
   const onPickRef = useRef(onPick)
   const onFeatureSelectRef = useRef(onFeatureSelect)
   const onViewportChangeRef = useRef(onViewportChange)
   const localOverlayRef = useRef(localOverlay)
   const loadLayersRef = useRef<(() => void) | null>(null)
-  const synchronizePrivateLayersRef = useRef<((layers: PrivateOperationalMapLayer[]) => void) | null>(null)
+  const synchronizeVisibleLayersRef = useRef<((layers: PublicOperationalMapLayer[]) => void) | null>(null)
+  const synchronizeControlledCollectionsRef = useRef<((collections: Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>>) => void) | null>(null)
+  const synchronizeFocusRef = useRef<(() => void) | null>(null)
+  const synchronizeMapTimeRef = useRef<((nextMapTime: string | null) => void) | null>(null)
+  const synchronizePrivateLayersRef = useRef<((ownerKey: string | undefined, layers: PrivateOperationalMapLayer[]) => void) | null>(null)
   const synchronizeLocalOverlayRef = useRef<((data: GeoJSON.FeatureCollection | undefined) => void) | null>(null)
   const focusCenterRef = useRef<((center: readonly [number, number]) => void) | null>(null)
   const [ready, setReady] = useState(false)
@@ -167,6 +212,7 @@ export default function OperationalMap({
   onPickRef.current = onPick
   onFeatureSelectRef.current = onFeatureSelect
   onViewportChangeRef.current = onViewportChange
+  focusRequestRef.current = focusRequest
 
   useEffect(() => {
     const container = containerRef.current
@@ -180,10 +226,62 @@ export default function OperationalMap({
     let refreshRevision = 0
     let privateController: AbortController | undefined
     let privateRevision = 0
+    let currentPrivateOwnerKey = authenticated ? privateOwnerKey : undefined
     const registeredPrivateLayers = new Set<PrivateOperationalMapLayer>()
     let mapLoaded = false
     let disposed = false
     let suppressNextCameraWrite = false
+    let lastFocusedRequestKey: string | undefined
+
+    const focusGeometry = (geometry: GeoJSON.Geometry) => {
+      if (!map) return
+      suppressNextCameraWrite = true
+      if (geometry.type === 'Point') {
+        map.easeTo({ center: geometry.coordinates as [number, number], zoom: Math.max(map.getZoom(), 7) })
+        return
+      }
+      const bounds = geometryBounds(geometry)
+      if (bounds) map.fitBounds(bounds, { padding: 32, maxZoom: 9 })
+    }
+
+    const synchronizeFocus = () => {
+      const request = focusRequestRef.current
+      if (request === null) {
+        setSelectedFeature(null)
+        lastFocusedRequestKey = undefined
+        return
+      }
+      if (!request || !map || !mapLoaded) return
+      const requestKey = `${request.id ?? ''}:${request.nonce}`
+      const selected = request.id
+        ? Object.values(collectionsRef.current).flatMap((collection) => collection?.features ?? []).find((feature) => feature.id === request.id)
+        : undefined
+      if (selected) {
+        setSelectedFeature(selected)
+        if (lastFocusedRequestKey !== requestKey) focusGeometry(selected.geometry)
+      } else if (request.geometry) {
+        if (lastFocusedRequestKey !== requestKey) focusGeometry(request.geometry)
+      }
+      if (selected || request.geometry) lastFocusedRequestKey = requestKey
+    }
+
+    const applyControlledCollections = () => {
+      if (!map || !mapLoaded) return
+      const nextStates: Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>> = {}
+      for (const layer of enabledLayersRef.current) {
+        const collection = controlledCollectionsRef.current[layer]
+        if (!collection) continue
+        layerAdapters[layer].apply(map, collection)
+        collectionsRef.current[layer] = collection
+        nextStates[layer] = {
+          collection,
+          health: collection.features.length === 0 ? 'empty' : 'current',
+          refreshing: false,
+        }
+      }
+      if (Object.keys(nextStates).length > 0) setLayerStates((current) => ({ ...current, ...nextStates }))
+      synchronizeFocus()
+    }
 
     const beginRefresh = () => {
       refreshRevision += 1
@@ -207,9 +305,9 @@ export default function OperationalMap({
       const revision = beginRefresh()
       const controller = new AbortController()
       refreshController = controller
-      const layers = enabledLayersRef.current
+      applyControlledCollections()
+      const layers = enabledLayersRef.current.filter((layer) => !controlledCollectionsRef.current[layer])
       if (layers.length === 0) {
-        setLayerStates({})
         return
       }
 
@@ -217,7 +315,10 @@ export default function OperationalMap({
       void Promise.all(layers.map((layer) => fetchPublicMapLayer(layer, viewport, controller.signal))).then((nextResults) => {
         if (disposed || revision !== refreshRevision || controller.signal.aborted || !map) return
         for (const result of nextResults) {
-          if (result.collection) layerAdapters[result.layer].apply(map, result.collection)
+          if (result.collection) {
+            layerAdapters[result.layer].apply(map, result.collection)
+            collectionsRef.current[result.layer] = result.collection
+          }
         }
         setLayerStates((current) => {
           const next = { ...current }
@@ -248,7 +349,26 @@ export default function OperationalMap({
           if (!refreshed) return selected
           return refreshed.features.find((feature) => feature.id === selected.id) ?? null
         })
+        synchronizeFocus()
       })
+    }
+
+    const synchronizeVisibleLayers = (nextLayers: PublicOperationalMapLayer[]) => {
+      const previousLayers = enabledLayersRef.current
+      enabledLayersRef.current = nextLayers
+      setEnabledLayers(nextLayers)
+      for (const layer of previousLayers) {
+        if (nextLayers.includes(layer) || !map) continue
+        layerAdapters[layer].remove(map)
+        delete collectionsRef.current[layer]
+      }
+      setLayerStates((current) => Object.fromEntries(
+        Object.entries(current).filter(([layer]) => nextLayers.includes(layer as PublicOperationalMapLayer)),
+      ))
+      setSelectedFeature((selected) => selected && !nextLayers.includes(
+        selected.properties.layer === 'alerts' ? 'official-alerts' : selected.properties.layer as PublicOperationalMapLayer,
+      ) ? null : selected)
+      loadPublicLayers()
     }
 
     const detachPrivateLayer = (layer: PrivateOperationalMapLayer) => {
@@ -293,10 +413,23 @@ export default function OperationalMap({
             registeredPrivateLayers.add(result.layer)
           }
         }
+        setSelectedFeature((selected) => {
+          if (!selected || !(selected.properties.layer in privateLayerAdapters)) return selected
+          const refreshed = results.find((result) => result.layer === selected.properties.layer)
+          if (!refreshed?.collection) return selected
+          return refreshed.collection.features.find((feature) => feature.id === selected.id) ?? null
+        })
       })
     }
 
-    const synchronizePrivateLayers = (nextLayers: PrivateOperationalMapLayer[]) => {
+    const synchronizePrivateLayers = (nextOwnerKey: string | undefined, nextLayers: PrivateOperationalMapLayer[]) => {
+      if (currentPrivateOwnerKey !== nextOwnerKey) {
+        clearPrivateLayers()
+        currentPrivateOwnerKey = nextOwnerKey
+        privateLayersRef.current = nextLayers
+        if (nextOwnerKey) loadPrivateLayers()
+        return
+      }
       const previousLayers = privateLayersRef.current
       privateLayersRef.current = nextLayers
       for (const layer of previousLayers) {
@@ -404,6 +537,10 @@ export default function OperationalMap({
       privateController?.abort()
       loadLayersRef.current = null
       synchronizePrivateLayersRef.current = null
+      synchronizeVisibleLayersRef.current = null
+      synchronizeControlledCollectionsRef.current = null
+      synchronizeFocusRef.current = null
+      synchronizeMapTimeRef.current = null
       synchronizeLocalOverlayRef.current = null
       focusCenterRef.current = null
 
@@ -447,6 +584,21 @@ export default function OperationalMap({
 
     mapRef.current = map
     loadLayersRef.current = loadPublicLayers
+    synchronizeVisibleLayersRef.current = synchronizeVisibleLayers
+    synchronizeControlledCollectionsRef.current = (collections) => {
+      controlledCollectionsRef.current = collections
+      applyControlledCollections()
+      loadPublicLayers()
+    }
+    synchronizeFocusRef.current = synchronizeFocus
+    synchronizeMapTimeRef.current = (nextMapTime) => {
+      viewStateRef.current = { ...viewStateRef.current, mapTime: nextMapTime ?? undefined }
+      if (mode !== 'picker') {
+        const search = writeMapViewState(viewStateRef.current)
+        window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
+      }
+      loadPublicLayers()
+    }
     synchronizePrivateLayersRef.current = synchronizePrivateLayers
     synchronizeLocalOverlayRef.current = synchronizeLocalOverlay
     focusCenterRef.current = (center) => {
@@ -478,15 +630,33 @@ export default function OperationalMap({
     return teardown
   }, [mode])
 
-  const privateLayerKey = authenticated ? privateLayers.join(',') : ''
+  const activePrivateOwnerKey = authenticated ? privateOwnerKey : undefined
+  const privateLayerKey = activePrivateOwnerKey ? privateLayers.join(',') : ''
   useEffect(() => {
-    synchronizePrivateLayersRef.current?.(authenticated ? [...privateLayers] : [])
-  }, [authenticated, privateLayerKey])
+    synchronizePrivateLayersRef.current?.(activePrivateOwnerKey, activePrivateOwnerKey ? [...privateLayers] : [])
+  }, [activePrivateOwnerKey, privateLayerKey])
 
   const perilKey = perils.join(',')
   useEffect(() => {
     loadLayersRef.current?.()
   }, [perilKey])
+
+  const visibleLayerKey = visibleLayers?.join(',')
+  useEffect(() => {
+    if (visibleLayers) synchronizeVisibleLayersRef.current?.([...visibleLayers])
+  }, [visibleLayerKey])
+
+  useEffect(() => {
+    synchronizeControlledCollectionsRef.current?.(controlledCollections)
+  }, [controlledCollections])
+
+  useEffect(() => {
+    if (ready) synchronizeFocusRef.current?.()
+  }, [focusRequest?.id, focusRequest?.nonce, ready])
+
+  useEffect(() => {
+    if (mapTime !== undefined) synchronizeMapTimeRef.current?.(mapTime)
+  }, [mapTime])
 
   useEffect(() => {
     synchronizeLocalOverlayRef.current?.(localOverlay)
@@ -531,7 +701,7 @@ export default function OperationalMap({
         </div>
       ) : (
         <>
-          {mode === 'viewer' ? (
+          {mode === 'viewer' && showLegend ? (
             <MapLegend enabledLayers={enabledLayers} results={{}} layerStates={layerStates} onToggle={toggleLayer} />
           ) : null}
           {visibleStatus ? (

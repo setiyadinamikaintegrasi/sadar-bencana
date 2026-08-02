@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import OperationalMap from '../map/OperationalMap'
-import type { OperationalMapFeature } from '../map/types'
+import type { OperationalMapFeature, OperationalMapFeatureCollection } from '../map/types'
 import type { EvacuationMapProps } from './EvacuationMap'
 
 export default function MapLibreEvacuationMap({
@@ -12,6 +12,28 @@ export default function MapLibreEvacuationMap({
   onSelect,
   onViewportChange,
 }: EvacuationMapProps) {
+  const evacuationCollection = useMemo<OperationalMapFeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    layer: 'evacuations',
+    truncated: false,
+    features: locations.map((location) => ({
+      type: 'Feature',
+      id: location.id,
+      geometry: { type: 'Point', coordinates: [location.longitude, location.latitude] },
+      properties: {
+        id: location.id,
+        layer: 'evacuations',
+        label: location.name,
+        source: location.source_type,
+        attribution: location.source_type === 'osm' ? 'OpenStreetMap contributors' : 'SadarBencana',
+        verification_status: location.source_type === 'manual' ? 'operator-managed' : 'source-reported',
+        location_type: location.location_type,
+        open: location.is_open ?? undefined,
+        full: location.is_full ?? undefined,
+      },
+    })),
+  }), [locations])
+
   const localOverlay = useMemo<GeoJSON.FeatureCollection | undefined>(() => {
     if (!userPos) return undefined
     const features: GeoJSON.Feature[] = [{
@@ -37,6 +59,9 @@ export default function MapLibreEvacuationMap({
     <OperationalMap
       mode="viewer"
       initialLayers={['evacuations']}
+      visibleLayers={['evacuations']}
+      controlledCollections={{ evacuations: evacuationCollection }}
+      showLegend={false}
       className="h-[420px] w-full md:h-[520px]"
       onPick={manualPinMode ? onMapClick : undefined}
       onFeatureSelect={selectLocation}
