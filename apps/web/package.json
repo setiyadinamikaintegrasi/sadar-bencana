@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run --config vitest.config.ts",
     "test:e2e:map": "playwright test -c playwright.config.ts",
+    "test:e2e:map:update-snapshots": "playwright test -c playwright.config.ts --update-snapshots",
     "test:e2e:map:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
