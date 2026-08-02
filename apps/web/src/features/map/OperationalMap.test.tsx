@@ -1,15 +1,31 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MapDetailSheet } from './MapDetailSheet'
+import { MapLegend } from './MapLegend'
 import OperationalMap from './OperationalMap'
 
-type MapEvent = { geolocateSource?: boolean }
+type MapEvent = {
+  geolocateSource?: boolean
+  features?: Array<{
+    id?: string | number
+    geometry: GeoJSON.Geometry
+    properties: Record<string, unknown>
+  }>
+}
 type Listener = (event?: MapEvent) => void
 type MapLibreTestInstance = {
   options: Record<string, unknown>
   addControl: ReturnType<typeof vi.fn>
+  addImage: ReturnType<typeof vi.fn>
+  addLayer: ReturnType<typeof vi.fn>
+  addSource: ReturnType<typeof vi.fn>
+  getBounds: ReturnType<typeof vi.fn>
   getCenter: ReturnType<typeof vi.fn>
+  getLayer: ReturnType<typeof vi.fn>
+  getSource: ReturnType<typeof vi.fn>
   getZoom: ReturnType<typeof vi.fn>
   getStyle: ReturnType<typeof vi.fn>
+  hasImage: ReturnType<typeof vi.fn>
   off: ReturnType<typeof vi.fn>
   on: ReturnType<typeof vi.fn>
   once: ReturnType<typeof vi.fn>
@@ -38,7 +54,9 @@ class TestResizeObserver {
 const maplibre = vi.hoisted(() => {
   const instances: MapLibreTestInstance[] = []
   const Map = vi.fn(function MapLibreMap(options: Record<string, unknown>) {
-    const listeners = new globalThis.Map<string, Listener>()
+    const listeners = new globalThis.Map<string, Set<Listener>>()
+    const sources = new globalThis.Map<string, { setData: ReturnType<typeof vi.fn> }>()
+    const layers = new Set<string>()
     let removed = false
     const assertLive = () => {
       if (removed) throw new Error('MapLibre map was used after removal')
@@ -46,10 +64,16 @@ const maplibre = vi.hoisted(() => {
     const instance = {
       options,
       addControl: vi.fn(),
+      addImage: vi.fn(),
+      addLayer: vi.fn((layer: { id: string }) => layers.add(layer.id)),
+      addSource: vi.fn((id: string) => sources.set(id, { setData: vi.fn() })),
+      getBounds: vi.fn(() => ({ getWest: () => 106.7, getSouth: () => -6.4, getEast: () => 107.1, getNorth: () => -6 })),
       getCenter: vi.fn(() => {
         assertLive()
         return { lng: 118, lat: -2.5 }
       }),
+      getLayer: vi.fn((id: string) => layers.has(id) ? { id } : undefined),
+      getSource: vi.fn((id: string) => sources.get(id)),
       getZoom: vi.fn(() => {
         assertLive()
         return 5
@@ -58,17 +82,42 @@ const maplibre = vi.hoisted(() => {
         assertLive()
         return { layers: [], sources: {} }
       }),
-      off: vi.fn(() => assertLive()),
-      on: vi.fn((event: string, listener: Listener) => listeners.set(event, listener)),
-      once: vi.fn((event: string, listener: Listener) => listeners.set(event, listener)),
+      hasImage: vi.fn(() => false),
+      off: vi.fn((event: string, layerOrListener: string | Listener, possibleListener?: Listener) => {
+        assertLive()
+        const listener = possibleListener ?? layerOrListener
+        if (typeof listener === 'function') listeners.get(event)?.delete(listener)
+      }),
+      on: vi.fn((event: string, layerOrListener: string | Listener, possibleListener?: Listener) => {
+        const listener = possibleListener ?? layerOrListener
+        if (typeof listener !== 'function') return
+        const eventListeners = listeners.get(event) ?? new Set<Listener>()
+        eventListeners.add(listener)
+        listeners.set(event, eventListeners)
+      }),
+      once: vi.fn((event: string, listener: Listener) => {
+        const onceListener: Listener = (data) => {
+          listeners.get(event)?.delete(onceListener)
+          listener(data)
+        }
+        const eventListeners = listeners.get(event) ?? new Set<Listener>()
+        eventListeners.add(onceListener)
+        listeners.set(event, eventListeners)
+      }),
       remove: vi.fn(() => {
         assertLive()
         removed = true
       }),
-      removeLayer: vi.fn(() => assertLive()),
-      removeSource: vi.fn(() => assertLive()),
+      removeLayer: vi.fn((id: string) => {
+        assertLive()
+        layers.delete(id)
+      }),
+      removeSource: vi.fn((id: string) => {
+        assertLive()
+        sources.delete(id)
+      }),
       resize: vi.fn(() => assertLive()),
-      trigger: (event: string, data?: MapEvent) => listeners.get(event)?.(data),
+      trigger: (event: string, data?: MapEvent) => listeners.get(event)?.forEach((listener) => listener(data)),
     }
     instances.push(instance)
     return instance
@@ -182,5 +231,154 @@ describe('OperationalMap', () => {
 
     expect(() => observer.trigger()).not.toThrow()
     expect(map.resize).not.toHaveBeenCalled()
+  })
+
+  it('loads enabled public layers in parallel and opens typed feature details from map clicks', async () => {
+    const responseFor = (url: string) => {
+      const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
+        ? 'air-quality' : url.includes('/evacuations') ? 'evacuations' : 'events'
+      return new Response(JSON.stringify({
+        type: 'FeatureCollection',
+        layer: wireLayer,
+        truncated: false,
+        features: [{
+          type: 'Feature',
+          id: `${wireLayer}:1`,
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: `${wireLayer}:1`,
+            layer: wireLayer,
+            label: 'Jakarta',
+            source: 'bmkg',
+            attribution: 'BMKG',
+            verification_status: 'official',
+          },
+        }],
+      }), { status: 200 })
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((url) => Promise.resolve(responseFor(String(url))))
+
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-evacuations-source', expect.anything())
+
+    await act(async () => {
+      map.trigger('click', {
+        features: [{
+          id: 'air-quality:1',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'air-quality:1',
+            layer: 'air-quality',
+            label: 'Stasiun Jakarta',
+            source: 'bmkg',
+            attribution: 'BMKG',
+            verification_status: 'official',
+            category: 'Sedang',
+          },
+        }],
+      })
+    })
+
+    expect(screen.getByRole('heading', { name: 'Stasiun Jakarta' })).toBeTruthy()
+    expect(screen.queryByText('FeatureCollection')).toBeNull()
+  })
+
+  it('renders only known public layer toggles with stale, truncation, and attribution indicators', () => {
+    const onToggle = vi.fn()
+    render(
+      <MapLegend
+        enabledLayers={['events', 'air-quality']}
+        onToggle={onToggle}
+        results={{
+          events: {
+            layer: 'events',
+            state: 'stale',
+            collection: {
+              type: 'FeatureCollection',
+              layer: 'events',
+              truncated: true,
+              features: [{
+                type: 'Feature',
+                id: 'bmkg:event-1',
+                geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+                properties: {
+                  id: 'bmkg:event-1',
+                  layer: 'events',
+                  label: 'Jakarta',
+                  source: 'bmkg',
+                  attribution: 'BMKG',
+                  verification_status: 'source-reported',
+                },
+              }],
+            },
+          },
+        }}
+      />,
+    )
+
+    expect((screen.getByRole('checkbox', { name: 'Kejadian' }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('checkbox', { name: 'Peringatan resmi' }) as HTMLInputElement).checked).toBe(false)
+    expect(screen.queryByRole('checkbox', { name: /watch zone|aset pribadi/i })).toBeNull()
+    expect(screen.getByText('Data mungkin terlambat.')).toBeTruthy()
+    expect(screen.getByText('Hasil dibatasi untuk area ini.')).toBeTruthy()
+    expect(screen.getByText('BMKG')).toBeTruthy()
+    expect(screen.queryByText('FeatureCollection')).toBeNull()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Peringatan resmi' }))
+    expect(onToggle).toHaveBeenCalledWith('official-alerts')
+  })
+
+  it('renders typed public feature details without raw GeoJSON and closes from its accessible icon control', () => {
+    const onClose = vi.fn()
+    render(
+      <MapDetailSheet
+        feature={{
+          type: 'Feature',
+          id: 'bmkg:station-1:pm25',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'bmkg:station-1:pm25',
+            layer: 'air-quality',
+            label: 'Stasiun Jakarta',
+            source: 'bmkg',
+            attribution: 'BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)',
+            source_url: 'https://www.bmkg.go.id/',
+            verification_status: 'official',
+            observed_at: '2026-08-02T00:00:00.000Z',
+            data_vintage: '2026-08-02T01:00:00.000Z',
+            pollutant: 'PM2.5',
+            value: 32,
+            unit: 'µg/m³',
+            category: 'Sedang',
+          },
+        }}
+        onClose={onClose}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: 'Stasiun Jakarta' })).toBeTruthy()
+    expect(screen.getByText('BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)')).toBeTruthy()
+    expect(screen.getByText('official')).toBeTruthy()
+    expect(screen.getByText('PM2.5 32 µg/m³')).toBeTruthy()
+    expect(screen.getByText('Kategori udara')).toBeTruthy()
+    expect(screen.getByText('Sedang')).toBeTruthy()
+    expect(screen.getByText('Diamati')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Buka sumber' }).getAttribute('href')).toBe('https://www.bmkg.go.id/')
+    expect(screen.queryByText('FeatureCollection')).toBeNull()
+    expect(screen.queryByText('coordinates')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup detail' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

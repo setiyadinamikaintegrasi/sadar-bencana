@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
+import { MapDetailSheet } from './MapDetailSheet'
+import { MapLegend } from './MapLegend'
+import { fetchPublicMapLayer, type PublicMapLayerResult, type PublicMapViewport } from './mapApi'
+import { airQualityLayer } from './layers/airQuality'
+import { evacuationsLayer } from './layers/evacuations'
+import { eventsLayer } from './layers/events'
+import { officialAlertsLayer } from './layers/officialAlerts'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
+import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureProperties, type PublicOperationalMapLayer } from './types'
 
 // This public style is a reviewed application constant, never user-controlled input.
 export const OPERATIONAL_MAP_BASE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
@@ -9,6 +17,15 @@ const OPERATIONAL_MAP_ID_PREFIX = 'operational-map-'
 
 export type OperationalMapMode = 'viewer' | 'picker'
 export type OperationalMapStatus = 'loading' | 'empty' | 'stale' | 'unavailable'
+
+const MAP_REFRESH_DEBOUNCE_MS = 250
+
+const layerAdapters = {
+  events: eventsLayer,
+  'official-alerts': officialAlertsLayer,
+  'air-quality': airQualityLayer,
+  evacuations: evacuationsLayer,
+} as const
 
 interface OperationalMapProps {
   mode?: OperationalMapMode
@@ -40,6 +57,63 @@ function clearOperationalMapArtifacts(map: maplibregl.Map): void {
   }
 }
 
+function boundedExtent(minimum: number, maximum: number, center: number, lowerBound: number, upperBound: number): [number, number] {
+  const extent = Math.min(maximum - minimum, 20)
+  let lower = Math.max(lowerBound, center - extent / 2)
+  let upper = Math.min(upperBound, lower + extent)
+  lower = Math.max(lowerBound, upper - extent)
+  return [lower, upper]
+}
+
+function publicViewport(map: maplibregl.Map, viewState: MapViewState): PublicMapViewport {
+  const bounds = map.getBounds()
+  const center = map.getCenter()
+  const [west, east] = boundedExtent(bounds.getWest(), bounds.getEast(), center.lng, -180, 180)
+  const [south, north] = boundedExtent(bounds.getSouth(), bounds.getNorth(), center.lat, -90, 90)
+  return {
+    bbox: [west, south, east, north],
+    zoom: Math.max(0, Math.min(18, Math.round(map.getZoom()))),
+    ...(viewState.mapTime ? { mapTime: viewState.mapTime } : {}),
+  }
+}
+
+function mapFeatureFromClick(value: unknown): OperationalMapFeature | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const feature = value as { id?: string | number; geometry?: GeoJSON.Geometry; properties?: unknown }
+  const properties = feature.properties
+  if (!feature.geometry || !properties || typeof properties !== 'object') return undefined
+  const typed = properties as Partial<OperationalMapFeatureProperties>
+  if (
+    typeof typed.id !== 'string'
+    || typeof typed.label !== 'string'
+    || typeof typed.source !== 'string'
+    || typeof typed.attribution !== 'string'
+    || typeof typed.verification_status !== 'string'
+    || typeof typed.layer !== 'string'
+    || !(OPERATIONAL_MAP_WIRE_LAYERS as readonly string[]).includes(typed.layer)
+  ) return undefined
+  return {
+    type: 'Feature',
+    id: typeof feature.id === 'string' ? feature.id : typed.id,
+    geometry: feature.geometry,
+    properties: typed as OperationalMapFeatureProperties,
+  }
+}
+
+function statusFromResults(
+  ready: boolean,
+  enabledLayers: PublicOperationalMapLayer[],
+  results: Partial<Record<PublicOperationalMapLayer, PublicMapLayerResult>>,
+): OperationalMapStatus | undefined {
+  if (!ready) return 'loading'
+  const activeResults = enabledLayers.map((layer) => results[layer]).filter((result): result is PublicMapLayerResult => Boolean(result))
+  if (enabledLayers.length > 0 && activeResults.length < enabledLayers.length) return 'loading'
+  if (activeResults.length === 0 || activeResults.every((result) => result.state === 'empty')) return 'empty'
+  if (activeResults.some((result) => result.state === 'stale')) return 'stale'
+  if (activeResults.every((result) => result.state === 'unavailable')) return 'unavailable'
+  return undefined
+}
+
 export default function OperationalMap({
   mode = 'viewer',
   status,
@@ -48,8 +122,13 @@ export default function OperationalMap({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const viewStateRef = useRef<MapViewState>(readMapViewState())
+  const enabledLayersRef = useRef<PublicOperationalMapLayer[]>(viewStateRef.current.mapLayers)
+  const loadLayersRef = useRef<(() => void) | null>(null)
   const [ready, setReady] = useState(false)
   const [fallback, setFallback] = useState(false)
+  const [enabledLayers, setEnabledLayers] = useState<PublicOperationalMapLayer[]>(enabledLayersRef.current)
+  const [results, setResults] = useState<Partial<Record<PublicOperationalMapLayer, PublicMapLayerResult>>>({})
+  const [selectedFeature, setSelectedFeature] = useState<OperationalMapFeature | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -58,9 +137,52 @@ export default function OperationalMap({
     const viewState = viewStateRef.current
     let map: maplibregl.Map | null = null
     let observer: ResizeObserver | undefined
+    let refreshTimer: number | undefined
+    let refreshController: AbortController | undefined
+    let refreshRevision = 0
+    let mapLoaded = false
     let disposed = false
 
-    const markReady = () => setReady(true)
+    const loadPublicLayers = () => {
+      if (disposed || !map || !mapLoaded) return
+      refreshController?.abort()
+      const controller = new AbortController()
+      refreshController = controller
+      const revision = ++refreshRevision
+      const layers = enabledLayersRef.current
+      if (layers.length === 0) {
+        setResults({})
+        return
+      }
+
+      const viewport = publicViewport(map, viewStateRef.current)
+      void Promise.all(layers.map((layer) => fetchPublicMapLayer(layer, viewport, controller.signal))).then((nextResults) => {
+        if (disposed || revision !== refreshRevision || controller.signal.aborted || !map) return
+        for (const result of nextResults) {
+          if (result.collection) layerAdapters[result.layer].apply(map, result.collection)
+        }
+        setResults((current) => {
+          const next = { ...current }
+          for (const result of nextResults) next[result.layer] = result
+          return next
+        })
+      })
+    }
+
+    const schedulePublicLayers = () => {
+      if (disposed || !mapLoaded) return
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined
+        loadPublicLayers()
+      }, MAP_REFRESH_DEBOUNCE_MS)
+    }
+
+    const markReady = () => {
+      mapLoaded = true
+      setReady(true)
+      loadPublicLayers()
+    }
 
     const synchronizeView = (event?: { geolocateSource?: boolean }) => {
       if (disposed || event?.geolocateSource || !map) return
@@ -75,12 +197,21 @@ export default function OperationalMap({
       viewStateRef.current = nextState
       const search = writeMapViewState(nextState)
       window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
+      schedulePublicLayers()
+    }
+
+    const selectFeature = (event: { features?: unknown[] }) => {
+      const feature = mapFeatureFromClick(event.features?.[0])
+      if (feature) setSelectedFeature(feature)
     }
 
     const teardown = () => {
       if (disposed) return
       disposed = true
       observer?.disconnect()
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      refreshController?.abort()
+      loadLayersRef.current = null
 
       const currentMap = map
       if (!currentMap) return
@@ -88,6 +219,10 @@ export default function OperationalMap({
       currentMap.off('load', markReady)
       currentMap.off('moveend', synchronizeView)
       currentMap.off('error', showFallback)
+      for (const adapter of Object.values(layerAdapters)) {
+        for (const layerId of adapter.layerIds) currentMap.off('click', layerId, selectFeature)
+        adapter.remove(currentMap)
+      }
       clearOperationalMapArtifacts(currentMap)
       currentMap.remove()
       if (mapRef.current === currentMap) mapRef.current = null
@@ -113,6 +248,7 @@ export default function OperationalMap({
     }
 
     mapRef.current = map
+    loadLayersRef.current = loadPublicLayers
     if (mode === 'viewer') {
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
       map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'top-right')
@@ -121,6 +257,9 @@ export default function OperationalMap({
     map.on('load', markReady)
     map.on('moveend', synchronizeView)
     map.once('error', showFallback)
+    for (const adapter of Object.values(layerAdapters)) {
+      for (const layerId of adapter.layerIds) map.on('click', layerId, selectFeature)
+    }
 
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => {
@@ -132,7 +271,30 @@ export default function OperationalMap({
     return teardown
   }, [mode])
 
-  const visibleStatus = status ?? (ready ? 'empty' : 'loading')
+  const toggleLayer = (layer: PublicOperationalMapLayer) => {
+    const nextLayers = enabledLayersRef.current.includes(layer)
+      ? enabledLayersRef.current.filter((current) => current !== layer)
+      : [...enabledLayersRef.current, layer]
+    enabledLayersRef.current = nextLayers
+    setEnabledLayers(nextLayers)
+    setSelectedFeature(null)
+
+    const nextState = { ...viewStateRef.current, mapLayers: nextLayers }
+    viewStateRef.current = nextState
+    const search = writeMapViewState(nextState)
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
+
+    if (!nextLayers.includes(layer) && mapRef.current) {
+      layerAdapters[layer].remove(mapRef.current)
+      setResults((current) => {
+        const { [layer]: _removed, ...remaining } = current
+        return remaining
+      })
+    }
+    loadLayersRef.current?.()
+  }
+
+  const visibleStatus = status ?? statusFromResults(ready, enabledLayers, results)
 
   return (
     <section className={`operational-map ${className}`.trim()} aria-label="Peta operasi">
@@ -142,9 +304,15 @@ export default function OperationalMap({
           Peta tidak tersedia. Periksa dukungan WebGL atau gunakan tampilan peta Leaflet.
         </div>
       ) : (
-        <p className="operational-map__status" role="status" data-state={visibleStatus}>
-          {statusMessage(visibleStatus)}
-        </p>
+        <>
+          <MapLegend enabledLayers={enabledLayers} results={results} onToggle={toggleLayer} />
+          {visibleStatus ? (
+            <p className="operational-map__status" role="status" data-state={visibleStatus}>
+              {statusMessage(visibleStatus)}
+            </p>
+          ) : null}
+          <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
+        </>
       )}
     </section>
   )
