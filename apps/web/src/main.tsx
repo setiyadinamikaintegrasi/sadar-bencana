@@ -4,6 +4,8 @@ import App from './App'
 import { AuthProvider } from './lib/auth/AuthProvider'
 import './index.css'
 import 'leaflet/dist/leaflet.css'
+import 'maplibre-gl/dist/maplibre-gl.css'
+import './features/map/styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
