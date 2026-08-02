@@ -1,9 +1,12 @@
 package http
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +17,10 @@ import (
 const (
 	operationMapMaximumExtentDegrees = 20
 	operationMapMaximumEventWindow   = 72 * time.Hour
+	operationMapEventLimit           = 2000
+	operationMapAlertLimit           = 200
+	operationMapAirQualityLimit      = 500
+	operationMapEvacuationLimit      = 2000
 )
 
 // OperationMapFeatureProperties is the public, presentation-safe metadata for
@@ -32,6 +39,14 @@ type OperationMapFeatureProperties struct {
 	EffectiveAt        *time.Time `json:"effective_at,omitempty"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	DataVintage        *time.Time `json:"data_vintage,omitempty"`
+	Pollutant          string     `json:"pollutant,omitempty"`
+	Value              *float64   `json:"value,omitempty"`
+	Unit               string     `json:"unit,omitempty"`
+	Category           string     `json:"category,omitempty"`
+	Stale              *bool      `json:"stale,omitempty"`
+	LocationType       string     `json:"location_type,omitempty"`
+	Open               *bool      `json:"open,omitempty"`
+	Full               *bool      `json:"full,omitempty"`
 }
 
 // OperationMapFeature is a single WGS84 GeoJSON feature.
@@ -241,4 +256,506 @@ func addOperationMapVary(c *gin.Context, value string) {
 		}
 	}
 	c.Writer.Header().Add("Vary", value)
+}
+
+var operationMapEventsQuery = `
+SELECT event_id, source, event_type, severity, place, event_time, url, latitude, longitude
+FROM events
+WHERE ` + productionEventSQLPredicate("source", "event_id") + `
+  AND event_time >= $1
+  AND event_time < $2
+  AND latitude BETWEEN $3 AND $4
+  AND longitude BETWEEN $5 AND $6
+  AND ($7::text[] IS NULL OR event_type = ANY($7::text[]))
+ORDER BY event_time DESC NULLS LAST, event_id ASC
+LIMIT $8
+`
+
+const operationMapAlertsQuery = `
+SELECT id, source, source_alert_id, headline, peril_type, severity, effective_at,
+       expires_at, sent_at, source_url, area_geojson, latitude, longitude
+FROM official_alerts
+WHERE status = 'active'
+  AND is_current = TRUE
+  AND (effective_at IS NULL OR effective_at <= COALESCE($5::timestamptz, now()))
+  AND (expires_at IS NULL OR expires_at >= COALESCE($5::timestamptz, now()))
+  AND EXISTS (
+    SELECT 1
+    FROM official_source_settings s
+    WHERE s.source_name = official_alerts.source
+      AND s.enabled = TRUE
+      AND s.run_mode = 'active'
+  )
+  AND (
+    (area_geojson IS NOT NULL AND ST_Intersects(
+      ST_SetSRID(ST_GeomFromGeoJSON(area_geojson::text), 4326),
+      ST_MakeEnvelope($1, $2, $3, $4, 4326)
+    ))
+    OR (latitude BETWEEN $2 AND $4 AND longitude BETWEEN $1 AND $3)
+  )
+ORDER BY sent_at DESC, source_alert_id ASC, revision DESC
+LIMIT $6
+`
+
+const operationMapAirQualityQuery = `
+SELECT o.id, o.source, o.station_id, o.station_name, o.latitude, o.longitude,
+       o.pollutant, o.value, o.unit, o.category, o.observed_at, o.source_url,
+       (o.observed_at < now() - make_interval(secs => 2 * s.expected_interval_seconds)) AS stale,
+       o.ingested_at
+FROM air_quality_observations o
+JOIN official_source_settings s ON s.source_name = 'bmkg_air_quality'
+  AND s.enabled = TRUE
+  AND s.run_mode = 'active'
+WHERE o.latitude BETWEEN $2 AND $4
+  AND o.longitude BETWEEN $1 AND $3
+  AND ($5::timestamptz IS NULL OR o.observed_at <= $5)
+ORDER BY CASE o.category
+           WHEN 'Berbahaya' THEN 5 WHEN 'Sangat Tidak Sehat' THEN 4
+           WHEN 'Tidak Sehat' THEN 3 WHEN 'Sedang' THEN 2 ELSE 1
+         END DESC,
+         o.observed_at DESC,
+         o.station_id ASC,
+         o.pollutant ASC,
+         o.id ASC
+LIMIT $6
+`
+
+const operationMapEvacuationsQuery = `
+SELECT id, name, location_type, source_type, latitude, longitude, is_open, is_full
+FROM evacuation_locations
+WHERE is_active = TRUE
+  AND latitude BETWEEN $1 AND $2
+  AND longitude BETWEEN $3 AND $4
+ORDER BY name ASC, id ASC
+LIMIT $5
+`
+
+var operationMapEventPerils = []string{"earthquake", "wildfire", "flood", "volcano"}
+
+// OperationMapEvents serves public, viewport-bounded event features.
+func OperationMapEvents(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		status, featureCount, truncated := http.StatusInternalServerError, 0, false
+		defer operationMapTelemetry("events", started, &status, &featureCount, &truncated)
+
+		if db == nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_unavailable")
+			return
+		}
+		query, err := parseOperationMapQuery(c, operationMapQueryOptions{
+			permittedPerils: operationMapEventPerils,
+			timeMode:        operationMapEventTimeWindow,
+		})
+		if err != nil {
+			status = http.StatusBadRequest
+			operationMapError(c, status, "invalid_query")
+			return
+		}
+
+		rows, err := db.QueryContext(c.Request.Context(), operationMapEventsQuery,
+			query.From, query.To, query.BBox.MinLatitude, query.BBox.MaxLatitude,
+			query.BBox.MinLongitude, query.BBox.MaxLongitude, nullableOperationMapPerils(query.Perils), operationMapEventLimit+1)
+		if err != nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_query_failed")
+			return
+		}
+		defer rows.Close()
+
+		features := make([]OperationMapFeature, 0, operationMapEventLimit)
+		for rows.Next() {
+			var eventID, source, eventType, place, url string
+			var severity sql.NullString
+			var eventTime time.Time
+			var latitude, longitude float64
+			if err := rows.Scan(&eventID, &source, &eventType, &severity, &place, &eventTime, &url, &latitude, &longitude); err != nil {
+				status = http.StatusInternalServerError
+				operationMapError(c, status, "row_scan_failed")
+				return
+			}
+			if len(features) == operationMapEventLimit {
+				truncated = true
+				break
+			}
+			features = append(features, operationMapPointFeature(eventID, "events", operationMapLabel(place, eventType), longitude, latitude,
+				OperationMapFeatureProperties{
+					PerilType:          eventType,
+					Severity:           nullableOperationMapString(severity),
+					Source:             source,
+					Attribution:        operationMapAttribution(source),
+					SourceURL:          url,
+					VerificationStatus: "source-reported",
+					ObservedAt:         operationMapTimePtr(eventTime),
+				}))
+		}
+		if err := rows.Err(); err != nil {
+			status = http.StatusInternalServerError
+			operationMapError(c, status, "rows_iteration_failed")
+			return
+		}
+
+		featureCount, status = len(features), http.StatusOK
+		writePublicOperationMapJSON(c, status, operationMapCollection("events", features, truncated))
+	}
+}
+
+// OperationMapAlerts serves active official alert features from enabled sources.
+func OperationMapAlerts(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		status, featureCount, truncated := http.StatusInternalServerError, 0, false
+		defer operationMapTelemetry("alerts", started, &status, &featureCount, &truncated)
+
+		if db == nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_unavailable")
+			return
+		}
+		query, err := parseOperationMapQuery(c, operationMapQueryOptions{timeMode: operationMapAtTime})
+		if err != nil {
+			status = http.StatusBadRequest
+			operationMapError(c, status, "invalid_query")
+			return
+		}
+
+		rows, err := db.QueryContext(c.Request.Context(), operationMapAlertsQuery,
+			query.BBox.MinLongitude, query.BBox.MinLatitude, query.BBox.MaxLongitude, query.BBox.MaxLatitude, query.At, operationMapAlertLimit+1)
+		if err != nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_query_failed")
+			return
+		}
+		defer rows.Close()
+
+		features := make([]OperationMapFeature, 0, operationMapAlertLimit)
+		for rows.Next() {
+			var id, source, sourceAlertID string
+			var headline, perilType, severity, sourceURL sql.NullString
+			var effectiveAt, expiresAt sql.NullTime
+			var sentAt time.Time
+			var areaGeoJSON []byte
+			var latitude, longitude sql.NullFloat64
+			if err := rows.Scan(&id, &source, &sourceAlertID, &headline, &perilType, &severity, &effectiveAt, &expiresAt, &sentAt, &sourceURL, &areaGeoJSON, &latitude, &longitude); err != nil {
+				status = http.StatusInternalServerError
+				operationMapError(c, status, "row_scan_failed")
+				return
+			}
+			if len(features) == operationMapAlertLimit {
+				truncated = true
+				break
+			}
+
+			properties := OperationMapFeatureProperties{
+				PerilType:          nullableOperationMapString(perilType),
+				Severity:           nullableOperationMapString(severity),
+				Source:             source,
+				Attribution:        operationMapAttribution(source),
+				SourceURL:          nullableOperationMapString(sourceURL),
+				VerificationStatus: "official",
+				ObservedAt:         operationMapTimePtr(sentAt),
+				EffectiveAt:        nullableOperationMapTime(effectiveAt),
+				ExpiresAt:          nullableOperationMapTime(expiresAt),
+			}
+			if validOperationMapAreaGeoJSON(areaGeoJSON) {
+				features = append(features, operationMapGeometryFeature(sourceAlertID, "alerts", operationMapLabel(nullableOperationMapString(headline), nullableOperationMapString(perilType)), json.RawMessage(areaGeoJSON), properties))
+				continue
+			}
+			if validOperationMapCoordinates(latitude, longitude) {
+				features = append(features, operationMapPointFeature(sourceAlertID, "alerts", operationMapLabel(nullableOperationMapString(headline), nullableOperationMapString(perilType)), longitude.Float64, latitude.Float64, properties))
+			}
+		}
+		if err := rows.Err(); err != nil {
+			status = http.StatusInternalServerError
+			operationMapError(c, status, "rows_iteration_failed")
+			return
+		}
+
+		featureCount, status = len(features), http.StatusOK
+		writePublicOperationMapJSON(c, status, operationMapCollection("alerts", features, truncated))
+	}
+}
+
+// OperationMapAirQuality serves public BMKG air-quality point features.
+func OperationMapAirQuality(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		status, featureCount, truncated := http.StatusInternalServerError, 0, false
+		defer operationMapTelemetry("air-quality", started, &status, &featureCount, &truncated)
+
+		if db == nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_unavailable")
+			return
+		}
+		query, err := parseOperationMapQuery(c, operationMapQueryOptions{timeMode: operationMapAtTime})
+		if err != nil {
+			status = http.StatusBadRequest
+			operationMapError(c, status, "invalid_query")
+			return
+		}
+
+		rows, err := db.QueryContext(c.Request.Context(), operationMapAirQualityQuery,
+			query.BBox.MinLongitude, query.BBox.MinLatitude, query.BBox.MaxLongitude, query.BBox.MaxLatitude, query.At, operationMapAirQualityLimit+1)
+		if err != nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_query_failed")
+			return
+		}
+		defer rows.Close()
+
+		features := make([]OperationMapFeature, 0, operationMapAirQualityLimit)
+		for rows.Next() {
+			var id, source, stationID, stationName, pollutant, unit, category string
+			var latitude, longitude float64
+			var value float64
+			var observedAt, ingestedAt time.Time
+			var sourceURL sql.NullString
+			var stale bool
+			if err := rows.Scan(&id, &source, &stationID, &stationName, &latitude, &longitude, &pollutant, &value, &unit, &category, &observedAt, &sourceURL, &stale, &ingestedAt); err != nil {
+				status = http.StatusInternalServerError
+				operationMapError(c, status, "row_scan_failed")
+				return
+			}
+			if len(features) == operationMapAirQualityLimit {
+				truncated = true
+				break
+			}
+			featureID := source + ":" + stationID + ":" + pollutant
+			features = append(features, operationMapPointFeature(featureID, "air-quality", stationName, longitude, latitude,
+				OperationMapFeatureProperties{
+					Source:             source,
+					Attribution:        operationMapAttribution(source),
+					SourceURL:          nullableOperationMapString(sourceURL),
+					VerificationStatus: "official",
+					ObservedAt:         operationMapTimePtr(observedAt),
+					DataVintage:        operationMapTimePtr(ingestedAt),
+					Pollutant:          pollutant,
+					Value:              &value,
+					Unit:               unit,
+					Category:           category,
+					Stale:              &stale,
+				}))
+		}
+		if err := rows.Err(); err != nil {
+			status = http.StatusInternalServerError
+			operationMapError(c, status, "rows_iteration_failed")
+			return
+		}
+
+		featureCount, status = len(features), http.StatusOK
+		writePublicOperationMapJSON(c, status, operationMapCollection("air-quality", features, truncated))
+	}
+}
+
+// OperationMapEvacuations serves public, active evacuation-location features.
+func OperationMapEvacuations(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		status, featureCount, truncated := http.StatusInternalServerError, 0, false
+		defer operationMapTelemetry("evacuations", started, &status, &featureCount, &truncated)
+
+		if db == nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_unavailable")
+			return
+		}
+		query, err := parseOperationMapQuery(c, operationMapQueryOptions{timeMode: operationMapNoTime})
+		if err != nil {
+			status = http.StatusBadRequest
+			operationMapError(c, status, "invalid_query")
+			return
+		}
+
+		rows, err := db.QueryContext(c.Request.Context(), operationMapEvacuationsQuery,
+			query.BBox.MinLatitude, query.BBox.MaxLatitude, query.BBox.MinLongitude, query.BBox.MaxLongitude, operationMapEvacuationLimit+1)
+		if err != nil {
+			status = http.StatusServiceUnavailable
+			operationMapError(c, status, "database_query_failed")
+			return
+		}
+		defer rows.Close()
+
+		features := make([]OperationMapFeature, 0, operationMapEvacuationLimit)
+		for rows.Next() {
+			var id, name, locationType, sourceType string
+			var latitude, longitude float64
+			var open, full sql.NullBool
+			if err := rows.Scan(&id, &name, &locationType, &sourceType, &latitude, &longitude, &open, &full); err != nil {
+				status = http.StatusInternalServerError
+				operationMapError(c, status, "row_scan_failed")
+				return
+			}
+			if len(features) == operationMapEvacuationLimit {
+				truncated = true
+				break
+			}
+			features = append(features, operationMapPointFeature(id, "evacuations", name, longitude, latitude,
+				OperationMapFeatureProperties{
+					Source:             sourceType,
+					Attribution:        operationMapEvacuationAttribution(sourceType),
+					VerificationStatus: operationMapEvacuationVerification(sourceType),
+					LocationType:       locationType,
+					Open:               nullableOperationMapBool(open),
+					Full:               nullableOperationMapBool(full),
+				}))
+		}
+		if err := rows.Err(); err != nil {
+			status = http.StatusInternalServerError
+			operationMapError(c, status, "rows_iteration_failed")
+			return
+		}
+
+		featureCount, status = len(features), http.StatusOK
+		writePublicOperationMapJSON(c, status, operationMapCollection("evacuations", features, truncated))
+	}
+}
+
+func operationMapCollection(layer string, features []OperationMapFeature, truncated bool) OperationMapFeatureCollection {
+	return OperationMapFeatureCollection{Type: "FeatureCollection", Layer: layer, Features: features, Truncated: truncated}
+}
+
+func operationMapPointFeature(id, layer, label string, longitude, latitude float64, properties OperationMapFeatureProperties) OperationMapFeature {
+	geometry, _ := json.Marshal(struct {
+		Type        string    `json:"type"`
+		Coordinates []float64 `json:"coordinates"`
+	}{Type: "Point", Coordinates: []float64{longitude, latitude}})
+	return operationMapGeometryFeature(id, layer, label, geometry, properties)
+}
+
+func operationMapGeometryFeature(id, layer, label string, geometry json.RawMessage, properties OperationMapFeatureProperties) OperationMapFeature {
+	properties.ID = id
+	properties.Layer = layer
+	properties.Label = label
+	return OperationMapFeature{Type: "Feature", ID: id, Geometry: geometry, Properties: properties}
+}
+
+func operationMapError(c *gin.Context, status int, code string) {
+	c.JSON(status, gin.H{"error": code})
+}
+
+func operationMapTelemetry(endpoint string, started time.Time, status, featureCount *int, truncated *bool) {
+	log.Printf("operation_map endpoint=%s status=%d elapsed_ms=%d features=%d truncated=%t", endpoint, *status, time.Since(started).Milliseconds(), *featureCount, *truncated)
+}
+
+func operationMapAttribution(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "bmkg":
+		return "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)"
+	case "usgs":
+		return "United States Geological Survey"
+	case "nasa-firms":
+		return "NASA FIRMS"
+	default:
+		return strings.TrimSpace(source)
+	}
+}
+
+func operationMapEvacuationAttribution(sourceType string) string {
+	if strings.EqualFold(strings.TrimSpace(sourceType), "osm") {
+		return "OpenStreetMap contributors"
+	}
+	return "SadarBencana"
+}
+
+func operationMapEvacuationVerification(sourceType string) string {
+	if strings.EqualFold(strings.TrimSpace(sourceType), "osm") {
+		return "community-sourced"
+	}
+	return "operator-reported"
+}
+
+func operationMapLabel(primary, fallback string) string {
+	if label := strings.TrimSpace(primary); label != "" {
+		return label
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func nullableOperationMapPerils(perils []string) any {
+	if len(perils) == 0 {
+		return nil
+	}
+	return toPGTextArray(perils)
+}
+
+func nullableOperationMapString(value sql.NullString) string {
+	if value.Valid {
+		return value.String
+	}
+	return ""
+}
+
+func nullableOperationMapTime(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	return operationMapTimePtr(value.Time)
+}
+
+func operationMapTimePtr(value time.Time) *time.Time {
+	utc := value.UTC()
+	return &utc
+}
+
+func nullableOperationMapBool(value sql.NullBool) *bool {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Bool
+	return &result
+}
+
+func validOperationMapCoordinates(latitude, longitude sql.NullFloat64) bool {
+	return latitude.Valid && longitude.Valid && latitude.Float64 >= -90 && latitude.Float64 <= 90 && longitude.Float64 >= -180 && longitude.Float64 <= 180
+}
+
+func validOperationMapAreaGeoJSON(raw []byte) bool {
+	var geometry struct {
+		Type        string          `json:"type"`
+		Coordinates json.RawMessage `json:"coordinates"`
+	}
+	if json.Unmarshal(raw, &geometry) != nil {
+		return false
+	}
+	switch geometry.Type {
+	case "Polygon":
+		var polygon [][][]float64
+		return json.Unmarshal(geometry.Coordinates, &polygon) == nil && validOperationMapPolygon(polygon)
+	case "MultiPolygon":
+		var multiPolygon [][][][]float64
+		if json.Unmarshal(geometry.Coordinates, &multiPolygon) != nil || len(multiPolygon) == 0 {
+			return false
+		}
+		for _, polygon := range multiPolygon {
+			if !validOperationMapPolygon(polygon) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func validOperationMapPolygon(polygon [][][]float64) bool {
+	if len(polygon) == 0 {
+		return false
+	}
+	for _, ring := range polygon {
+		if len(ring) < 4 {
+			return false
+		}
+		for _, position := range ring {
+			if len(position) < 2 || math.IsNaN(position[0]) || math.IsInf(position[0], 0) || math.IsNaN(position[1]) || math.IsInf(position[1], 0) || position[0] < -180 || position[0] > 180 || position[1] < -90 || position[1] > 90 {
+				return false
+			}
+		}
+		first, last := ring[0], ring[len(ring)-1]
+		if first[0] != last[0] || first[1] != last[1] {
+			return false
+		}
+	}
+	return true
 }

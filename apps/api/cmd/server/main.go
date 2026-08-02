@@ -186,6 +186,11 @@ func main() {
 	}
 	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
 	router.GET("/api/v1/map/overlays", apihttp.MapRiskOverlays(dbPool))
+	publicMap := router.Group("/api/v1/map/operations")
+	publicMap.GET("/events", apihttp.OperationMapEvents(dbPool))
+	publicMap.GET("/alerts", apihttp.OperationMapAlerts(dbPool))
+	publicMap.GET("/air-quality", apihttp.OperationMapAirQuality(dbPool))
+	publicMap.GET("/evacuations", apihttp.OperationMapEvacuations(dbPool))
 	mapMe := router.Group("/api/v1/map", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
 		mapMe.GET("/overlays/me", apihttp.MapRiskOverlaysMe(dbPool))

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -205,6 +206,200 @@ func TestPublicOperationMapJSONPreservesCORSVaryValues(t *testing.T) {
 	}
 	if got, want := varyCount["Accept-Encoding"], 1; got != want {
 		t.Fatalf("Vary Accept-Encoding count = %d, want %d; headers = %#v", got, want, recorder.Header().Values("Vary"))
+	}
+}
+
+func TestOperationMapPublicEventsReturnsBoundedSafeFeatures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"event_id", "source", "event_type", "severity", "place", "event_time", "url", "latitude", "longitude",
+	})
+	for range 2001 {
+		rows.AddRow("bmkg-20260802-1", "bmkg", "earthquake", "High", "Jakarta", now, "https://example.test/event", -6.2, 106.8)
+	}
+	mock.ExpectQuery("(?s)FROM events.*event_time.*latitude.*longitude.*LIMIT \\$8").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), -6.4, -6.0, 106.7, 107.1, nil, 2001).
+		WillReturnRows(rows)
+
+	body := requestOperationMap(t, OperationMapEvents(db), "/api/v1/map/operations/events?bbox=106.7,-6.4,107.1,-6.0&zoom=8")
+	assertOperationMapPublicFeatureCollection(t, body, "events", 2000, []float64{106.8, -6.2})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPublicAlertsReturnsBoundedSafeFeatures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	at := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id", "source", "source_alert_id", "headline", "peril_type", "severity", "effective_at", "expires_at", "sent_at", "source_url", "area_geojson", "latitude", "longitude",
+	})
+	for range 201 {
+		rows.AddRow("alert-row", "bmkg", "bmkg-alert-1", "Heavy rain", "weather", "High", at, at.Add(time.Hour), at, "https://example.test/alert", []byte(`{"type":"Polygon","coordinates":[[[106.7,-6.4],[107.1,-6.4],[107.1,-6.0],[106.7,-6.4]]]}`), nil, nil)
+	}
+	mock.ExpectQuery("(?s)FROM official_alerts.*official_source_settings.*ST_MakeEnvelope.*LIMIT \\$6").
+		WithArgs(106.7, -6.4, 107.1, -6.0, at, 201).
+		WillReturnRows(rows)
+
+	body := requestOperationMap(t, OperationMapAlerts(db), "/api/v1/map/operations/alerts?bbox=106.7,-6.4,107.1,-6.0&at=2026-08-02T00:00:00Z")
+	assertOperationMapPublicFeatureCollection(t, body, "alerts", 200, nil)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPublicAlertsFallsBackToValidatedPointForInvalidAreaGeometry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	at := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("(?s)FROM official_alerts.*official_source_settings.*ST_MakeEnvelope.*LIMIT \\$6").
+		WithArgs(106.7, -6.4, 107.1, -6.0, at, 201).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "source_alert_id", "headline", "peril_type", "severity", "effective_at", "expires_at", "sent_at", "source_url", "area_geojson", "latitude", "longitude",
+		}).AddRow(
+			"alert-row", "bmkg", "bmkg-alert-1", "Heavy rain", "weather", "High", at, at.Add(time.Hour), at, "https://example.test/alert", []byte(`{"type":"Polygon","coordinates":null}`), -6.2, 106.8,
+		))
+
+	body := requestOperationMap(t, OperationMapAlerts(db), "/api/v1/map/operations/alerts?bbox=106.7,-6.4,107.1,-6.0&at=2026-08-02T00:00:00Z")
+	if got := body["truncated"]; got != false {
+		t.Fatalf("truncated = %#v, want false", got)
+	}
+	feature := body["features"].([]any)[0].(map[string]any)
+	geometry := feature["geometry"].(map[string]any)
+	if got := geometry["type"]; got != "Point" {
+		t.Fatalf("geometry type = %#v, want Point fallback", got)
+	}
+	coordinates := geometry["coordinates"].([]any)
+	if got := []float64{coordinates[0].(float64), coordinates[1].(float64)}; !reflect.DeepEqual(got, []float64{106.8, -6.2}) {
+		t.Fatalf("point coordinates = %#v, want longitude/latitude", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPublicAirQualityReturnsBoundedSafeFeatures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id", "source", "station_id", "station_name", "latitude", "longitude", "pollutant", "value", "unit", "category", "observed_at", "source_url", "stale", "ingested_at",
+	})
+	for range 501 {
+		rows.AddRow("observation-row", "bmkg", "station-1", "Jakarta Station", -6.2, 106.8, "pm25", 66.2, "ug/m3", "Tidak Sehat", now, "https://example.test/aq", false, now)
+	}
+	mock.ExpectQuery("(?s)FROM air_quality_observations.*official_source_settings.*latitude.*longitude.*LIMIT \\$6").
+		WithArgs(106.7, -6.4, 107.1, -6.0, nil, 501).
+		WillReturnRows(rows)
+
+	body := requestOperationMap(t, OperationMapAirQuality(db), "/api/v1/map/operations/air-quality?bbox=106.7,-6.4,107.1,-6.0")
+	assertOperationMapPublicFeatureCollection(t, body, "air-quality", 500, []float64{106.8, -6.2})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPublicEvacuationsReturnsBoundedSafeFeatures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	rows := sqlmock.NewRows([]string{"id", "name", "location_type", "source_type", "latitude", "longitude", "is_open", "is_full"})
+	for range 2001 {
+		rows.AddRow("evacuation-row", "Community Hall", "shelter", "osm", -6.2, 106.8, true, false)
+	}
+	mock.ExpectQuery("(?s)FROM evacuation_locations.*is_active = TRUE.*latitude.*longitude.*LIMIT \\$5").
+		WithArgs(-6.4, -6.0, 106.7, 107.1, 2001).
+		WillReturnRows(rows)
+
+	body := requestOperationMap(t, OperationMapEvacuations(db), "/api/v1/map/operations/evacuations?bbox=106.7,-6.4,107.1,-6.0&zoom=8")
+	assertOperationMapPublicFeatureCollection(t, body, "evacuations", 2000, []float64{106.8, -6.2})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func requestOperationMap(t *testing.T, handler gin.HandlerFunc, target string) map[string]any {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, target, nil)
+	handler(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got, want := recorder.Header().Get("Cache-Control"), "public, max-age=30, s-maxage=60, stale-while-revalidate=60"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return body
+}
+
+func assertOperationMapPublicFeatureCollection(t *testing.T, body map[string]any, layer string, wantCount int, wantPoint []float64) {
+	t.Helper()
+	if got := body["type"]; got != "FeatureCollection" {
+		t.Fatalf("type = %#v, want FeatureCollection", got)
+	}
+	if got := body["layer"]; got != layer {
+		t.Fatalf("layer = %#v, want %q", got, layer)
+	}
+	if got := body["truncated"]; got != true {
+		t.Fatalf("truncated = %#v, want true", got)
+	}
+	features, ok := body["features"].([]any)
+	if !ok || len(features) != wantCount {
+		t.Fatalf("features = %#v, want %d features", body["features"], wantCount)
+	}
+	feature := features[0].(map[string]any)
+	properties := feature["properties"].(map[string]any)
+	for _, property := range []string{"id", "layer", "label", "source", "attribution", "verification_status"} {
+		if _, ok := properties[property]; !ok {
+			t.Fatalf("feature properties missing %q: %#v", property, properties)
+		}
+	}
+	if wantPoint != nil {
+		coordinates := feature["geometry"].(map[string]any)["coordinates"].([]any)
+		if got := []float64{coordinates[0].(float64), coordinates[1].(float64)}; !reflect.DeepEqual(got, wantPoint) {
+			t.Fatalf("point coordinates = %#v, want longitude/latitude %#v", got, wantPoint)
+		}
+	}
+	serialized, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"raw_payload", "subscriber", "email", "personal_asset", "created_by", "owner", "phone", "person_in_charge", "capacity", "internal_notes"} {
+		if strings.Contains(string(serialized), forbidden) {
+			t.Fatalf("serialized response leaked %q: %s", forbidden, serialized)
+		}
 	}
 }
 
