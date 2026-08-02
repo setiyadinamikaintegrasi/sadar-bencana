@@ -208,3 +208,83 @@ Rebuild `api`, `worker`, and `web`, then use **Admin EWS** to verify provider
 status and send one Telegram and one email test. Set both EWS flags to `true`
 only after successful tests, recreate the worker, and monitor pending, failed,
 and dead-letter counts for 24 hours.
+
+## 11. MapLibre operational map rollout
+
+MapLibre remains opt-in. `VITE_OPERATIONAL_MAP_ENGINE=leaflet` is the
+production default until the staged rollout below is approved. This repository
+does not contain the production Caddy configuration; do not change Caddy as
+part of a source checkout update.
+
+### Approved CSP origins
+
+The deployed web application calls its API at `/api/v1`, so `connect-src
+'self'` covers `https://sadarbencana.id/api/v1`. The browser also needs the
+exact Supabase project URL used for `VITE_SUPABASE_URL` and the reviewed
+OpenFreeMap style host. Do not use wildcard Supabase or basemap origins.
+
+```text
+connect-src 'self' https://<production-project-ref>.supabase.co https://tiles.openfreemap.org;
+img-src 'self' data: blob: https://tiles.openfreemap.org;
+worker-src 'self' blob:;
+```
+
+Replace `<production-project-ref>` with the one hostname already configured in
+the production web build. `https://tiles.openfreemap.org` covers the reviewed
+constant style URL `https://tiles.openfreemap.org/styles/liberty` and its
+basemap resources. Keep the existing approved origins in each directive; the
+lines above are additions, not an instruction to remove unrelated application
+requirements.
+
+MapLibre is bundled into the web asset. Do **not** add a CDN host, `unsafe-eval`,
+or any other relaxation to `script-src`. Preserve any stricter existing
+`worker-src` policy only if it already permits the bundled MapLibre worker;
+otherwise add `blob:` to `worker-src`, not to `script-src`.
+
+Before any Caddy edit, inspect the actual public header and compare it with the
+approved list above:
+
+```bash
+curl -fsSI https://sadarbencana.id/ | tr -d '\r' | grep -i '^content-security-policy:'
+```
+
+Record the current header and web image/commit. Update external Caddy only
+after that comparison confirms the needed origins are absent or equivalent.
+Re-run the command after the change and verify browser developer tools show no
+CSP violations for API, Supabase, style, sprite, glyph, tile, image, or worker
+requests.
+
+### Deployment and rollback order
+
+1. Deploy the API map-feed release first while leaving
+   `VITE_OPERATIONAL_MAP_ENGINE=leaflet`. Verify the public endpoints with a
+   bounded request and keep the existing Leaflet user flow healthy.
+2. Apply and verify the reviewed CSP additions at the external proxy. Do not
+   enable the flag while a required CSP request is blocked.
+3. In a staging or controlled production window, set
+   `VITE_OPERATIONAL_MAP_ENGINE=maplibre`, rebuild and recreate **only** the
+   web service, then verify anonymous desktop/mobile map loading, visible
+   legend/attribution/truncation, and authenticated owner layers. Confirm an
+   anonymous browser never requests `/api/v1/me/map/`.
+4. Keep the API, worker, database, and Leaflet implementation unchanged during
+   the web-only rollout. Monitor for seven consecutive days before considering
+   Leaflet retirement in a separate reviewed change.
+
+To roll back, first restore `VITE_OPERATIONAL_MAP_ENGINE=leaflet` and rebuild
+only the web service (or restore the recorded web image). Confirm the Leaflet
+map works before changing anything else. Leave the API map feeds in place.
+Revert a newly added CSP origin only after the Leaflet rollback is verified and
+the header comparison confirms no remaining application resource requires it.
+
+### Metrics to monitor
+
+- Public operational-map endpoint request rate, `2xx`/`4xx`/`5xx` ratio, and
+  p95 latency by layer.
+- Client-side MapLibre initialization failures, WebGL fallback frequency, CSP
+  violations, and basemap/style request failures.
+- Private map endpoint `401`/`403` responses and any anonymous request to
+  `/api/v1/me/map/`.
+- Feature truncation frequency, stale/unavailable layer state, and visible
+  source attribution after each web deployment.
+- Desktop and mobile smoke checks after every deployment, plus API, worker,
+  Redis, and Mastra health.

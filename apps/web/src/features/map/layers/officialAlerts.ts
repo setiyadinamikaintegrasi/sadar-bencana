@@ -18,7 +18,7 @@ export const officialAlertsLayer = {
     }
 
     map.addSource(this.sourceId, { type: 'geojson', data: collection })
-    const polygonFilter: FilterSpecification = ['any', ['==', '$type', 'Polygon'], ['==', '$type', 'MultiPolygon']]
+    const polygonFilter: FilterSpecification = ['==', '$type', 'Polygon']
     map.addLayer({
       id: this.layerIds[0],
       type: 'fill',

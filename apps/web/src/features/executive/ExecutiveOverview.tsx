@@ -599,7 +599,7 @@ export default function ExecutiveOverview({
                 mode="viewer"
                 initialLayers={['events', 'official-alerts', 'air-quality']}
                 visibleLayers={visibleOperationalLayers}
-                showLegend={false}
+                showLegend
                 perils={operationalMapPerils(activePerilFilter)}
                 mapTime={mapTime}
                 authenticated={Boolean(session)}

@@ -45,6 +45,29 @@ jobs:
         env:
           VITE_API_BASE_URL: /api/v1
 
+  web-operational-map-e2e:
+    name: Operational map browser tests
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:e2e:map:install --workspace apps/web
+      - run: npm run test:e2e:map --workspace apps/web
+      - name: Upload Playwright report and failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-map-playwright-artifacts
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+
   mastra:
     name: Mastra typecheck and build
     runs-on: ubuntu-latest
