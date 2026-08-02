@@ -14,9 +14,20 @@ export type PublicOperationalMapLayer = typeof PUBLIC_OPERATIONAL_MAP_LAYERS[num
 export type PrivateOperationalMapLayer = typeof PRIVATE_OPERATIONAL_MAP_LAYERS[number]
 export type OperationalMapLayer = PublicOperationalMapLayer | PrivateOperationalMapLayer
 
+export const OPERATIONAL_MAP_WIRE_LAYERS = [
+  'events',
+  'alerts',
+  'air-quality',
+  'evacuations',
+  'watch-zones',
+  'personal-assets',
+] as const
+
+export type OperationalMapWireLayer = typeof OPERATIONAL_MAP_WIRE_LAYERS[number]
+
 export interface OperationalMapFeatureProperties {
   id: string
-  layer: OperationalMapLayer
+  layer: OperationalMapWireLayer
   label: string
   peril_type?: string
   severity?: string
@@ -49,5 +60,5 @@ export interface OperationalMapFeatureCollection {
   type: 'FeatureCollection'
   features: OperationalMapFeature[]
   truncated: boolean
-  layer: OperationalMapLayer
+  layer: OperationalMapWireLayer
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readMapViewState, writeMapViewState } from './state'
 
 describe('operational map URL state', () => {
@@ -8,7 +8,7 @@ describe('operational map URL state', () => {
       mapLat: -6.2088,
       mapZoom: 9,
       mapLayers: ['events', 'official-alerts'],
-      mapTime: '2026-08-02T00:00:00Z',
+      mapTime: '2026-08-02T00:00:00.000Z',
     })
 
     expect(readMapViewState(search)).toEqual({
@@ -16,7 +16,7 @@ describe('operational map URL state', () => {
       mapLat: -6.2088,
       mapZoom: 9,
       mapLayers: ['events', 'official-alerts'],
-      mapTime: '2026-08-02T00:00:00Z',
+      mapTime: '2026-08-02T00:00:00.000Z',
     })
   })
 
@@ -46,9 +46,43 @@ describe('operational map URL state', () => {
       mapLat: -2.5,
       mapZoom: 5,
       mapLayers: ['evacuations'],
-      mapTime: '2026-08-02T01:30:00Z',
+      mapTime: '2026-08-02T01:30:00.000Z',
     }, '?section=dashboard&source=notification')).toBe(
-      '?section=dashboard&source=notification&mapLng=118&mapLat=-2.5&mapZoom=5&mapLayers=evacuations&mapTime=2026-08-02T01%3A30%3A00Z',
+      '?section=dashboard&source=notification&mapLng=118&mapLat=-2.5&mapZoom=5&mapLayers=evacuations&mapTime=2026-08-02T01%3A30%3A00.000Z',
     )
   })
+
+  it('normalizes RFC3339 map time within the 72-hour operational window', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00Z')
+
+    expect(readMapViewState('?mapTime=2026-08-02T18:30:00%2B07:00')).toMatchObject({
+      mapTime: '2026-08-02T11:30:00.000Z',
+    })
+  })
+
+  it('discards malformed, whitespace, oversized, and out-of-range map time values', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00Z')
+
+    for (const mapTime of [
+      'not-a-timestamp',
+      ' 2026-08-02T11:30:00Z ',
+      `2026-08-02T11:30:00.${'1'.repeat(20)}Z`,
+      '2026-07-30T11:59:59Z',
+      '2026-08-02T12:00:01Z',
+    ]) {
+      expect(readMapViewState(`?mapTime=${encodeURIComponent(mapTime)}`)).not.toHaveProperty('mapTime')
+    }
+
+    expect(writeMapViewState({
+      mapLng: 118,
+      mapLat: -2.5,
+      mapZoom: 5,
+      mapLayers: ['events'],
+      mapTime: 'not-a-timestamp',
+    }, '?section=dashboard')).toBe('?section=dashboard&mapLng=118&mapLat=-2.5&mapZoom=5&mapLayers=events')
+  })
 })
+
+afterEach(() => vi.useRealTimers())

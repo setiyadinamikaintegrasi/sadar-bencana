@@ -9,6 +9,10 @@ export const MAP_MIN_LATITUDE = -85.051129
 export const MAP_MAX_LATITUDE = 85.051129
 export const MAP_MIN_ZOOM = 0
 export const MAP_MAX_ZOOM = 18
+export const MAP_TIME_MAX_LENGTH = 35
+export const MAP_TIME_WINDOW_MS = 72 * 60 * 60 * 1000
+
+const RFC3339_MAP_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|([+-])(\d{2}):(\d{2}))$/
 
 export interface MapViewState {
   mapLng: number
@@ -59,9 +63,35 @@ function createSearchParams(search: string): URLSearchParams {
   return new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
 }
 
+function parseMapTime(value: string | null, now = Date.now()): string | undefined {
+  if (value == null || value.length === 0 || value.length > MAP_TIME_MAX_LENGTH) return undefined
+  const match = RFC3339_MAP_TIME.exec(value)
+  if (!match) return undefined
+
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp) || timestamp < now - MAP_TIME_WINDOW_MS || timestamp > now) return undefined
+
+  const offsetMinutes = match[7] === 'Z'
+    ? 0
+    : (match[8] === '+' ? 1 : -1) * (Number(match[9]) * 60 + Number(match[10]))
+  if (Math.abs(offsetMinutes) > 23 * 60 + 59) return undefined
+
+  const local = new Date(timestamp + offsetMinutes * 60 * 1000)
+  if (
+    local.getUTCFullYear() !== Number(match[1])
+    || local.getUTCMonth() + 1 !== Number(match[2])
+    || local.getUTCDate() !== Number(match[3])
+    || local.getUTCHours() !== Number(match[4])
+    || local.getUTCMinutes() !== Number(match[5])
+    || local.getUTCSeconds() !== Number(match[6])
+  ) return undefined
+
+  return new Date(timestamp).toISOString()
+}
+
 export function readMapViewState(search = window.location.search): MapViewState {
   const params = createSearchParams(search)
-  const mapTime = params.get('mapTime') || undefined
+  const mapTime = parseMapTime(params.get('mapTime'))
 
   return {
     mapLng: readBoundedNumber(params.get('mapLng'), DEFAULT_MAP_VIEW_STATE.mapLng, MAP_MIN_LONGITUDE, MAP_MAX_LONGITUDE),

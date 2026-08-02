@@ -31,6 +31,7 @@ function statusMessage(status: OperationalMapStatus): string {
 
 function clearOperationalMapArtifacts(map: maplibregl.Map): void {
   const style = map.getStyle()
+  if (!style) return
   for (const layer of [...(style.layers ?? [])].reverse()) {
     if (layer.id.startsWith(OPERATIONAL_MAP_ID_PREFIX)) map.removeLayer(layer.id)
   }
@@ -55,16 +56,47 @@ export default function OperationalMap({
     if (!container || mapRef.current) return
 
     const viewState = viewStateRef.current
-    let map: maplibregl.Map
+    let map: maplibregl.Map | null = null
     let observer: ResizeObserver | undefined
+    let disposed = false
+
+    const markReady = () => setReady(true)
+
+    const synchronizeView = (event?: { geolocateSource?: boolean }) => {
+      if (disposed || event?.geolocateSource || !map) return
+
+      const center = map.getCenter()
+      const nextState: MapViewState = {
+        ...viewStateRef.current,
+        mapLng: center.lng,
+        mapLat: center.lat,
+        mapZoom: map.getZoom(),
+      }
+      viewStateRef.current = nextState
+      const search = writeMapViewState(nextState)
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
+    }
+
+    const teardown = () => {
+      if (disposed) return
+      disposed = true
+      observer?.disconnect()
+
+      const currentMap = map
+      if (!currentMap) return
+
+      currentMap.off('load', markReady)
+      currentMap.off('moveend', synchronizeView)
+      currentMap.off('error', showFallback)
+      clearOperationalMapArtifacts(currentMap)
+      currentMap.remove()
+      if (mapRef.current === currentMap) mapRef.current = null
+      map = null
+    }
 
     const showFallback = () => {
       setFallback(true)
-      if (mapRef.current === map) {
-        clearOperationalMapArtifacts(map)
-        map.remove()
-        mapRef.current = null
-      }
+      teardown()
     }
 
     try {
@@ -86,35 +118,18 @@ export default function OperationalMap({
       map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'top-right')
     }
 
-    const synchronizeView = () => {
-      const center = map.getCenter()
-      const nextState: MapViewState = {
-        ...viewStateRef.current,
-        mapLng: center.lng,
-        mapLat: center.lat,
-        mapZoom: map.getZoom(),
-      }
-      viewStateRef.current = nextState
-      const search = writeMapViewState(nextState)
-      window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
-    }
-
-    map.on('load', () => setReady(true))
+    map.on('load', markReady)
     map.on('moveend', synchronizeView)
     map.once('error', showFallback)
 
     if (typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(() => map.resize())
+      observer = new ResizeObserver(() => {
+        if (!disposed && map) map.resize()
+      })
       observer.observe(container)
     }
 
-    return () => {
-      observer?.disconnect()
-      map.off('moveend', synchronizeView)
-      clearOperationalMapArtifacts(map)
-      map.remove()
-      if (mapRef.current === map) mapRef.current = null
-    }
+    return teardown
   }, [mode])
 
   const visibleStatus = status ?? (ready ? 'empty' : 'loading')
