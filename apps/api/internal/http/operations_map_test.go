@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -168,6 +170,41 @@ func TestOperationMapJSONWritersSetFixedCacheHeaders(t *testing.T) {
 				t.Fatalf("Cache-Control = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestPublicOperationMapJSONPreservesCORSVaryValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const origin = "https://app.example.test"
+	router := gin.New()
+	router.Use(cors.New(cors.Config{AllowOrigins: []string{origin}}))
+	router.Use(func(c *gin.Context) {
+		c.Writer.Header().Add("Vary", "Accept-Encoding")
+		c.Next()
+	})
+	router.GET("/", func(c *gin.Context) {
+		writePublicOperationMapJSON(c, http.StatusOK, gin.H{"type": "FeatureCollection"})
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Origin", origin)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+	}
+	varyCount := map[string]int{}
+	for _, header := range recorder.Header().Values("Vary") {
+		for _, value := range strings.Split(header, ",") {
+			varyCount[strings.TrimSpace(value)]++
+		}
+	}
+	if got, want := varyCount["Origin"], 1; got != want {
+		t.Fatalf("Vary Origin count = %d, want %d; headers = %#v", got, want, recorder.Header().Values("Vary"))
+	}
+	if got, want := varyCount["Accept-Encoding"], 1; got != want {
+		t.Fatalf("Vary Accept-Encoding count = %d, want %d; headers = %#v", got, want, recorder.Header().Values("Vary"))
 	}
 }
 

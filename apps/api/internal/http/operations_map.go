@@ -223,11 +223,22 @@ func operationMapNow(options operationMapQueryOptions) time.Time {
 
 func writePublicOperationMapJSON(c *gin.Context, status int, payload any) {
 	c.Header("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=60")
-	c.Header("Vary", "Accept-Encoding")
+	addOperationMapVary(c, "Accept-Encoding")
 	c.JSON(status, payload)
 }
 
 func writePrivateOperationMapJSON(c *gin.Context, status int, payload any) {
 	c.Header("Cache-Control", "no-store")
 	c.JSON(status, payload)
+}
+
+func addOperationMapVary(c *gin.Context, value string) {
+	for _, header := range c.Writer.Header().Values("Vary") {
+		for _, existing := range strings.Split(header, ",") {
+			if strings.EqualFold(strings.TrimSpace(existing), value) {
+				return
+			}
+		}
+	}
+	c.Writer.Header().Add("Vary", value)
 }
