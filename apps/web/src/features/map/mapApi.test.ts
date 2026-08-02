@@ -124,4 +124,30 @@ describe('fetchPublicMapLayer', () => {
       state: 'stale',
     })
   })
+
+  it.each([
+    ['malformed geometry', collection({ features: [{ ...collection().features[0], geometry: 'not-geojson' }] })],
+    ['out-of-range geometry', collection({ features: [{ ...collection().features[0], geometry: { type: 'Point', coordinates: [190, -6.2] } }] })],
+    ['wrong optional property type', collection({ features: [{ ...collection().features[0], properties: { ...collection().features[0].properties, category: { label: 'Sedang' } } }] })],
+    ['impossible timestamp', collection({ features: [{ ...collection().features[0], properties: { ...collection().features[0].properties, observed_at: '2026-02-30T00:00:00Z' } }] })],
+    ['wrong optional boolean', collection({ features: [{ ...collection().features[0], properties: { ...collection().features[0].properties, stale: 'false' } }] })],
+  ])('returns unavailable for a 200 response with %s', async (_name, body) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+
+    await expect(fetchPublicMapLayer('events', viewport)).resolves.toEqual({
+      layer: 'events',
+      state: 'unavailable',
+    })
+  })
+
+  it.each([
+    ['invalid JSON', () => new Response('{', { status: 200 })],
+    ['an aborted request', () => new DOMException('Aborted', 'AbortError')],
+  ])('returns unavailable for %s', async (_name, response) => {
+    const value = response()
+    if (value instanceof Response) vi.spyOn(globalThis, 'fetch').mockResolvedValue(value)
+    else vi.spyOn(globalThis, 'fetch').mockRejectedValue(value)
+
+    await expect(fetchPublicMapLayer('events', viewport)).resolves.toEqual({ layer: 'events', state: 'unavailable' })
+  })
 })

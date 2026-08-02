@@ -19,6 +19,7 @@ type MapLibreTestInstance = {
   addImage: ReturnType<typeof vi.fn>
   addLayer: ReturnType<typeof vi.fn>
   addSource: ReturnType<typeof vi.fn>
+  easeTo: ReturnType<typeof vi.fn>
   getBounds: ReturnType<typeof vi.fn>
   getCenter: ReturnType<typeof vi.fn>
   getLayer: ReturnType<typeof vi.fn>
@@ -55,7 +56,10 @@ const maplibre = vi.hoisted(() => {
   const instances: MapLibreTestInstance[] = []
   const Map = vi.fn(function MapLibreMap(options: Record<string, unknown>) {
     const listeners = new globalThis.Map<string, Set<Listener>>()
-    const sources = new globalThis.Map<string, { setData: ReturnType<typeof vi.fn> }>()
+    const sources = new globalThis.Map<string, {
+      getClusterExpansionZoom: ReturnType<typeof vi.fn>
+      setData: ReturnType<typeof vi.fn>
+    }>()
     const layers = new Set<string>()
     let removed = false
     const assertLive = () => {
@@ -66,7 +70,11 @@ const maplibre = vi.hoisted(() => {
       addControl: vi.fn(),
       addImage: vi.fn(),
       addLayer: vi.fn((layer: { id: string }) => layers.add(layer.id)),
-      addSource: vi.fn((id: string) => sources.set(id, { setData: vi.fn() })),
+      addSource: vi.fn((id: string) => sources.set(id, {
+        getClusterExpansionZoom: vi.fn().mockResolvedValue(12),
+        setData: vi.fn(),
+      })),
+      easeTo: vi.fn(),
       getBounds: vi.fn(() => ({ getWest: () => 106.7, getSouth: () => -6.4, getEast: () => 107.1, getNorth: () => -6 })),
       getCenter: vi.fn(() => {
         assertLive()
@@ -292,6 +300,32 @@ describe('OperationalMap', () => {
 
     expect(screen.getByRole('heading', { name: 'Stasiun Jakarta' })).toBeTruthy()
     expect(screen.queryByText('FeatureCollection')).toBeNull()
+
+    await act(async () => {
+      map.trigger('click', {
+        features: [{
+          id: 'events:1',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'events:1', layer: 'events', label: 'Gempa Jakarta', source: 'bmkg', attribution: 'BMKG', verification_status: 'source-reported',
+          },
+        }],
+      })
+    })
+    expect(screen.getByRole('heading', { name: 'Gempa Jakarta' })).toBeTruthy()
+
+    await act(async () => {
+      map.trigger('click', {
+        features: [{
+          id: 'alerts:1',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'alerts:1', layer: 'alerts', label: 'Peringatan Jakarta', source: 'bmkg', attribution: 'BMKG', verification_status: 'official',
+          },
+        }],
+      })
+    })
+    expect(screen.getByRole('heading', { name: 'Peringatan Jakarta' })).toBeTruthy()
   })
 
   it('renders only known public layer toggles with stale, truncation, and attribution indicators', () => {
@@ -380,5 +414,208 @@ describe('OperationalMap', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Tutup detail' }))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows evacuation availability with an explicit unknown state and rejects unapproved source URLs', () => {
+    render(
+      <MapDetailSheet
+        feature={{
+          type: 'Feature',
+          id: 'evacuation:1',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'evacuation:1',
+            layer: 'evacuations',
+            label: 'Gedung Aman',
+            source: 'sadarbencana',
+            attribution: 'SadarBencana',
+            source_url: 'http://evil.example/redirect',
+            verification_status: 'operator-reported',
+            location_type: 'shelter',
+          },
+        }}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Jenis lokasi')).toBeTruthy()
+    expect(screen.getByText('shelter')).toBeTruthy()
+    expect(screen.getByText('Status evakuasi')).toBeTruthy()
+    expect(screen.getByText('Status belum diketahui')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Buka sumber' })).toBeNull()
+  })
+
+  it('immediately aborts and invalidates an in-flight viewport request before debounce completion', async () => {
+    const requests: Array<{ resolve: (response: Response) => void; signal: AbortSignal | undefined }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise<Response>((resolve) => {
+      requests.push({ resolve, signal: init?.signal ?? undefined })
+    }))
+
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    expect(requests).toHaveLength(4)
+    act(() => map.trigger('moveend'))
+    expect(requests.every((request) => request.signal?.aborted)).toBe(true)
+
+    for (const request of requests) {
+      request.resolve(new Response(JSON.stringify({
+        type: 'FeatureCollection',
+        layer: 'events',
+        truncated: false,
+        features: [],
+      }), { status: 200 }))
+    }
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(map.addSource).not.toHaveBeenCalled()
+  })
+
+  it('expands an event cluster while leaf points continue to open details', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const layer = String(url).includes('/alerts') ? 'alerts' : String(url).includes('/air-quality')
+        ? 'air-quality' : String(url).includes('/evacuations') ? 'evacuations' : 'events'
+      return Promise.resolve(new Response(JSON.stringify({ type: 'FeatureCollection', layer, truncated: false, features: [] }), { status: 200 }))
+    })
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      map.trigger('click', {
+        features: [{
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { cluster_id: 42, point_count: 7 },
+        }],
+      })
+      await Promise.resolve()
+    })
+
+    const eventSource = (map.getSource as unknown as (id: string) => { getClusterExpansionZoom: ReturnType<typeof vi.fn> } | undefined)('operational-map-events-source')
+    expect(eventSource?.getClusterExpansionZoom).toHaveBeenCalledWith(42)
+    expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [106.8, -6.2], zoom: 12 }))
+  })
+
+  it('shows per-layer failure and a disabled-all state instead of treating them as an empty response', () => {
+    render(
+      <MapLegend
+        enabledLayers={['events', 'official-alerts']}
+        onToggle={vi.fn()}
+        results={{}}
+        layerStates={{
+          events: { health: 'stale', refreshFailed: true, refreshing: false },
+          'official-alerts': { health: 'unavailable', refreshing: false },
+        }}
+      />,
+    )
+    expect(screen.getByText('Data tersimpan, muat ulang gagal.')).toBeTruthy()
+    expect(screen.getByText('Tidak tersedia')).toBeTruthy()
+
+    cleanup()
+    render(<MapLegend enabledLayers={[]} onToggle={vi.fn()} results={{}} layerStates={{}} />)
+    expect(screen.getByText('Aktifkan setidaknya satu lapisan.')).toBeTruthy()
+  })
+
+  it('retains stale public provenance and truncation notice after a failed refresh', () => {
+    render(
+      <MapLegend
+        enabledLayers={['events']}
+        onToggle={vi.fn()}
+        results={{}}
+        layerStates={{
+          events: {
+            health: 'stale',
+            refreshFailed: true,
+            refreshing: false,
+            collection: {
+              type: 'FeatureCollection',
+              layer: 'events',
+              truncated: true,
+              features: [{
+                type: 'Feature',
+                id: 'bmkg:event-1',
+                geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+                properties: {
+                  id: 'bmkg:event-1', layer: 'events', label: 'Jakarta', source: 'bmkg', attribution: 'BMKG', verification_status: 'official',
+                },
+              }],
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(screen.getByText('BMKG')).toBeTruthy()
+    expect(screen.getByText('Hasil dibatasi untuk area ini.')).toBeTruthy()
+    expect(screen.getByText('Data tersimpan, muat ulang gagal.')).toBeTruthy()
+  })
+
+  it('closes a selected evacuation detail when a successful refresh removes it', async () => {
+    vi.useFakeTimers()
+    let batch = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const wireLayer = String(url).includes('/alerts') ? 'alerts' : String(url).includes('/air-quality')
+        ? 'air-quality' : String(url).includes('/evacuations') ? 'evacuations' : 'events'
+      const isEvacuation = wireLayer === 'evacuations'
+      const features = isEvacuation && batch > 0 ? [] : [{
+        type: 'Feature', id: `${wireLayer}:1`, geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+        properties: {
+          id: `${wireLayer}:1`, layer: wireLayer, label: isEvacuation ? 'Gedung Aman' : 'Jakarta', source: 'bmkg', attribution: 'BMKG', verification_status: 'official',
+          ...(isEvacuation ? { open: true, full: false } : {}),
+        },
+      }]
+      return Promise.resolve(new Response(JSON.stringify({ type: 'FeatureCollection', layer: wireLayer, truncated: false, features }), { status: 200 }))
+    })
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      map.trigger('click', {
+        features: [{
+          id: 'evacuations:1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { id: 'evacuations:1', layer: 'evacuations', label: 'Gedung Aman', source: 'bmkg', attribution: 'BMKG', verification_status: 'official', open: true, full: false },
+        }],
+      })
+    })
+    expect(screen.getByRole('heading', { name: 'Gedung Aman' })).toBeTruthy()
+
+    batch = 1
+    act(() => map.trigger('moveend'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('heading', { name: 'Gedung Aman' })).toBeNull()
+  })
+
+  it.each([
+    'javascript:alert(1)',
+    'data:text/html,unsafe',
+    'http://www.bmkg.go.id/cuaca',
+    'https://operator:secret@www.bmkg.go.id/cuaca',
+    'https://www.bmkg.go.id.evil.example/cuaca',
+  ])('does not render an unsafe source link: %s', (sourceUrl) => {
+    render(
+      <MapDetailSheet
+        feature={{
+          type: 'Feature', id: 'bmkg:event-1', geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: { id: 'bmkg:event-1', layer: 'events', label: 'Jakarta', source: 'bmkg', attribution: 'BMKG', verification_status: 'official', source_url: sourceUrl },
+        }}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('link', { name: 'Buka sumber' })).toBeNull()
   })
 })

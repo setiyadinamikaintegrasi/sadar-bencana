@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import { MapDetailSheet } from './MapDetailSheet'
 import { MapLegend } from './MapLegend'
-import { fetchPublicMapLayer, type PublicMapLayerResult, type PublicMapViewport } from './mapApi'
+import { fetchPublicMapLayer, type PublicMapLayerViewState, type PublicMapViewport } from './mapApi'
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
 import { eventsLayer } from './layers/events'
@@ -103,14 +103,15 @@ function mapFeatureFromClick(value: unknown): OperationalMapFeature | undefined 
 function statusFromResults(
   ready: boolean,
   enabledLayers: PublicOperationalMapLayer[],
-  results: Partial<Record<PublicOperationalMapLayer, PublicMapLayerResult>>,
+  layerStates: Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>>,
 ): OperationalMapStatus | undefined {
   if (!ready) return 'loading'
-  const activeResults = enabledLayers.map((layer) => results[layer]).filter((result): result is PublicMapLayerResult => Boolean(result))
-  if (enabledLayers.length > 0 && activeResults.length < enabledLayers.length) return 'loading'
-  if (activeResults.length === 0 || activeResults.every((result) => result.state === 'empty')) return 'empty'
-  if (activeResults.some((result) => result.state === 'stale')) return 'stale'
-  if (activeResults.every((result) => result.state === 'unavailable')) return 'unavailable'
+  if (enabledLayers.length === 0) return undefined
+  const activeStates = enabledLayers.map((layer) => layerStates[layer]).filter((state): state is PublicMapLayerViewState => Boolean(state))
+  if (activeStates.length < enabledLayers.length || activeStates.some((state) => state.health === 'loading')) return 'loading'
+  if (activeStates.some((state) => state.health === 'stale')) return 'stale'
+  if (activeStates.every((state) => state.health === 'unavailable')) return 'unavailable'
+  if (activeStates.every((state) => state.health === 'empty')) return 'empty'
   return undefined
 }
 
@@ -127,7 +128,7 @@ export default function OperationalMap({
   const [ready, setReady] = useState(false)
   const [fallback, setFallback] = useState(false)
   const [enabledLayers, setEnabledLayers] = useState<PublicOperationalMapLayer[]>(enabledLayersRef.current)
-  const [results, setResults] = useState<Partial<Record<PublicOperationalMapLayer, PublicMapLayerResult>>>({})
+  const [layerStates, setLayerStates] = useState<Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>>>({})
   const [selectedFeature, setSelectedFeature] = useState<OperationalMapFeature | null>(null)
 
   useEffect(() => {
@@ -143,15 +144,31 @@ export default function OperationalMap({
     let mapLoaded = false
     let disposed = false
 
+    const beginRefresh = () => {
+      refreshRevision += 1
+      refreshController?.abort()
+      refreshController = undefined
+      setLayerStates((current) => {
+        const next = { ...current }
+        for (const layer of enabledLayersRef.current) {
+          const previous = current[layer]
+          next[layer] = previous
+            ? { ...previous, refreshing: true }
+            : { health: 'loading', refreshing: true }
+        }
+        return next
+      })
+      return refreshRevision
+    }
+
     const loadPublicLayers = () => {
       if (disposed || !map || !mapLoaded) return
-      refreshController?.abort()
+      const revision = beginRefresh()
       const controller = new AbortController()
       refreshController = controller
-      const revision = ++refreshRevision
       const layers = enabledLayersRef.current
       if (layers.length === 0) {
-        setResults({})
+        setLayerStates({})
         return
       }
 
@@ -161,16 +178,41 @@ export default function OperationalMap({
         for (const result of nextResults) {
           if (result.collection) layerAdapters[result.layer].apply(map, result.collection)
         }
-        setResults((current) => {
+        setLayerStates((current) => {
           const next = { ...current }
-          for (const result of nextResults) next[result.layer] = result
+          for (const result of nextResults) {
+            const previous = current[result.layer]
+            if (result.collection) {
+              next[result.layer] = {
+                collection: result.collection,
+                health: result.state === 'ready' ? 'current' : result.state,
+                refreshing: false,
+              }
+            } else if (previous?.collection && previous.collection.features.length > 0) {
+              next[result.layer] = {
+                ...previous,
+                health: 'stale',
+                refreshFailed: true,
+                refreshing: false,
+              }
+            } else {
+              next[result.layer] = { health: 'unavailable', refreshFailed: true, refreshing: false }
+            }
+          }
           return next
+        })
+        setSelectedFeature((selected) => {
+          if (!selected) return null
+          const refreshed = nextResults.find((result) => result.collection?.layer === selected.properties.layer)?.collection
+          if (!refreshed) return selected
+          return refreshed.features.find((feature) => feature.id === selected.id) ?? null
         })
       })
     }
 
     const schedulePublicLayers = () => {
       if (disposed || !mapLoaded) return
+      beginRefresh()
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
       refreshTimer = window.setTimeout(() => {
         refreshTimer = undefined
@@ -205,6 +247,19 @@ export default function OperationalMap({
       if (feature) setSelectedFeature(feature)
     }
 
+    const expandCluster = (event: { features?: Array<{ geometry?: GeoJSON.Geometry; properties?: Record<string, unknown> }> }) => {
+      const cluster = event.features?.[0]
+      const clusterID = cluster?.properties?.cluster_id
+      const geometry = cluster?.geometry
+      if (!map || typeof clusterID !== 'number' || !geometry || geometry.type !== 'Point') return
+      const center = geometry.coordinates as [number, number]
+      const source = map.getSource(eventsLayer.sourceId) as maplibregl.GeoJSONSource | undefined
+      if (!source) return
+      void source.getClusterExpansionZoom(clusterID).then((zoom) => {
+        if (!disposed && map) map.easeTo({ center, zoom })
+      })
+    }
+
     const teardown = () => {
       if (disposed) return
       disposed = true
@@ -219,6 +274,7 @@ export default function OperationalMap({
       currentMap.off('load', markReady)
       currentMap.off('moveend', synchronizeView)
       currentMap.off('error', showFallback)
+      currentMap.off('click', eventsLayer.layerIds[0], expandCluster)
       for (const adapter of Object.values(layerAdapters)) {
         for (const layerId of adapter.layerIds) currentMap.off('click', layerId, selectFeature)
         adapter.remove(currentMap)
@@ -260,6 +316,7 @@ export default function OperationalMap({
     for (const adapter of Object.values(layerAdapters)) {
       for (const layerId of adapter.layerIds) map.on('click', layerId, selectFeature)
     }
+    map.on('click', eventsLayer.layerIds[0], expandCluster)
 
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => {
@@ -286,7 +343,7 @@ export default function OperationalMap({
 
     if (!nextLayers.includes(layer) && mapRef.current) {
       layerAdapters[layer].remove(mapRef.current)
-      setResults((current) => {
+      setLayerStates((current) => {
         const { [layer]: _removed, ...remaining } = current
         return remaining
       })
@@ -294,7 +351,7 @@ export default function OperationalMap({
     loadLayersRef.current?.()
   }
 
-  const visibleStatus = status ?? statusFromResults(ready, enabledLayers, results)
+  const visibleStatus = status ?? statusFromResults(ready, enabledLayers, layerStates)
 
   return (
     <section className={`operational-map ${className}`.trim()} aria-label="Peta operasi">
@@ -305,7 +362,7 @@ export default function OperationalMap({
         </div>
       ) : (
         <>
-          <MapLegend enabledLayers={enabledLayers} results={results} onToggle={toggleLayer} />
+          <MapLegend enabledLayers={enabledLayers} results={{}} layerStates={layerStates} onToggle={toggleLayer} />
           {visibleStatus ? (
             <p className="operational-map__status" role="status" data-state={visibleStatus}>
               {statusMessage(visibleStatus)}

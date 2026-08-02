@@ -73,6 +73,18 @@
   accent-color: #186f65;
 }
 
+.operational-map__layer-health {
+  margin-left: auto;
+  color: #53656e;
+  font-size: 0.75rem;
+}
+
+.operational-map__layer-health[data-state='stale'],
+.operational-map__layer-health[data-state='unavailable'] {
+  color: #8b4b12;
+  font-weight: 600;
+}
+
 .operational-map__notice,
 .operational-map__attribution {
   margin: 0.5rem 0 0;

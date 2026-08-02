@@ -8,7 +8,7 @@ import type {
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
 const MAXIMUM_VIEWPORT_DEGREES = 20
 const DATA_VINTAGE_STALE_AFTER_MS = 2 * 60 * 60 * 1000
-const RFC3339_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/
+const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/
 
 export const publicMapEndpoints = {
   events: '/map/operations/events',
@@ -41,6 +41,15 @@ export interface PublicMapLayerResult {
   collection?: OperationalMapFeatureCollection
 }
 
+export type PublicMapLayerHealth = 'loading' | 'current' | 'stale' | 'unavailable' | 'empty'
+
+export interface PublicMapLayerViewState {
+  collection?: OperationalMapFeatureCollection
+  health: PublicMapLayerHealth
+  refreshFailed?: boolean
+  refreshing: boolean
+}
+
 function validViewport(viewport: PublicMapViewport): boolean {
   const [minLongitude, minLatitude, maxLongitude, maxLatitude] = viewport.bbox
   if (!viewport.bbox.every(Number.isFinite) || !Number.isInteger(viewport.zoom)) return false
@@ -52,9 +61,20 @@ function validViewport(viewport: PublicMapViewport): boolean {
 }
 
 function normalizedTimestamp(value: string | undefined): string | undefined {
-  if (!value || !RFC3339_TIMESTAMP.test(value)) return undefined
+  if (!value) return undefined
+  const match = RFC3339_TIMESTAMP.exec(value)
+  if (!match) return undefined
   const timestamp = Date.parse(value)
   if (!Number.isFinite(timestamp)) return undefined
+  const date = new Date(timestamp)
+  if (
+    date.getUTCFullYear() !== Number(match[1])
+    || date.getUTCMonth() + 1 !== Number(match[2])
+    || date.getUTCDate() !== Number(match[3])
+    || date.getUTCHours() !== Number(match[4])
+    || date.getUTCMinutes() !== Number(match[5])
+    || date.getUTCSeconds() !== Number(match[6])
+  ) return undefined
   return new Date(timestamp).toISOString()
 }
 
@@ -93,13 +113,56 @@ function requestPath(layer: PublicOperationalMapLayer, viewport: PublicMapViewpo
   return `${API_BASE_URL}${publicMapEndpoints[layer]}?${params.toString()}`
 }
 
+function isPosition(value: unknown): value is GeoJSON.Position {
+  return Array.isArray(value)
+    && value.length >= 2
+    && value.every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate))
+    && value[0] >= -180
+    && value[0] <= 180
+    && value[1] >= -90
+    && value[1] <= 90
+}
+
+function samePosition(left: GeoJSON.Position, right: GeoJSON.Position): boolean {
+  return left[0] === right[0] && left[1] === right[1]
+}
+
+function isLinearRing(value: unknown): value is GeoJSON.Position[] {
+  return Array.isArray(value)
+    && value.length >= 4
+    && value.every(isPosition)
+    && samePosition(value[0], value[value.length - 1])
+}
+
+function isGeometry(value: unknown): value is GeoJSON.Geometry {
+  if (!value || typeof value !== 'object') return false
+  const geometry = value as { type?: unknown; coordinates?: unknown }
+  if (geometry.type === 'Point') return isPosition(geometry.coordinates)
+  if (geometry.type === 'Polygon') return Array.isArray(geometry.coordinates) && geometry.coordinates.length > 0 && geometry.coordinates.every(isLinearRing)
+  if (geometry.type === 'MultiPolygon') {
+    return Array.isArray(geometry.coordinates)
+      && geometry.coordinates.length > 0
+      && geometry.coordinates.every((polygon) => Array.isArray(polygon) && polygon.length > 0 && polygon.every(isLinearRing))
+  }
+  return false
+}
+
+function hasOptionalPropertyTypes(properties: Record<string, unknown>): boolean {
+  const strings = ['peril_type', 'severity', 'source_url', 'observed_at', 'effective_at', 'expires_at', 'data_vintage', 'pollutant', 'unit', 'category', 'location_type']
+  const timestamps = ['observed_at', 'effective_at', 'expires_at', 'data_vintage']
+  if (strings.some((key) => key in properties && typeof properties[key] !== 'string')) return false
+  if (timestamps.some((key) => key in properties && !normalizedTimestamp(properties[key] as string))) return false
+  if ('value' in properties && (typeof properties.value !== 'number' || !Number.isFinite(properties.value))) return false
+  return !['stale', 'open', 'full'].some((key) => key in properties && typeof properties[key] !== 'boolean')
+}
+
 function isFeature(feature: unknown, expectedLayer: OperationalMapWireLayer): feature is OperationalMapFeature {
   if (!feature || typeof feature !== 'object') return false
   const value = feature as Partial<OperationalMapFeature>
   const properties = value.properties
   return value.type === 'Feature'
     && typeof value.id === 'string'
-    && Boolean(value.geometry)
+    && isGeometry(value.geometry)
     && typeof properties === 'object'
     && properties !== null
     && properties.layer === expectedLayer
@@ -108,6 +171,7 @@ function isFeature(feature: unknown, expectedLayer: OperationalMapWireLayer): fe
     && typeof properties.source === 'string'
     && typeof properties.attribution === 'string'
     && typeof properties.verification_status === 'string'
+    && hasOptionalPropertyTypes(properties as unknown as Record<string, unknown>)
 }
 
 function isCollection(value: unknown, expectedLayer: OperationalMapWireLayer): value is OperationalMapFeatureCollection {
@@ -124,8 +188,9 @@ function hasStaleVintage(collection: OperationalMapFeatureCollection): boolean {
   const staleBefore = Date.now() - DATA_VINTAGE_STALE_AFTER_MS
   return collection.features.some(({ properties }) => {
     if (properties.stale) return true
-    if (!properties.data_vintage || !RFC3339_TIMESTAMP.test(properties.data_vintage)) return false
-    const vintage = Date.parse(properties.data_vintage)
+    const vintageValue = normalizedTimestamp(properties.data_vintage)
+    if (!vintageValue) return false
+    const vintage = Date.parse(vintageValue)
     return Number.isFinite(vintage) && vintage < staleBefore
   })
 }

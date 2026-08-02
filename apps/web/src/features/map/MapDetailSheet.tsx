@@ -7,11 +7,25 @@ interface MapDetailSheetProps {
   onClose: () => void
 }
 
-function safeExternalUrl(value: string | undefined): string | undefined {
+const approvedSourceHosts: Record<string, readonly string[]> = {
+  bmkg: ['bmkg.go.id'],
+  usgs: ['usgs.gov'],
+  'nasa-firms': ['nasa.gov'],
+  osm: ['openstreetmap.org'],
+}
+
+function safeExternalUrl(source: string, value: string | undefined): string | undefined {
   if (!value) return undefined
   try {
     const url = new URL(value)
-    if ((url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password) return url.href
+    const approvedHosts = approvedSourceHosts[source.toLowerCase()]
+    const hostname = url.hostname.toLowerCase()
+    if (
+      url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && approvedHosts?.some((host) => hostname === host || hostname.endsWith(`.${host}`))
+    ) return url.href
   } catch {
     // Omit invalid source URLs rather than presenting untrusted navigation.
   }
@@ -50,7 +64,7 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
   if (!feature) return null
 
   const { properties } = feature
-  const sourceUrl = safeExternalUrl(properties.source_url)
+  const sourceUrl = safeExternalUrl(properties.source, properties.source_url)
   const observation = [properties.pollutant, properties.value, properties.unit].filter((value) => value !== undefined && value !== '').join(' ')
 
   return (
@@ -70,6 +84,20 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
         <DetailRow label="Verifikasi">{properties.verification_status}</DetailRow>
         {observation ? <DetailRow label="Pengamatan">{observation}</DetailRow> : null}
         {properties.category ? <DetailRow label="Kategori udara">{properties.category}</DetailRow> : null}
+        {properties.layer === 'evacuations' ? (
+          <>
+            {properties.location_type ? <DetailRow label="Jenis lokasi">{properties.location_type}</DetailRow> : null}
+            <DetailRow label="Status evakuasi">
+              {properties.open === true && properties.full === false
+                ? 'Terbuka'
+                : properties.open === true && properties.full === true
+                  ? 'Terbuka, penuh'
+                  : properties.open === false
+                    ? 'Tutup'
+                    : 'Status belum diketahui'}
+            </DetailRow>
+          </>
+        ) : null}
         <TimestampRow label="Diamati" value={properties.observed_at} />
         <TimestampRow label="Berlaku" value={properties.effective_at} />
         <TimestampRow label="Berakhir" value={properties.expires_at} />
