@@ -31,10 +31,10 @@ type OperationMapFeatureProperties struct {
 	Label              string     `json:"label"`
 	PerilType          string     `json:"peril_type,omitempty"`
 	Severity           string     `json:"severity,omitempty"`
-	Source             string     `json:"source"`
-	Attribution        string     `json:"attribution"`
+	Source             string     `json:"source,omitempty"`
+	Attribution        string     `json:"attribution,omitempty"`
 	SourceURL          string     `json:"source_url,omitempty"`
-	VerificationStatus string     `json:"verification_status"`
+	VerificationStatus string     `json:"verification_status,omitempty"`
 	ObservedAt         *time.Time `json:"observed_at,omitempty"`
 	EffectiveAt        *time.Time `json:"effective_at,omitempty"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
@@ -48,6 +48,24 @@ type OperationMapFeatureProperties struct {
 	Open               *bool      `json:"open,omitempty"`
 	Full               *bool      `json:"full,omitempty"`
 }
+
+const operationMapWatchZonesQuery = `
+SELECT id, label, latitude, longitude
+FROM ews_watch_zones
+WHERE subscriber_id = $1
+  AND latitude BETWEEN $2 AND $3
+  AND longitude BETWEEN $4 AND $5
+ORDER BY label ASC, id ASC
+`
+
+const operationMapPersonalAssetsQuery = `
+SELECT id, name, category, latitude, longitude
+FROM personal_assets
+WHERE auth_user_id = $1
+  AND latitude BETWEEN $2 AND $3
+  AND longitude BETWEEN $4 AND $5
+ORDER BY name ASC, id ASC
+`
 
 // OperationMapFeature is a single WGS84 GeoJSON feature.
 type OperationMapFeature struct {
@@ -679,6 +697,92 @@ func OperationMapEvacuations(db *sql.DB) gin.HandlerFunc {
 
 		featureCount, status = len(features), http.StatusOK
 		writePublicOperationMapJSON(c, status, operationMapCollection("evacuations", features, truncated))
+	}
+}
+
+// OperationMapWatchZones serves the authenticated subscriber's viewport-bounded watch zones.
+func OperationMapWatchZones(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		if db == nil {
+			operationMapError(c, http.StatusServiceUnavailable, "database_unavailable")
+			return
+		}
+		query, err := parseOperationMapQuery(c, operationMapQueryOptions{timeMode: operationMapNoTime})
+		if err != nil {
+			operationMapError(c, http.StatusBadRequest, "invalid_query")
+			return
+		}
+		subscriberID, ok := resolveSubscriber(c, db)
+		if !ok {
+			return
+		}
+		rows, err := db.QueryContext(c.Request.Context(), operationMapWatchZonesQuery,
+			subscriberID, query.BBox.MinLatitude, query.BBox.MaxLatitude,
+			query.BBox.MinLongitude, query.BBox.MaxLongitude)
+		if err != nil {
+			operationMapError(c, http.StatusServiceUnavailable, "database_query_failed")
+			return
+		}
+		defer rows.Close()
+
+		features := make([]OperationMapFeature, 0)
+		for rows.Next() {
+			var id, label string
+			var latitude, longitude float64
+			if err := rows.Scan(&id, &label, &latitude, &longitude); err != nil {
+				operationMapError(c, http.StatusInternalServerError, "row_scan_failed")
+				return
+			}
+			features = append(features, operationMapPointFeature(id, "watch-zones", label, longitude, latitude,
+				OperationMapFeatureProperties{Category: "watch-zone"}))
+		}
+		if err := rows.Err(); err != nil {
+			operationMapError(c, http.StatusInternalServerError, "rows_iteration_failed")
+			return
+		}
+		writePrivateOperationMapJSON(c, http.StatusOK, operationMapCollection("watch-zones", features, false))
+	}
+}
+
+// OperationMapPersonalAssets serves the authenticated user's viewport-bounded assets.
+func OperationMapPersonalAssets(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		if db == nil {
+			operationMapError(c, http.StatusServiceUnavailable, "database_unavailable")
+			return
+		}
+		query, err := parseOperationMapQuery(c, operationMapQueryOptions{timeMode: operationMapNoTime})
+		if err != nil {
+			operationMapError(c, http.StatusBadRequest, "invalid_query")
+			return
+		}
+		rows, err := db.QueryContext(c.Request.Context(), operationMapPersonalAssetsQuery,
+			AuthUserID(c), query.BBox.MinLatitude, query.BBox.MaxLatitude,
+			query.BBox.MinLongitude, query.BBox.MaxLongitude)
+		if err != nil {
+			operationMapError(c, http.StatusServiceUnavailable, "database_query_failed")
+			return
+		}
+		defer rows.Close()
+
+		features := make([]OperationMapFeature, 0)
+		for rows.Next() {
+			var id, name, category string
+			var latitude, longitude float64
+			if err := rows.Scan(&id, &name, &category, &latitude, &longitude); err != nil {
+				operationMapError(c, http.StatusInternalServerError, "row_scan_failed")
+				return
+			}
+			features = append(features, operationMapPointFeature(id, "personal-assets", name, longitude, latitude,
+				OperationMapFeatureProperties{Category: category}))
+		}
+		if err := rows.Err(); err != nil {
+			operationMapError(c, http.StatusInternalServerError, "rows_iteration_failed")
+			return
+		}
+		writePrivateOperationMapJSON(c, http.StatusOK, operationMapCollection("personal-assets", features, false))
 	}
 }
 

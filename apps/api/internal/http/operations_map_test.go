@@ -1,11 +1,13 @@
 package http
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestOperationMapQueryParsesValidViewportAndPerils(t *testing.T) {
@@ -408,6 +411,171 @@ func TestOperationMapPublicEvacuationsReturnsBoundedSafeFeatures(t *testing.T) {
 	assertOperationMapPublicFeatureCollection(t, body, "evacuations", 2000, []float64{106.8, -6.2})
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPrivateRejectsAnonymousRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := newOperationMapPrivateTestRouter(nil)
+
+	for _, target := range []string{
+		"/api/v1/me/map/watch-zones?bbox=106.7,-6.4,107.1,-6.0",
+		"/api/v1/me/map/personal-assets?bbox=106.7,-6.4,107.1,-6.0",
+	} {
+		t.Run(target, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+			if got, want := recorder.Code, http.StatusUnauthorized; got != want {
+				t.Fatalf("status = %d, want %d: %s", got, want, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestOperationMapPrivateWatchZonesExcludeOtherSubscribers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	const authUserID = "11111111-1111-1111-1111-111111111111"
+	const subscriberID = "22222222-2222-2222-2222-222222222222"
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id FROM ews_subscribers WHERE auth_user_id = $1`)).
+		WithArgs(authUserID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(subscriberID))
+	mock.ExpectQuery(`(?s)SELECT id, label, latitude, longitude.*FROM ews_watch_zones.*WHERE subscriber_id = \$1.*latitude BETWEEN \$2 AND \$3.*longitude BETWEEN \$4 AND \$5`).
+		WithArgs(subscriberID, -6.4, -6.0, 106.7, 107.1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "label", "latitude", "longitude"}).
+			AddRow("zone-owned-by-subscriber", "Jakarta office", -6.2, 106.8))
+
+	recorder := operationMapPrivateRequest(t, newOperationMapPrivateTestRouter(db),
+		"/api/v1/me/map/watch-zones?bbox=106.7,-6.4,107.1,-6.0", authUserID, "member@example.test")
+	body := assertOperationMapPrivateResponse(t, recorder, "watch-zones", "zone-owned-by-subscriber", "Jakarta office", "watch-zone")
+	assertOperationMapPrivateResponseExcludesSensitiveFields(t, body)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationMapPrivatePersonalAssetsExcludeOtherUsers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	const authUserID = "33333333-3333-3333-3333-333333333333"
+	mock.ExpectQuery(`(?s)SELECT id, name, category, latitude, longitude.*FROM personal_assets.*WHERE auth_user_id = \$1.*latitude BETWEEN \$2 AND \$3.*longitude BETWEEN \$4 AND \$5`).
+		WithArgs(authUserID, -6.4, -6.0, 106.7, 107.1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "category", "latitude", "longitude"}).
+			AddRow("asset-owned-by-user", "Warehouse A", "business", -6.2, 106.8))
+
+	recorder := operationMapPrivateRequest(t, newOperationMapPrivateTestRouter(db),
+		"/api/v1/me/map/personal-assets?bbox=106.7,-6.4,107.1,-6.0", authUserID, "owner@example.test")
+	body := assertOperationMapPrivateResponse(t, recorder, "personal-assets", "asset-owned-by-user", "Warehouse A", "business")
+	assertOperationMapPrivateResponseExcludesSensitiveFields(t, body)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newOperationMapPrivateTestRouter(db *sql.DB) *gin.Engine {
+	router := gin.New()
+	meMap := router.Group("/api/v1/me/map", SupabaseAuth("test-secret", ""))
+	meMap.GET("/watch-zones", OperationMapWatchZones(db))
+	meMap.GET("/personal-assets", OperationMapPersonalAssets(db))
+	return router
+}
+
+func operationMapPrivateRequest(t *testing.T, router *gin.Engine, target, userID, email string) *httptest.ResponseRecorder {
+	t.Helper()
+	token := signTestToken(t, "test-secret", jwt.MapClaims{
+		"sub":   userID,
+		"email": email,
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, target, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func assertOperationMapPrivateResponse(t *testing.T, recorder *httptest.ResponseRecorder, layer, id, label, category string) map[string]any {
+	t.Helper()
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d: %s", got, want, recorder.Body.String())
+	}
+	if got, want := recorder.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got, want := body["type"], "FeatureCollection"; got != want {
+		t.Fatalf("type = %#v, want %q", got, want)
+	}
+	if got, want := body["layer"], layer; got != want {
+		t.Fatalf("layer = %#v, want %q", got, want)
+	}
+	features, ok := body["features"].([]any)
+	if !ok || len(features) != 1 {
+		t.Fatalf("features = %#v, want one feature", body["features"])
+	}
+	feature := features[0].(map[string]any)
+	assertOperationMapPrivateKeys(t, feature, "type", "id", "geometry", "properties")
+	if got, want := feature["id"], id; got != want {
+		t.Fatalf("feature id = %#v, want %q", got, want)
+	}
+	properties := feature["properties"].(map[string]any)
+	assertOperationMapPrivateKeys(t, properties, "id", "layer", "label", "category")
+	for key, want := range map[string]string{"id": id, "layer": layer, "label": label, "category": category} {
+		if got := properties[key]; got != want {
+			t.Fatalf("properties[%q] = %#v, want %q", key, got, want)
+		}
+	}
+	geometry := feature["geometry"].(map[string]any)
+	assertOperationMapPrivateKeys(t, geometry, "type", "coordinates")
+	if got, want := geometry["type"], "Point"; got != want {
+		t.Fatalf("geometry type = %#v, want %q", got, want)
+	}
+	if got, want := geometry["coordinates"], []any{106.8, -6.2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("geometry coordinates = %#v, want %#v", got, want)
+	}
+	return body
+}
+
+func assertOperationMapPrivateKeys(t *testing.T, values map[string]any, expected ...string) {
+	t.Helper()
+	actual := make([]string, 0, len(values))
+	for key := range values {
+		actual = append(actual, key)
+	}
+	sort.Strings(actual)
+	sort.Strings(expected)
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("keys = %#v, want %#v", actual, expected)
+	}
+}
+
+func assertOperationMapPrivateResponseExcludesSensitiveFields(t *testing.T, body map[string]any) {
+	t.Helper()
+	serialized, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"auth_user_id", "subscriber_id", "email", "telegram", "endpoint",
+		"address", "notes", "estimated_value", "currency", "peril_types", "thresholds",
+		"alert_radius_km", "is_active", "created_at", "updated_at", "personal_asset_id",
+	} {
+		if strings.Contains(string(serialized), forbidden) {
+			t.Fatalf("serialized response leaked %q: %s", forbidden, serialized)
+		}
 	}
 }
 
