@@ -5,6 +5,7 @@ import { MapLegend } from './MapLegend'
 import OperationalMap from './OperationalMap'
 
 type MapEvent = {
+  error?: Error
   geolocateSource?: boolean
   lngLat?: { lat: number; lng: number }
   features?: Array<{
@@ -63,6 +64,10 @@ const maplibre = vi.hoisted(() => {
       setData: ReturnType<typeof vi.fn>
     }>()
     const layers = new Set<string>()
+    const canvas = document.createElement('canvas')
+    canvas.className = 'maplibregl-canvas'
+    const container = options.container as HTMLElement
+    container.append(canvas)
     let removed = false
     const assertLive = () => {
       if (removed) throw new Error('MapLibre map was used after removal')
@@ -118,6 +123,7 @@ const maplibre = vi.hoisted(() => {
       remove: vi.fn(() => {
         assertLive()
         removed = true
+        canvas.remove()
       }),
       removeLayer: vi.fn((id: string) => {
         assertLive()
@@ -493,12 +499,25 @@ describe('OperationalMap', () => {
     expect(screen.getByRole('alert').textContent).toContain('Peta tidak tersedia')
   })
 
-  it('tears down a failed map once before unmounting and disconnects its observer', () => {
+  it('keeps a loaded map canvas after a recoverable source error', () => {
+    const { container } = render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    const canvas = container.querySelector('.operational-map__canvas canvas.maplibregl-canvas')
+
+    act(() => map.trigger('load'))
+    act(() => map.trigger('error', { error: new Error('Failed to load source tile') }))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(container.querySelector('.operational-map__canvas canvas.maplibregl-canvas')).toBe(canvas)
+    expect(map.remove).not.toHaveBeenCalled()
+  })
+
+  it('tears down a map once after WebGL context loss before unmounting and disconnects its observer', () => {
     const { unmount } = render(<OperationalMap />)
     const map = maplibre.instances[0]
     const observer = resizeObservers[0]
 
-    act(() => map.trigger('error'))
+    act(() => map.trigger('webglcontextlost'))
 
     expect(screen.getByRole('alert').textContent).toContain('Peta tidak tersedia')
     expect(map.remove).toHaveBeenCalledTimes(1)

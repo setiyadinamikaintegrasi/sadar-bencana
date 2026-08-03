@@ -549,7 +549,7 @@ export default function OperationalMap({
 
       currentMap.off('load', markReady)
       currentMap.off('moveend', synchronizeView)
-      currentMap.off('error', showFallback)
+      currentMap.off('webglcontextlost', showFallback)
       currentMap.off('click', pickLocation)
       currentMap.off('click', eventsLayer.layerIds[0], expandCluster)
       for (const adapter of Object.values(layerAdapters)) {
@@ -613,7 +613,7 @@ export default function OperationalMap({
 
     map.on('load', markReady)
     map.on('moveend', synchronizeView)
-    map.once('error', showFallback)
+    map.once('webglcontextlost', showFallback)
     map.on('click', pickLocation)
     for (const adapter of Object.values(layerAdapters)) {
       for (const layerId of adapter.layerIds) map.on('click', layerId, selectFeature)
