@@ -23,3 +23,14 @@ paths = [
 regexes = [
   '''^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''',
 ]
+
+[[allowlists]]
+description = "Playwright fixture bearer JWT explicitly prefixed with fixture. in operational map e2e"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''apps/web/e2e/operational-map\.spec\.ts$''',
+]
+regexes = [
+  '''^fixture\.eyJ''',
+]

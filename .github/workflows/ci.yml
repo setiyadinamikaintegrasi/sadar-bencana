@@ -41,9 +41,29 @@ jobs:
       - run: npm ci
       - run: npm run verify:web-runtime
       - run: npm run verify:brand
+      - run: npm test --workspace apps/web
       - run: npm run build --workspace apps/web
         env:
           VITE_API_BASE_URL: /api/v1
+
+  web-operational-map-e2e:
+    name: Operational map browser tests
+    needs: web
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e # v1.62.1-noble
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: npm ci
+      - run: npm run test:e2e:map --workspace apps/web
+      - name: Upload Playwright report and failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: operational-map-playwright-artifacts
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
 
   mastra:
     name: Mastra typecheck and build

@@ -118,6 +118,7 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
         VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
+        VITE_OPERATIONAL_MAP_ENGINE: ${VITE_OPERATIONAL_MAP_ENGINE:-leaflet}
     container_name: sadar-web
     restart: unless-stopped
     depends_on:

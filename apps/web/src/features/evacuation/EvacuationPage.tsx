@@ -37,6 +37,7 @@ export default function EvacuationPage() {
   const onViewportChange = useCallback((bbox: EvacuationBBox, zoom: number) => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (zoom < MIN_ZOOM_FOR_MARKERS) {
+      reqIdRef.current += 1
       setZoomHint(true)
       setLocations([])
       return
