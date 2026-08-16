@@ -3,6 +3,9 @@ import { readMapViewState, writeMapViewState } from './state'
 
 describe('operational map URL state', () => {
   it('round-trips the camera, public layers, and map time', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00Z')
+
     const search = writeMapViewState({
       mapLng: 106.8456,
       mapLat: -6.2088,
@@ -41,6 +44,9 @@ describe('operational map URL state', () => {
   })
 
   it('preserves unrelated parameters when writing map state', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00Z')
+
     expect(writeMapViewState({
       mapLng: 118,
       mapLat: -2.5,
