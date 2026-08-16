@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getConnectorHealth, type ConnectorHealth } from '../../lib/api/client'
 
-const REFRESH_INTERVAL_MS = 30_000
+const REFRESH_INTERVAL_MS = 60_000
 const INACTIVE_OFFICIAL_CONNECTORS = new Set(['bmkg_cap', 'bmkg_air_quality'])
 
 export const HAZARD_CONNECTORS = [
@@ -240,8 +240,18 @@ export default function SourceHealthPage() {
   }, [load])
 
   useEffect(() => {
-    const id = window.setInterval(() => void load('refresh'), REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(id)
+    const id = window.setInterval(() => {
+      if (document.hidden) return
+      void load('refresh')
+    }, REFRESH_INTERVAL_MS)
+    const onVisibilityChange = () => {
+      if (!document.hidden) void load('refresh')
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [load])
 
   const byName = new Map(connectors.map((c) => [c.name, c]))

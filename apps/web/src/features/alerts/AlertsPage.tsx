@@ -10,7 +10,7 @@ import {
   type AlertVerification,
 } from '../../lib/api/client'
 
-const REFRESH_INTERVAL_MS = 60_000
+const REFRESH_INTERVAL_MS = 300_000
 
 const ALL_SOURCES = '__all__'
 
@@ -91,9 +91,17 @@ export default function AlertsPage() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      if (document.hidden) return
       void load('refresh')
     }, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(intervalId)
+    const onVisibilityChange = () => {
+      if (!document.hidden) void load('refresh')
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [load])
 
   const handleRefresh = useCallback(() => {
