@@ -14,7 +14,7 @@ import {
   streamAiExecutiveBriefing,
 } from '../../lib/api/client'
 
-const REFRESH_INTERVAL_MS = 60_000
+const REFRESH_INTERVAL_MS = 300_000
 
 const magnitudeBadgeClasses = {
   high: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
@@ -229,10 +229,18 @@ export default function BriefingPage() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      if (document.hidden) return
       void loadBriefing('refresh')
     }, REFRESH_INTERVAL_MS)
+    const onVisibilityChange = () => {
+      if (!document.hidden) void loadBriefing('refresh')
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
-    return () => window.clearInterval(intervalId)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [loadBriefing])
 
   useEffect(() => {

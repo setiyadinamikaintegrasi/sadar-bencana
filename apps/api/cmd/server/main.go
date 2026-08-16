@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -58,23 +59,28 @@ func main() {
 	}))
 
 	router.GET("/health", apihttp.Health)
-	router.GET("/api/v1/meta", apihttp.Meta(cfg.Env, cfg.RiskFreeLimit, cfg.DeploymentMode, cfg.PersonalAssetLimit))
-	router.GET("/api/v1/events", apihttp.Events(dbPool))
+	// Public read-heavy endpoints are served through a short in-memory TTL
+	// cache so repeated polling (browser intervals or external pollers) does
+	// not re-execute the same Postgres query on every request, which keeps
+	// database egress proportional to data change rate rather than to poll rate.
+	publicCache := apihttp.TTLGetCache(60 * time.Second)
+	router.GET("/api/v1/meta", publicCache, apihttp.Meta(cfg.Env, cfg.RiskFreeLimit, cfg.DeploymentMode, cfg.PersonalAssetLimit))
+	router.GET("/api/v1/events", publicCache, apihttp.Events(dbPool))
 	router.GET("/api/v1/events/:id/evidence", apihttp.EventEvidenceList(dbPool))
 	router.GET("/api/v1/events/:id/correlation-audit", apihttp.EventCorrelationAudit(dbPool))
-	router.GET("/api/v1/news", apihttp.News(dbPool))
-	router.GET("/api/v1/risk-scores", apihttp.RiskScores(dbPool))
+	router.GET("/api/v1/news", publicCache, apihttp.News(dbPool))
+	router.GET("/api/v1/risk-scores", publicCache, apihttp.RiskScores(dbPool))
 	router.GET("/api/v1/briefings/today", apihttp.BriefingsToday(dbPool))
-	router.GET("/api/v1/alerts", apihttp.Alerts(dbPool))
+	router.GET("/api/v1/alerts", publicCache, apihttp.Alerts(dbPool))
 	router.GET("/api/v1/alerts/:id/action-card", apihttp.AlertActionCardGet(dbPool))
-	router.GET("/api/v1/official-alerts", apihttp.OfficialAlerts(dbPool))
-	router.GET("/api/v1/air-quality/observations", apihttp.AirQualityObservations(dbPool))
+	router.GET("/api/v1/official-alerts", publicCache, apihttp.OfficialAlerts(dbPool))
+	router.GET("/api/v1/air-quality/observations", publicCache, apihttp.AirQualityObservations(dbPool))
 	// Template CSV statis tetap publik (diunduh via <a href> tanpa token).
 	router.GET("/api/v1/contracts/import/template", apihttp.ContractsImportTemplate())
 	router.GET("/api/v1/evacuation-locations/import/template", apihttp.EvacuationImportTemplate())
 
 	// Lokasi evakuasi: informasi keselamatan, publik tanpa login.
-	router.GET("/api/v1/evacuation-locations", apihttp.EvacuationLocationsList(dbPool))
+	router.GET("/api/v1/evacuation-locations", publicCache, apihttp.EvacuationLocationsList(dbPool))
 	router.GET("/api/v1/evacuation-locations/nearest", apihttp.EvacuationLocationsNearest(dbPool))
 
 	// Akun privat — aset personal, entitlement, dan undangan wajib login.
@@ -184,9 +190,9 @@ func main() {
 		assetsAuth.GET("/marine", apihttp.AssetsMarine(dbPool))
 		assetsAuth.GET("/aviation", apihttp.AssetsAviation(dbPool))
 	}
-	router.GET("/api/v1/health/connectors", apihttp.ConnectorHealthHandler(dbPool))
-	router.GET("/api/v1/map/overlays", apihttp.MapRiskOverlays(dbPool))
-	publicMap := router.Group("/api/v1/map/operations")
+	router.GET("/api/v1/health/connectors", publicCache, apihttp.ConnectorHealthHandler(dbPool))
+	router.GET("/api/v1/map/overlays", publicCache, apihttp.MapRiskOverlays(dbPool))
+	publicMap := router.Group("/api/v1/map/operations", publicCache)
 	publicMap.GET("/events", apihttp.OperationMapEvents(dbPool))
 	publicMap.GET("/alerts", apihttp.OperationMapAlerts(dbPool))
 	publicMap.GET("/air-quality", apihttp.OperationMapAirQuality(dbPool))

@@ -8,7 +8,7 @@ import {
 } from '../../lib/api/client'
 import { filterActiveOfficialAlerts, unpackBmkgResults } from './bmkgPresentation'
 
-export const BMKG_REFRESH_INTERVAL_MS = 60_000
+export const BMKG_REFRESH_INTERVAL_MS = 300_000
 
 type EndpointStatus = {
   loaded: boolean
@@ -109,12 +109,18 @@ export function useBmkgWarnings({
     mounted.current = true
     void reload()
     const interval = window.setInterval(() => {
+      if (document.hidden) return
       setNow(Date.now())
       void reload()
     }, refreshIntervalMs)
+    const onVisibilityChange = () => {
+      if (!document.hidden) void reload()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       mounted.current = false
       window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [refreshIntervalMs, reload])
 

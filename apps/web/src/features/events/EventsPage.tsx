@@ -3,7 +3,7 @@ import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import { getEvents, type Event } from '../../lib/api/client'
 
-const REFRESH_INTERVAL_MS = 60_000
+const REFRESH_INTERVAL_MS = 300_000
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
 
@@ -57,9 +57,17 @@ export default function EventsPage() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      if (document.hidden) return
       void load('refresh')
     }, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(intervalId)
+    const onVisibilityChange = () => {
+      if (!document.hidden) void load('refresh')
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [load])
 
   const handleRefresh = useCallback(() => {
