@@ -313,11 +313,14 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		}
 		emailSent := false
 		emailWarning := ""
-		// parsedEmail.Address was validated above via net/mail.ParseAddress
-		// (rejects CR/LF and malformed addresses). Strip CR/LF defensively as
-		// well so no untrusted bytes can reach SMTP headers or the envelope.
-		safeEmail := strings.ReplaceAll(parsedEmail.Address, "\r", "")
-		safeEmail = strings.ReplaceAll(safeEmail, "\n", "")
+		// Guard CR/LF explicitly on the parsed address before it reaches the
+		// SMTP sink (net/mail already rejects such input; this check is
+		// defense in depth and lets static analysis confirm the taint stops).
+		if strings.ContainsAny(parsedEmail.Address, "\r\n") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		safeEmail := parsedEmail.Address
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			address := smtpHost + ":" + smtpPort
 			message := fmt.Sprintf(
