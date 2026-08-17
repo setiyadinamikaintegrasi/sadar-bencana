@@ -314,9 +314,10 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		emailSent := false
 		emailWarning := ""
 		// parsedEmail.Address was validated above via net/mail.ParseAddress
-		// (rejects CR/LF and malformed addresses), so use it for SMTP headers
-		// and envelope instead of the raw request field.
-		safeEmail := parsedEmail.Address
+		// (rejects CR/LF and malformed addresses). Strip CR/LF defensively as
+		// well so no untrusted bytes can reach SMTP headers or the envelope.
+		safeEmail := strings.ReplaceAll(parsedEmail.Address, "\r", "")
+		safeEmail = strings.ReplaceAll(safeEmail, "\n", "")
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			address := smtpHost + ":" + smtpPort
 			message := fmt.Sprintf(
