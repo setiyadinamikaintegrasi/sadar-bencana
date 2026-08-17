@@ -330,7 +330,7 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		// Final guard on the exact value that reaches the SMTP sink: reject
 		// any control characters even though the regex above already forbids
 		// them (defense in depth for the header/envelope path).
-		if strings.ContainsAny(safeEmail, "\r\n") {
+		if strings.Contains(safeEmail, "\r") || strings.Contains(safeEmail, "\n") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
 			return
 		}
