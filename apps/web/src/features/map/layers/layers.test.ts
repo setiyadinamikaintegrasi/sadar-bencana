@@ -47,6 +47,14 @@ describe('public operational map layer adapters', () => {
   it('creates stable event clusters, updates their source data, and removes all artifacts', () => {
     const map = createMap()
     const data = collection('events')
+    // Adapter menambahkan severity_rank sebelum setData (severity 'high' → 3).
+    const enriched = {
+      ...data,
+      features: data.features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, severity_rank: 3 },
+      })),
+    }
 
     eventsLayer.apply(map as never, data)
     eventsLayer.apply(map as never, data)
@@ -54,9 +62,16 @@ describe('public operational map layer adapters', () => {
     eventsLayer.remove(map as never)
 
     expect(eventsLayer.sourceId).toBe('operational-map-events-source')
-    expect(map.addSource).toHaveBeenCalledWith(eventsLayer.sourceId, expect.objectContaining({ cluster: true, data }))
-    expect(source?.setData).toHaveBeenCalledWith(data)
+    expect(map.addSource).toHaveBeenCalledWith(eventsLayer.sourceId, expect.objectContaining({
+      cluster: true,
+      clusterProperties: expect.objectContaining({ severity_rank: expect.any(Array) }),
+      data: enriched,
+    }))
+    expect(source?.setData).toHaveBeenCalledWith(enriched)
     expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-clusters' }))
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-pulse-critical', type: 'circle' }))
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-pulse-high', type: 'circle' }))
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-clusters-pulse', type: 'circle' }))
     expect(map.removeLayer).toHaveBeenCalledWith('operational-map-events-points')
     expect(map.removeSource).toHaveBeenCalledWith(eventsLayer.sourceId)
   })
@@ -69,9 +84,12 @@ describe('public operational map layer adapters', () => {
     expect(officialAlertsLayer.layerIds).toEqual([
       'operational-map-official-alerts-fill',
       'operational-map-official-alerts-outline',
+      'operational-map-official-alerts-outline-extreme',
+      'operational-map-official-alerts-points-pulse',
       'operational-map-official-alerts-points',
     ])
     expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-official-alerts-fill', type: 'fill' }))
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-official-alerts-outline-extreme', type: 'line' }))
     expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-official-alerts-points', type: 'circle' }))
   })
 

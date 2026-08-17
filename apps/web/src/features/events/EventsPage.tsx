@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import SourceBadge from '../../components/SourceBadge'
+import SeverityBadge from '../../components/SeverityBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import { getEvents, type Event } from '../../lib/api/client'
 
 const REFRESH_INTERVAL_MS = 300_000
 
 type Severity = 'Critical' | 'High' | 'Medium' | 'Low'
-
-const severityClasses: Record<Severity, string> = {
-  Low: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30',
-  Medium: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
-  High: 'bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30',
-  Critical: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
-}
 
 function severityFor(magnitude: number): Severity {
   if (magnitude >= 6) return 'Critical'
@@ -233,9 +227,7 @@ export default function EventsPage() {
                           </span>
                         </td>
                         <td className="py-4 pr-6">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[severity]}`}>
-                            {severity}
-                          </span>
+                          <SeverityBadge severity={severity} pulse={severity === 'Critical'} />
                         </td>
                         <td className="py-4 pr-6 align-top">
                           <SourceBadge source={row.source} timestamp={row.created_at} />
@@ -265,9 +257,7 @@ export default function EventsPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${severityClasses[severity]}`}>
-                          {severity}
-                        </span>
+                        <SeverityBadge severity={severity} pulse={severity === 'Critical'} className="px-2.5 py-0.5" />
                         <span className="text-xs font-semibold text-slate-300">
                           M {row.magnitude.toFixed(1)}
                         </span>

@@ -60,3 +60,7 @@ coverage/
 build/
 schema_backup*
 .env.pre-*
+
+# Artefak test Playwright lokal
+apps/web/playwright-report/
+apps/web/test-results/

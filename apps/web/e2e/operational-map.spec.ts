@@ -176,6 +176,9 @@ function ownerToken() {
 
 async function openMap(page: Page): Promise<FixtureState> {
   const fixtures = await installFixtures(page)
+  // Denyut severity (blink JS di OperationalMap) dinonaktifkan agar snapshot
+  // visual deterministik; produk tetap menghormati prefers-reduced-motion.
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Executive Risk Map' })).toBeVisible()
   await expect(page.locator('.operational-map__canvas canvas.maplibregl-canvas')).toBeVisible()
@@ -206,7 +209,7 @@ test('loads the public operational map with visible controls on desktop and mobi
   expectKnownApiRequests(fixtures)
 })
 
-test('shows selected event attribution and the visible truncation notice', async ({ page }) => {
+test('shows selected event attribution and the visible truncation notice', async ({ page }, testInfo) => {
   const fixtures = await openMap(page)
 
   await page.getByRole('button', { name: 'Fokuskan di peta' }).click()
@@ -214,6 +217,21 @@ test('shows selected event attribution and the visible truncation notice', async
   await expect(detailSheet).toBeVisible()
   await expect(detailSheet.getByText('BMKG fixture attribution')).toBeVisible()
   await expect(page.getByText('Hasil dibatasi untuk area ini.')).toBeVisible()
+
+  // Popup detail ringkas di desktop: lebar <= 280px dan <= 30% area peta.
+  // (Mobile memakai bottom-sheet selebar layar — hanya cek porsi tinggi.)
+  const sheetBounds = await detailSheet.boundingBox()
+  const mapBounds = await page.locator('.operational-map__canvas').boundingBox()
+  expect(sheetBounds).not.toBeNull()
+  expect(mapBounds).not.toBeNull()
+  if (testInfo.project.name === 'desktop-chromium') {
+    expect(sheetBounds!.width).toBeLessThanOrEqual(280)
+    expect((sheetBounds!.width * sheetBounds!.height) / (mapBounds!.width * mapBounds!.height)).toBeLessThanOrEqual(0.3)
+  } else {
+    // Bottom-sheet mobile: selebar layar, tinggi dibatasi ~32% peta.
+    expect((sheetBounds!.width * sheetBounds!.height) / (mapBounds!.width * mapBounds!.height)).toBeLessThanOrEqual(0.35)
+  }
+
   expectKnownApiRequests(fixtures)
 })
 
@@ -269,6 +287,8 @@ test('falls back when WebGL is unavailable and keeps mobile navigation unobscure
     }
   })
   const fixtures = await installFixtures(page)
+  // Snapshot deterministik: tanpa animasi CSS/JS severity.
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
 
   const fallback = page.getByRole('alert')
