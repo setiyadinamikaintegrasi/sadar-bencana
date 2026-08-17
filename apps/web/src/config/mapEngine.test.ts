@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { getOperationalMapEngine } from './mapEngine'
 
 describe('getOperationalMapEngine', () => {
@@ -7,8 +7,6 @@ describe('getOperationalMapEngine', () => {
   })
 
   it('defaults to Leaflet when the build flag is omitted', () => {
-    // Pastikan env dari .env.local (mis. maplibre untuk dev) tidak bocor.
-    vi.stubEnv('VITE_OPERATIONAL_MAP_ENGINE', '')
     expect(getOperationalMapEngine(undefined)).toBe('leaflet')
   })
 
@@ -16,6 +14,4 @@ describe('getOperationalMapEngine', () => {
     expect(getOperationalMapEngine('MAPLIBRE')).toBe('leaflet')
     expect(getOperationalMapEngine('leaflet')).toBe('leaflet')
   })
-
-  afterEach(() => vi.unstubAllEnvs())
 })

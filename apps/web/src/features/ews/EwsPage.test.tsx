@@ -55,6 +55,7 @@ beforeEach(() => {
     loading: false,
     signIn: vi.fn(),
     signUp: vi.fn(),
+    resendConfirmation: vi.fn(),
     signOut: vi.fn(),
   })
   notifications.mockResolvedValue([])
