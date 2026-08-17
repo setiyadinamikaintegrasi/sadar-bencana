@@ -22,7 +22,10 @@ bash infra/local/init-db.sh
 
 # Opsional — GoTrue (paritas penuh production; flow auth utama via API
 # /auth/register|login|me TIDAK butuh service ini)
-docker compose -f infra/local/docker-compose.yml --profile auth up -d
+docker compose -f infra/local/docker-compose.yml up -d postgres
+docker exec -i sadar-postgres psql -U sadar -d sadar_bencana < infra/local/gotrue-bootstrap.sql
+docker compose -f infra/local/docker-compose.yml --profile auth up -d gotrue
+#   GOTRUE_JWT_SECRET wajib sama dengan SUPABASE_JWT_SECRET (lihat infra/local/.env)
 ```
 
 ## Paritas dengan production
