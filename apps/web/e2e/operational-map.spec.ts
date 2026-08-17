@@ -209,7 +209,7 @@ test('loads the public operational map with visible controls on desktop and mobi
   expectKnownApiRequests(fixtures)
 })
 
-test('shows selected event attribution and the visible truncation notice', async ({ page }) => {
+test('shows selected event attribution and the visible truncation notice', async ({ page }, testInfo) => {
   const fixtures = await openMap(page)
 
   await page.getByRole('button', { name: 'Fokuskan di peta' }).click()
@@ -217,6 +217,21 @@ test('shows selected event attribution and the visible truncation notice', async
   await expect(detailSheet).toBeVisible()
   await expect(detailSheet.getByText('BMKG fixture attribution')).toBeVisible()
   await expect(page.getByText('Hasil dibatasi untuk area ini.')).toBeVisible()
+
+  // Popup detail ringkas di desktop: lebar <= 280px dan <= 30% area peta.
+  // (Mobile memakai bottom-sheet selebar layar — hanya cek porsi tinggi.)
+  const sheetBounds = await detailSheet.boundingBox()
+  const mapBounds = await page.locator('.operational-map__canvas').boundingBox()
+  expect(sheetBounds).not.toBeNull()
+  expect(mapBounds).not.toBeNull()
+  if (testInfo.project.name === 'desktop-chromium') {
+    expect(sheetBounds!.width).toBeLessThanOrEqual(280)
+    expect((sheetBounds!.width * sheetBounds!.height) / (mapBounds!.width * mapBounds!.height)).toBeLessThanOrEqual(0.3)
+  } else {
+    // Bottom-sheet mobile: selebar layar, tinggi dibatasi ~32% peta.
+    expect((sheetBounds!.width * sheetBounds!.height) / (mapBounds!.width * mapBounds!.height)).toBeLessThanOrEqual(0.35)
+  }
+
   expectKnownApiRequests(fixtures)
 })
 

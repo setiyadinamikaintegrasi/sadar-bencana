@@ -85,7 +85,7 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
           <h2>{properties.label}</h2>
         </div>
         <button type="button" className="operational-map__icon-button" aria-label="Tutup detail" title="Tutup detail" onClick={onClose}>
-          <X aria-hidden="true" size={18} />
+          <X aria-hidden="true" size={14} />
         </button>
       </header>
       <dl className="operational-map__detail-list">
@@ -120,7 +120,7 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
       </dl>
       {sourceUrl ? (
         <a className="operational-map__source-link" href={sourceUrl} target="_blank" rel="noreferrer noopener">
-          Buka sumber <ExternalLink aria-hidden="true" size={15} />
+          Buka sumber <ExternalLink aria-hidden="true" size={12} />
         </a>
       ) : null}
     </aside>
