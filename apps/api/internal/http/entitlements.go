@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/smtp"
+	"regexp"
 	"strings"
 	"time"
 
@@ -251,10 +253,25 @@ type invitationBody struct {
 	Role  string `json:"role"`
 }
 
+// emailAddrRe admits only the RFC 5322 local/domain safe printable charset.
+// Control characters (CR/LF) are structurally impossible to match, which
+// prevents SMTP header injection through the invitation email field.
+var emailAddrRe = regexp.MustCompile(`^[A-Za-z0-9.!#$%&'*+/=?^_\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+$`)
+
 func OrganizationInviteCreate(db *sql.DB, smtpHost, smtpPort, smtpUser, smtpPassword, smtpFrom string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body invitationBody
-		if err := c.ShouldBindJSON(&body); err != nil || !strings.Contains(body.Email, "@") {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		body.Email = strings.TrimSpace(body.Email)
+		if body.Email == "" || strings.ContainsAny(body.Email, "\r\n") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		parsedEmail, err := mail.ParseAddress(body.Email)
+		if err != nil || parsedEmail.Address != body.Email {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
 			return
 		}
@@ -291,7 +308,7 @@ FROM organizations WHERE id=$1`, orgID).Scan(&memberCount, &pendingCount, &maxUs
 		token := base64.RawURLEncoding.EncodeToString(raw)
 		hash := sha256.Sum256([]byte(token))
 		var id string
-		err := db.QueryRowContext(c.Request.Context(), `
+		err = db.QueryRowContext(c.Request.Context(), `
 INSERT INTO organization_invitations
   (organization_id,email,role,token_hash,expires_at,invited_by)
 VALUES ($1,lower($2),$3,$4,now()+interval '7 days',$5)
@@ -302,18 +319,41 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		}
 		emailSent := false
 		emailWarning := ""
+		// Validate the parsed address against a strict email charset. The
+		// regex only admits alphanumerics and the safe printable set, so
+		// CR/LF or any control byte can never reach the SMTP sink.
+		if !emailAddrRe.MatchString(parsedEmail.Address) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		safeEmail := parsedEmail.Address
+		// Final guard on the exact value that reaches the SMTP sink: reject
+		// any control characters even though the regex above already forbids
+		// them (defense in depth for the header/envelope path).
+		if strings.Contains(safeEmail, "\r") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		if strings.Contains(safeEmail, "\n") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			address := smtpHost + ":" + smtpPort
+			// Build the To header through net/mail.Address so the address is
+			// rendered with proper quoting/encoding and can never smuggle
+			// raw CR/LF into the message headers.
+			toHeader := (&mail.Address{Address: parsedEmail.Address}).String()
 			message := fmt.Sprintf(
 				"From: %s\r\nTo: %s\r\nSubject: Undangan organisasi SadarBencana\r\n"+
 					"Content-Type: text/plain; charset=UTF-8\r\n\r\n"+
 					"Anda diundang bergabung ke organisasi SadarBencana.\n\n"+
 					"Masuk ke sadarbencana.id, buka Daftar Risiko > Portofolio Perusahaan, "+
 					"lalu masukkan kode berikut:\n\n%s\n\nKode berlaku 7 hari.\n",
-				smtpFrom, body.Email, token,
+				smtpFrom, toHeader, token,
 			)
 			auth := smtp.PlainAuth("", smtpUser, smtpPassword, smtpHost)
-			if err := smtp.SendMail(address, auth, smtpFrom, []string{body.Email}, []byte(message)); err == nil {
+			if err := smtp.SendMail(address, auth, smtpFrom, []string{parsedEmail.Address}, []byte(message)); err == nil {
 				emailSent = true
 			} else {
 				emailWarning = "email gagal dikirim; salin kode undangan secara manual"
