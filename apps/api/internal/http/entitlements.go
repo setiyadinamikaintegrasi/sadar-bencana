@@ -330,22 +330,30 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		// Final guard on the exact value that reaches the SMTP sink: reject
 		// any control characters even though the regex above already forbids
 		// them (defense in depth for the header/envelope path).
-		if strings.Contains(safeEmail, "\r") || strings.Contains(safeEmail, "\n") {
+		if strings.Contains(safeEmail, "\r") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
+		if strings.Contains(safeEmail, "\n") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
 			return
 		}
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			address := smtpHost + ":" + smtpPort
+			// Build the To header through net/mail.Address so the address is
+			// rendered with proper quoting/encoding and can never smuggle
+			// raw CR/LF into the message headers.
+			toHeader := (&mail.Address{Address: parsedEmail.Address}).String()
 			message := fmt.Sprintf(
 				"From: %s\r\nTo: %s\r\nSubject: Undangan organisasi SadarBencana\r\n"+
 					"Content-Type: text/plain; charset=UTF-8\r\n\r\n"+
 					"Anda diundang bergabung ke organisasi SadarBencana.\n\n"+
 					"Masuk ke sadarbencana.id, buka Daftar Risiko > Portofolio Perusahaan, "+
 					"lalu masukkan kode berikut:\n\n%s\n\nKode berlaku 7 hari.\n",
-				smtpFrom, safeEmail, token,
+				smtpFrom, toHeader, token,
 			)
 			auth := smtp.PlainAuth("", smtpUser, smtpPassword, smtpHost)
-			if err := smtp.SendMail(address, auth, smtpFrom, []string{safeEmail}, []byte(message)); err == nil {
+			if err := smtp.SendMail(address, auth, smtpFrom, []string{parsedEmail.Address}, []byte(message)); err == nil {
 				emailSent = true
 			} else {
 				emailWarning = "email gagal dikirim; salin kode undangan secara manual"
