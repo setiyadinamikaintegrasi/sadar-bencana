@@ -1,0 +1,54 @@
+# =============================================================================
+# docker-compose.db.yml — Sadar Bencana (production DB stack on this VPS)
+# PostgreSQL 17 + PostGIS (matching Supabase PG 17.6 backup)
+# Usage: docker compose -f /root/infra/docker-compose.db.yml up -d
+# =============================================================================
+name: sadar-db
+
+networks:
+  sadar-net:
+    name: sadar-net
+    driver: bridge
+
+volumes:
+  sadar-pgdata:
+    driver: local
+
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: sadar-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: sadar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: sadar_bencana
+      # Tune for 3.6GB RAM VPS
+      PGDATA: /var/lib/postgresql/data
+    command:
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=60
+    volumes:
+      - sadar-pgdata:/var/lib/postgresql/data
+    networks:
+      - sadar-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sadar -d sadar_bencana"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
