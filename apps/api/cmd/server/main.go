@@ -100,16 +100,6 @@ func main() {
 		account.POST("/api/v1/learning/modules/:module_id/complete", apihttp.LearningModuleComplete(dbPool))
 	}
 
-	// Autentikasi lokal (pengganti Supabase Auth untuk deploy mandiri).
-	// Login/register menerbitkan JWT HS256 dengan klaim yang sama (sub/email)
-	// sehingga middleware SupabaseAuth di atas tetap berlaku tanpa perubahan.
-	authLocal := router.Group("/api/v1/auth")
-	{
-		authLocal.POST("/register", apihttp.LocalAuthRegister(dbPool, cfg.SupabaseJWTSecret, cfg.TurnstileSecretKey))
-		authLocal.POST("/login", apihttp.LocalAuthLogin(dbPool, cfg.SupabaseJWTSecret, cfg.TurnstileSecretKey))
-		authLocal.GET("/me", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL), apihttp.LocalAuthMe(dbPool))
-	}
-
 	// Generative AI consumes a paid upstream service. Require a verified
 	// Supabase session and enforce per-account usage limits.
 	ai := router.Group("/api/v1/ai", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
