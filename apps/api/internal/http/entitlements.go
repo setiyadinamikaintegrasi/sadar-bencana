@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/smtp"
+	"regexp"
 	"strings"
 	"time"
 
@@ -252,6 +253,11 @@ type invitationBody struct {
 	Role  string `json:"role"`
 }
 
+// emailAddrRe admits only the RFC 5322 local/domain safe printable charset.
+// Control characters (CR/LF) are structurally impossible to match, which
+// prevents SMTP header injection through the invitation email field.
+var emailAddrRe = regexp.MustCompile(`^[A-Za-z0-9.!#$%&'*+/=?^_\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+$`)
+
 func OrganizationInviteCreate(db *sql.DB, smtpHost, smtpPort, smtpUser, smtpPassword, smtpFrom string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body invitationBody
@@ -313,14 +319,21 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		}
 		emailSent := false
 		emailWarning := ""
-		// Guard CR/LF explicitly on the parsed address before it reaches the
-		// SMTP sink (net/mail already rejects such input; this check is
-		// defense in depth and lets static analysis confirm the taint stops).
-		if strings.ContainsAny(parsedEmail.Address, "\r\n") {
+		// Validate the parsed address against a strict email charset. The
+		// regex only admits alphanumerics and the safe printable set, so
+		// CR/LF or any control byte can never reach the SMTP sink.
+		if !emailAddrRe.MatchString(parsedEmail.Address) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
 			return
 		}
 		safeEmail := parsedEmail.Address
+		// Final guard on the exact value that reaches the SMTP sink: reject
+		// any control characters even though the regex above already forbids
+		// them (defense in depth for the header/envelope path).
+		if strings.ContainsAny(safeEmail, "\r\n") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+			return
+		}
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			address := smtpHost + ":" + smtpPort
 			message := fmt.Sprintf(
