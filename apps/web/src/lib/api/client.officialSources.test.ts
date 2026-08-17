@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { supabase } from '../supabase'
 import { activateOfficialSource } from './client'
+import { AUTH_TOKEN_STORAGE_KEY } from '../auth/token'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -8,10 +8,7 @@ afterEach(() => {
 
 describe('official source activation API', () => {
   it('sends the approval reference and note as JSON', async () => {
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: null },
-      error: null,
-    })
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -34,10 +31,7 @@ describe('official source activation API', () => {
   })
 
   it('rejects blank approval metadata before making a request', async () => {
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: null },
-      error: null,
-    })
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
     const fetchMock = vi.spyOn(globalThis, 'fetch')
 
     await expect(activateOfficialSource('bmkg_air_quality', {

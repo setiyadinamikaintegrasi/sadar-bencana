@@ -1,4 +1,4 @@
-import { supabase } from '../supabase'
+import { readStoredToken, storeToken } from '../auth/token'
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
 
@@ -176,20 +176,16 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
+  const token = readStoredToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
   const res = await fetch(input, { ...init, headers })
 
   if (res.status === 401) {
-    const { data: refreshData } = await supabase.auth.refreshSession()
-    const freshToken = refreshData.session?.access_token
-    if (freshToken) {
-      const retryHeaders = new Headers(init?.headers)
-      retryHeaders.set('Authorization', `Bearer ${freshToken}`)
-      return fetch(input, { ...init, headers: retryHeaders })
-    }
+    // Token lokal kedaluwarsa/ditolak: buang dan coba sekali lagi tanpa auth.
+    storeToken(null)
+    const retryHeaders = new Headers(init?.headers)
+    return fetch(input, { ...init, headers: retryHeaders })
   }
 
   return res
@@ -221,8 +217,7 @@ export type MapOverlay = {
 }
 
 export async function getMapOverlays(): Promise<MapOverlay[]> {
-  const { data } = await supabase.auth.getSession()
-  const path = data.session?.access_token ? '/map/overlays/me' : '/map/overlays'
+  const path = readStoredToken() ? '/map/overlays/me' : '/map/overlays'
   const response = await request<{ data: MapOverlay[] }>(path)
   return response.data
 }
