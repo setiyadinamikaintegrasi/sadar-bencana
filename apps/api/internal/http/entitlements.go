@@ -313,6 +313,10 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 		}
 		emailSent := false
 		emailWarning := ""
+		// parsedEmail.Address was validated above via net/mail.ParseAddress
+		// (rejects CR/LF and malformed addresses), so use it for SMTP headers
+		// and envelope instead of the raw request field.
+		safeEmail := parsedEmail.Address
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			address := smtpHost + ":" + smtpPort
 			message := fmt.Sprintf(
@@ -321,10 +325,10 @@ RETURNING id`, orgID, body.Email, body.Role, hex.EncodeToString(hash[:]), AuthUs
 					"Anda diundang bergabung ke organisasi SadarBencana.\n\n"+
 					"Masuk ke sadarbencana.id, buka Daftar Risiko > Portofolio Perusahaan, "+
 					"lalu masukkan kode berikut:\n\n%s\n\nKode berlaku 7 hari.\n",
-				smtpFrom, body.Email, token,
+				smtpFrom, safeEmail, token,
 			)
 			auth := smtp.PlainAuth("", smtpUser, smtpPassword, smtpHost)
-			if err := smtp.SendMail(address, auth, smtpFrom, []string{body.Email}, []byte(message)); err == nil {
+			if err := smtp.SendMail(address, auth, smtpFrom, []string{safeEmail}, []byte(message)); err == nil {
 				emailSent = true
 			} else {
 				emailWarning = "email gagal dikirim; salin kode undangan secara manual"
