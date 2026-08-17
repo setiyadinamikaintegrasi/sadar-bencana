@@ -34,3 +34,15 @@ paths = [
 regexes = [
   '''^fixture\.eyJ''',
 ]
+
+[[allowlists]]
+description = "JWT placeholder examples introduced with the self-hosted auth env docs"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = [
+  "15dd9d04769a4659e378f5d5a9a311237fa87ca7",
+]
+paths = [
+  '''README\.md$''',
+  '''\.env\.example$''',
+]
