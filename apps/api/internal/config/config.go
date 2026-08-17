@@ -19,6 +19,7 @@ type Config struct {
 	WorkerAPIToken            string
 	SupabaseJWTSecret         string
 	SupabaseJWKSURL           string
+	TurnstileSecretKey        string
 	RiskFreeLimit             int
 	AIBriefingTimeout         time.Duration
 	AIExecutiveCacheTTL       time.Duration
@@ -58,6 +59,7 @@ func Load() Config {
 		WorkerAPIToken:            getEnv("WORKER_API_TOKEN", ""),
 		SupabaseJWTSecret:         getEnv("SUPABASE_JWT_SECRET", ""),
 		SupabaseJWKSURL:           supabaseJWKSURL(),
+		TurnstileSecretKey:        getEnv("TURNSTILE_SECRET_KEY", ""),
 		RiskFreeLimit:             getEnvInt("RISK_FREE_LIMIT", 0),
 		AIBriefingTimeout:         getEnvDuration("AI_BRIEFING_TIMEOUT", 150*time.Second),
 		AIExecutiveCacheTTL:       getEnvDuration("AI_EXECUTIVE_CACHE_TTL", 6*time.Hour),

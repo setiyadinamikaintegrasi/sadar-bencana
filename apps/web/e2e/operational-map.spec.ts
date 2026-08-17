@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 
 const FIXTURE_ACCESS_TOKEN = 'fixture.eyJzdWIiOiJmaXh0dXJlLW93bmVyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature'
 const FIXTURE_BEARER_TOKEN = `Bearer ${FIXTURE_ACCESS_TOKEN}`
-const FIXTURE_SUPABASE_STORAGE_KEY = 'sb-fixture-auth-token'
+const AUTH_TOKEN_STORAGE_KEY = 'sadar_auth_token'
 const LOCAL_ORIGIN = 'http://127.0.0.1:4173'
 const FIXTURE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 
@@ -56,6 +56,15 @@ function collection(layer: string, features: unknown[], truncated = false) {
 }
 
 function responseFor(pathname: string): unknown | undefined {
+  if (pathname === '/api/v1/auth/me') {
+    return {
+      data: {
+        id: 'fixture-owner',
+        email: 'owner@example.test',
+        role: 'user',
+      },
+    }
+  }
   if (pathname === '/api/v1/events') {
     return {
       data: [{
@@ -160,23 +169,9 @@ function expectKnownApiRequests(state: FixtureState): void {
   expect(state.unknownApiPaths).toEqual([])
 }
 
-function ownerSession() {
-  return {
-    access_token: FIXTURE_ACCESS_TOKEN,
-    refresh_token: 'fixture-refresh-token',
-    expires_at: 4_102_444_800,
-    expires_in: 2_000_000_000,
-    token_type: 'bearer',
-    user: {
-      id: 'fixture-owner',
-      aud: 'authenticated',
-      role: 'authenticated',
-      email: 'owner@example.test',
-      app_metadata: {},
-      user_metadata: {},
-      created_at: '2026-08-02T00:00:00Z',
-    },
-  }
+function ownerToken() {
+  // Token JWT lokal (auth mandiri): cukup raw string di localStorage.
+  return FIXTURE_ACCESS_TOKEN
 }
 
 async function openMap(page: Page): Promise<FixtureState> {
@@ -236,9 +231,9 @@ test('rejects private map feeds without the exact fixture bearer token', async (
 })
 
 test('loads owner-only layers for a logged-in owner', async ({ page }) => {
-  await page.addInitScript((session) => {
-    window.localStorage.setItem('sb-fixture-auth-token', JSON.stringify(session))
-  }, ownerSession())
+  await page.addInitScript((token) => {
+    window.localStorage.setItem('sadar_auth_token', token)
+  }, ownerToken())
   const ownerRequests: string[] = []
   page.on('request', (request) => {
     const pathname = new URL(request.url()).pathname
