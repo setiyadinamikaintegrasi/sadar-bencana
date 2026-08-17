@@ -1,0 +1,59 @@
+# =============================================================================
+# docker-compose.auth.yml — GoTrue (Supabase Auth) self-hosted
+# Usage: docker compose -f /root/infra/docker-compose.auth.yml up -d
+# =============================================================================
+name: sadar-auth
+
+networks:
+  sadar-net:
+    name: sadar-net
+    external: true
+
+services:
+  gotrue:
+    image: supabase/gotrue:v2.181.0
+    container_name: sadar-gotrue
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9999:9999"
+    networks:
+      - sadar-net
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${GOTRUE_API_EXTERNAL_URL:-http://127.0.0.1:9999}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: ${GOTRUE_DB_URL:?Set GOTRUE_DB_URL}
+      GOTRUE_SITE_URL: ${GOTRUE_SITE_URL:-https://sadarbencana.id}
+      GOTRUE_URI_ALLOW_LIST: ${GOTRUE_URI_ALLOW_LIST:-https://sadarbencana.id,http://localhost:3001}
+      GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:?Set GOTRUE_JWT_SECRET}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM:-noreply@sadarbencana.id}
+      GOTRUE_MAILER_URLPATHS_INVITE: /verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /verify
+      GOTRUE_SECURITY_CAPTCHA_ENABLED: "false"
+      GOTRUE_PASSWORD_MIN_LENGTH: "8"
+      GOTRUE_LOG_LEVEL: warn
+      GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9999/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
