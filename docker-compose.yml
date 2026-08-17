@@ -62,6 +62,8 @@ services:
       WORKER_API_TOKEN: ${WORKER_API_TOKEN:?WORKER_API_TOKEN is required}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - sadar-net
     ports:
       - "127.0.0.1:8001:8001"
     healthcheck:
@@ -106,6 +108,8 @@ services:
       CONNECTOR_EVACUATION_OSM_ENABLED: ${CONNECTOR_EVACUATION_OSM_ENABLED:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - sadar-net
     ports:
       - "127.0.0.1:8002:8002"
 
@@ -124,8 +128,15 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - sadar-net
     ports:
       - "127.0.0.1:3001:3001"
 
 volumes:
   sadar-redis-data:
+
+networks:
+  sadar-net:
+    name: sadar-net
+    external: true
