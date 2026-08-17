@@ -2,9 +2,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
-import RiskMap from '../../components/RiskMap'
+import RiskMap, {
+  ExecutiveMapControls,
+  isOverlayActiveAt,
+  nextOverlayFocusRequest,
+  operationalMapPerils,
+  type OverlayFocusRequest,
+  type PerilFilter,
+  type RiskOverlayClass,
+} from '../../components/RiskMap'
+import OperationalMap, { type OperationalMapFocusRequest } from '../map/OperationalMap'
+import { sourceQualifiedOperationalMapID } from '../map/types'
+import { getOperationalMapEngine } from '../../config/mapEngine'
+import { useAuth } from '../../lib/auth/AuthProvider'
 import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
+import BmkgWarningsPanel from './BmkgWarningsPanel'
+import { toOfficialAlertOverlays } from './bmkgPresentation'
+import { useBmkgWarnings } from './useBmkgWarnings'
 import {
   getAlerts,
   getConnectorHealth,
@@ -58,6 +73,10 @@ function severityFor(magnitude: number): Severity {
   if (magnitude >= 5) return 'High'
   if (magnitude >= 4) return 'Medium'
   return 'Low'
+}
+
+function isProductionBmkgSource(source: string): boolean {
+  return source.trim().toLowerCase() === 'bmkg'
 }
 
 function formatRelativeTime(dateStr: string | null): string {
@@ -132,7 +151,23 @@ function connectorStatusClass(status: ConnectorHealth['status']): string {
   return 'bg-rose-500/15 text-rose-300 ring-rose-400/30'
 }
 
-export default function ExecutiveOverview() {
+function overlayGeometry(overlay: MapOverlay): GeoJSON.Geometry | undefined {
+  if (overlay.geometry) return overlay.geometry as GeoJSON.Geometry
+  if (overlay.latitude != null && overlay.longitude != null) {
+    return { type: 'Point', coordinates: [overlay.longitude, overlay.latitude] }
+  }
+  return undefined
+}
+
+export default function ExecutiveOverview({
+  initialOfficialAlertFocus = null,
+  onOfficialAlertFocusCleared,
+}: {
+  initialOfficialAlertFocus?: OverlayFocusRequest | null
+  onOfficialAlertFocusCleared: () => void
+}) {
+  const { session } = useAuth()
+  const mapEngine = getOperationalMapEngine()
   const [events, setEvents] = useState<Event[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [news, setNews] = useState<NewsItem[]>([])
@@ -140,13 +175,23 @@ export default function ExecutiveOverview() {
   const [riskScores, setRiskScores] = useState<RiskScore[]>([])
   const [connectors, setConnectors] = useState<ConnectorHealth[]>([])
   const [mapOverlays, setMapOverlays] = useState<MapOverlay[]>([])
+  const bmkg = useBmkgWarnings()
+  const reloadBmkg = bmkg.reload
+  const [officialAlertFocus, setOfficialAlertFocus] = useState<OverlayFocusRequest | null>(
+    initialOfficialAlertFocus,
+  )
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [newsLoading, setNewsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [minMagnitude, setMinMagnitude] = useState(0)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
-  const [activePerilFilter, setActivePerilFilter] = useState('all')
+  const [eventFocusRequest, setEventFocusRequest] = useState<OperationalMapFocusRequest | null>(null)
+  const [activePerilFilter, setActivePerilFilter] = useState<PerilFilter>('all')
+  const [timelineHoursAgo, setTimelineHoursAgo] = useState(0)
+  const [visibleOverlayClasses, setVisibleOverlayClasses] = useState<Set<RiskOverlayClass>>(
+    () => new Set(['official', 'static_risk', 'watch_zone']),
+  )
   const [monitoringDeskHeight, setMonitoringDeskHeight] = useState<number | null>(null)
   const monitoringDeskRef = useRef<HTMLDivElement>(null)
 
@@ -195,6 +240,16 @@ export default function ExecutiveOverview() {
   }, [load, loadNews])
 
   useEffect(() => {
+    if (!initialOfficialAlertFocus) return
+    setOfficialAlertFocus(initialOfficialAlertFocus)
+    onOfficialAlertFocusCleared()
+  }, [
+    initialOfficialAlertFocus?.id,
+    initialOfficialAlertFocus?.nonce,
+    onOfficialAlertFocusCleared,
+  ])
+
+  useEffect(() => {
     const monitoringDesk = monitoringDeskRef.current
     if (!monitoringDesk) return
 
@@ -211,14 +266,23 @@ export default function ExecutiveOverview() {
   const handleRefresh = useCallback(() => {
     void load('refresh')
     void loadNews()
-  }, [load, loadNews])
+    void reloadBmkg()
+  }, [load, loadNews, reloadBmkg])
 
   const handleEventClick = useCallback((event: Event) => {
+    setOfficialAlertFocus(null)
+    onOfficialAlertFocusCleared()
     setSelectedEvent(event)
-  }, [])
+    setEventFocusRequest((current) => ({
+      id: sourceQualifiedOperationalMapID(event.source, event.event_id),
+      geometry: { type: 'Point', coordinates: [event.longitude, event.latitude] },
+      nonce: (current?.nonce ?? 0) + 1,
+    }))
+  }, [onOfficialAlertFocusCleared])
 
   const handleClearSelection = useCallback(() => {
     setSelectedEvent(null)
+    setEventFocusRequest(null)
   }, [])
 
   const filteredEvents = useMemo(
@@ -235,7 +299,7 @@ export default function ExecutiveOverview() {
     return events
       .filter((event) => {
         const eventType = event.event_type.toLowerCase()
-        return event.source.toLowerCase().includes('bmkg')
+        return isProductionBmkgSource(event.source)
           && (eventType.includes('earthquake') || eventType.includes('quake'))
       })
       .sort(
@@ -247,8 +311,115 @@ export default function ExecutiveOverview() {
   const handleFocusLatestEarthquake = useCallback(() => {
     if (!latestBmkgEarthquake) return
     setActivePerilFilter('earthquake')
-    setSelectedEvent(latestBmkgEarthquake)
-  }, [latestBmkgEarthquake])
+    handleEventClick(latestBmkgEarthquake)
+  }, [handleEventClick, latestBmkgEarthquake])
+
+  const handleFocusOfficialAlert = useCallback((id: string) => {
+    setSelectedEvent(null)
+    setEventFocusRequest(null)
+    setOfficialAlertFocus((current) => nextOverlayFocusRequest(current, id))
+  }, [])
+
+  const combinedMapOverlays = useMemo(() => {
+    const overlaysById = new Map(mapOverlays.map((overlay) => [overlay.id, overlay]))
+    toOfficialAlertOverlays([...bmkg.weatherAlerts, ...bmkg.airQualityAlerts]).forEach((overlay) => {
+      overlaysById.set(overlay.id, overlay)
+    })
+    return Array.from(overlaysById.values())
+  }, [bmkg.airQualityAlerts, bmkg.weatherAlerts, mapOverlays])
+
+  const mapTime = useMemo(
+    () => timelineHoursAgo === 0 ? null : new Date(Date.now() - timelineHoursAgo * 60 * 60 * 1000).toISOString(),
+    [timelineHoursAgo],
+  )
+  const visibleOperationalLayers = useMemo(() => {
+    const layers: Array<'events' | 'official-alerts' | 'air-quality'> = []
+    if (activePerilFilter !== 'news') layers.push('events')
+    if (visibleOverlayClasses.has('official')) layers.push('official-alerts')
+    layers.push('air-quality')
+    return layers
+  }, [activePerilFilter, visibleOverlayClasses])
+  const operationalPrivateLayers = useMemo(() => {
+    if (!session) return []
+    return visibleOverlayClasses.has('watch_zone')
+      ? (['watch-zones', 'personal-assets'] as const)
+      : (['personal-assets'] as const)
+  }, [session, visibleOverlayClasses])
+  const operationalLocalOverlay = useMemo<GeoJSON.FeatureCollection>(() => {
+    const features: GeoJSON.Feature[] = []
+    if (visibleOverlayClasses.has('static_risk')) {
+      combinedMapOverlays
+        .filter((overlay) => overlay.layer_class === 'static_risk')
+        .forEach((overlay) => {
+          const geometry = overlayGeometry(overlay)
+          if (geometry) features.push({ type: 'Feature', id: overlay.id, geometry, properties: { kind: 'static-risk', label: overlay.label } })
+        })
+    }
+    news
+      .filter((item) => item.lat != null && item.lon != null)
+      .slice(0, activePerilFilter === 'news' ? 60 : 20)
+      .forEach((item) => features.push({
+        type: 'Feature', id: `news-${item.id}`, geometry: { type: 'Point', coordinates: [item.lon!, item.lat!] }, properties: { kind: 'news', label: item.title },
+      }))
+    return { type: 'FeatureCollection', features }
+  }, [activePerilFilter, combinedMapOverlays, news, visibleOverlayClasses])
+  const operationalFocusRequest = useMemo<OperationalMapFocusRequest | null>(() => {
+    if (eventFocusRequest) return eventFocusRequest
+    if (!officialAlertFocus) return null
+    const alert = [...bmkg.weatherAlerts, ...bmkg.airQualityAlerts].find((item) => item.id === officialAlertFocus.id)
+    if (alert) {
+      const geometry = alert.area_geojson as GeoJSON.Geometry | null
+      return {
+        id: sourceQualifiedOperationalMapID(alert.source, alert.source_alert_id),
+        geometry: geometry ?? (alert.latitude != null && alert.longitude != null
+          ? { type: 'Point', coordinates: [alert.longitude, alert.latitude] }
+          : undefined),
+        nonce: officialAlertFocus.nonce,
+      }
+    }
+    const overlay = combinedMapOverlays.find((item) => item.id === officialAlertFocus.id)
+    return overlay ? { geometry: overlayGeometry(overlay), nonce: officialAlertFocus.nonce } : null
+  }, [bmkg.airQualityAlerts, bmkg.weatherAlerts, combinedMapOverlays, eventFocusRequest, officialAlertFocus])
+
+  const toggleOverlayClass = useCallback((layerClass: RiskOverlayClass) => {
+    setVisibleOverlayClasses((current) => {
+      const next = new Set(current)
+      if (next.has(layerClass)) next.delete(layerClass)
+      else next.add(layerClass)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!officialAlertFocus) return
+    const warningStateConfirmed = !loading
+      && !bmkg.loading
+      && bmkg.status.weather.loaded
+      && !bmkg.status.weather.uncertain
+      && bmkg.status.air_quality.loaded
+      && !bmkg.status.air_quality.uncertain
+    if (!warningStateConfirmed) return
+    const focusedOverlay = combinedMapOverlays.find(
+      (overlay) => overlay.id === officialAlertFocus.id && overlay.layer_class === 'official',
+    )
+    if (!focusedOverlay || !isOverlayActiveAt(focusedOverlay, bmkg.now)) {
+      setOfficialAlertFocus(null)
+      onOfficialAlertFocusCleared()
+    }
+  }, [
+    bmkg.airQualityAlerts,
+    bmkg.loading,
+    bmkg.now,
+    bmkg.status.air_quality.loaded,
+    bmkg.status.air_quality.uncertain,
+    bmkg.status.weather.loaded,
+    bmkg.status.weather.uncertain,
+    bmkg.weatherAlerts,
+    combinedMapOverlays,
+    loading,
+    onOfficialAlertFocusCleared,
+    officialAlertFocus,
+  ])
 
   const unacknowledgedAlerts = useMemo(
     () => alerts.filter((alert) => !alert.acknowledged).length,
@@ -412,16 +583,55 @@ export default function ExecutiveOverview() {
             Loading map…
           </div>
         ) : (
-          <RiskMap
-            events={events}
-            news={news}
-            overlays={mapOverlays}
-            activePerilFilter={activePerilFilter}
-            onFilterChange={setActivePerilFilter}
-            onEventClick={handleEventClick}
-            selectedEvent={selectedEvent}
-            height="min(62vh, 560px)"
-          />
+          <>
+            <ExecutiveMapControls
+              events={events}
+              news={news}
+              activePerilFilter={activePerilFilter}
+              onFilterChange={setActivePerilFilter}
+              visibleOverlayClasses={visibleOverlayClasses}
+              onOverlayClassToggle={toggleOverlayClass}
+              timelineHoursAgo={timelineHoursAgo}
+              onTimelineChange={setTimelineHoursAgo}
+            />
+            {mapEngine === 'maplibre' ? (
+              <OperationalMap
+                mode="viewer"
+                initialLayers={['events', 'official-alerts', 'air-quality']}
+                visibleLayers={visibleOperationalLayers}
+                showLegend
+                perils={operationalMapPerils(activePerilFilter)}
+                mapTime={mapTime}
+                authenticated={Boolean(session)}
+                privateOwnerKey={session?.user.id}
+                privateLayers={operationalPrivateLayers}
+                localOverlay={operationalLocalOverlay}
+                focusRequest={operationalFocusRequest}
+                onFeatureSelect={(feature) => {
+                  if (feature.properties.layer !== 'events') return
+                  const selected = events.find((event) => (
+                    sourceQualifiedOperationalMapID(event.source, event.event_id) === feature.id
+                  ))
+                  if (selected) handleEventClick(selected)
+                }}
+                className="h-[min(62vh,560px)]"
+              />
+            ) : (
+              <RiskMap
+                events={events}
+                news={news}
+                overlays={combinedMapOverlays}
+                activePerilFilter={activePerilFilter}
+                onEventClick={handleEventClick}
+                selectedEvent={selectedEvent}
+                selectedOverlayId={officialAlertFocus?.id}
+                overlayFocusNonce={officialAlertFocus?.nonce}
+                timelineHoursAgo={timelineHoursAgo}
+                visibleOverlayClasses={visibleOverlayClasses}
+                height="min(62vh, 560px)"
+              />
+            )}
+          </>
         )}
 
         <div className="mt-4 overflow-hidden rounded-2xl border border-orange-400/20 bg-gradient-to-r from-orange-500/10 via-slate-950/80 to-slate-950/80">
@@ -479,6 +689,19 @@ export default function ExecutiveOverview() {
           )}
         </div>
       </section>
+
+      <BmkgWarningsPanel
+        weatherAlerts={bmkg.weatherAlerts}
+        airQualityAlerts={bmkg.airQualityAlerts}
+        observations={bmkg.observations}
+        sourceActive={bmkg.sourceActive}
+        loading={bmkg.loading}
+        errors={bmkg.errors}
+        status={bmkg.status}
+        now={bmkg.now}
+        onFocusAlert={handleFocusOfficialAlert}
+        onRetry={reloadBmkg}
+      />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {kpis.map((item) => (

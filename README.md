@@ -230,6 +230,8 @@ Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama m
 
 Panduan hardening deployment tersedia di
 [`docs/production-security-deployment.md`](docs/production-security-deployment.md).
+Untuk rollout production BMKG dashboard dan EWS di `sadarbencana.id`, gunakan
+[`docs/bmkg-production-rollout.md`](docs/bmkg-production-rollout.md).
 
 ### Root `.env.local` (untuk pengembangan lokal, gitignored)
 
@@ -441,6 +443,7 @@ bash scripts/verify-structure.sh
 Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 
 - **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — mode community/hosted, aset personal, dan token organisasi
+- **[BMKG Production Rollout](docs/bmkg-production-rollout.md)** — preflight, backup Supabase, migration 040, rollout Compose, activation bertahap, dan rollback
 - **[EWS Setup](docs/ews-setup.md)** — konfigurasi Early Warning System
 - **[Official Alert Lifecycle](docs/official-alert-lifecycle.md)** — revision, expiry, update, dan cancellation alert resmi
 - **[BMKG CAP Nowcast](docs/bmkg-cap-nowcast.md)** — konfigurasi, attribution, normalisasi, dan lifecycle peringatan BMKG

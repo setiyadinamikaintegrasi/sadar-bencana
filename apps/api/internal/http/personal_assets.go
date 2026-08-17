@@ -311,6 +311,22 @@ type personalRiskEvent struct {
 	HasAlert   bool    `json:"-"`
 }
 
+var personalAssetRiskEventsQuery = `
+SELECT e.event_id,e.event_type,COALESCE(e.place,''),COALESCE(e.magnitude,0),
+       COALESCE(e.severity,''),COALESCE(to_char(e.event_time,'YYYY-MM-DD"T"HH24:MI:SSOF'),''),
+       e.source,COALESCE(rs.score,0),e.latitude,e.longitude,
+       EXISTS(SELECT 1 FROM alerts a WHERE a.event_id=e.id AND a.acknowledged=FALSE)
+FROM events e
+LEFT JOIN LATERAL (
+  SELECT score FROM risk_scores
+  WHERE entity_type='event' AND entity_id=e.event_id
+  ORDER BY calculated_at DESC LIMIT 1
+) rs ON true
+WHERE e.latitude BETWEEN $1 AND $2 AND e.longitude BETWEEN $3 AND $4
+  AND e.event_time >= now()-interval '30 days'
+  AND ` + productionEventSQLPredicate("e.source", "e.event_id") + `
+ORDER BY e.event_time DESC LIMIT 200`
+
 func PersonalAssetRisk(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if db == nil {
@@ -328,20 +344,7 @@ FROM personal_assets WHERE id=$1 AND auth_user_id=$2`,
 			return
 		}
 		minLat, maxLat, minLon, maxLon := boundingBox(lat, lon, radius)
-		rows, err := db.QueryContext(c.Request.Context(), `
-SELECT e.event_id,e.event_type,COALESCE(e.place,''),COALESCE(e.magnitude,0),
-       COALESCE(e.severity,''),COALESCE(to_char(e.event_time,'YYYY-MM-DD"T"HH24:MI:SSOF'),''),
-       e.source,COALESCE(rs.score,0),e.latitude,e.longitude,
-       EXISTS(SELECT 1 FROM alerts a WHERE a.event_id=e.id AND a.acknowledged=FALSE)
-FROM events e
-LEFT JOIN LATERAL (
-  SELECT score FROM risk_scores
-  WHERE entity_type='event' AND entity_id=e.event_id
-  ORDER BY calculated_at DESC LIMIT 1
-) rs ON true
-WHERE e.latitude BETWEEN $1 AND $2 AND e.longitude BETWEEN $3 AND $4
-  AND e.event_time >= now()-interval '30 days'
-ORDER BY e.event_time DESC LIMIT 200`, minLat, maxLat, minLon, maxLon)
+		rows, err := db.QueryContext(c.Request.Context(), personalAssetRiskEventsQuery, minLat, maxLat, minLon, maxLon)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed"})
 			return
@@ -358,6 +361,9 @@ ORDER BY e.event_time DESC LIMIT 200`, minLat, maxLat, minLon, maxLon)
 			if err := rows.Scan(&item.EventID, &item.EventType, &item.Place, &item.Magnitude,
 				&item.Severity, &item.EventTime, &item.Source, &item.Score,
 				&eventLat, &eventLon, &item.HasAlert); err != nil {
+				continue
+			}
+			if isNonProductionEvent(item.Source, item.EventID) {
 				continue
 			}
 			if len(allowed) > 0 && !allowed[item.EventType] &&

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   activateOfficialSource,
   dryRunOfficialSource,
+  getConnectorHealth,
   getOfficialSourceHistory,
   getOfficialSourceSettings,
   previewOfficialSource,
@@ -13,11 +14,66 @@ import {
   type OfficialSourcePreview,
   type OfficialSourceSetting,
   type BMKGWorkbookPreview,
+  type ConnectorHealth,
 } from '../../lib/api/client'
 import { useAuth } from '../../lib/auth/AuthProvider'
 import LoginGate from '../ews/LoginGate'
 
 const inputClass = 'mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2'
+const zeroPersistenceTables = [
+  'source_records',
+  'disaster_observability_events',
+  'official_alerts',
+  'air_quality_observations',
+  'ews_notification_log',
+] as const
+
+type ActivationEvidence = {
+  loaded: boolean
+  history: OfficialSourceHistory | null
+  connector: ConnectorHealth | null
+}
+
+type ActivationApproval = {
+  reference: string
+  note: string
+}
+
+function activationReadiness(item: OfficialSourceSetting, evidence?: ActivationEvidence): string[] {
+  const blockers: string[] = []
+  if (item.run_mode !== 'dry_run') blockers.push('Sumber harus berada pada mode dry-run.')
+  if (item.last_dry_run_valid !== true) blockers.push('API dry-run current config belum berhasil.')
+  if (!evidence?.loaded) {
+    blockers.push('Bukti kesiapan aktivasi belum dapat diverifikasi.')
+    return blockers
+  }
+
+  const shadow = evidence.history?.audit.find((entry) => (
+    entry.action === 'dry_run' &&
+    entry.success &&
+    entry.config_version === item.config_version &&
+    entry.metadata.stage === 'worker_shadow'
+  ))
+  if (!shadow) {
+    blockers.push('Worker shadow current config belum terverifikasi.')
+  } else {
+    const counts = shadow.metadata.persistence_counts
+    const zeroPersistence = shadow.metadata.zero_persistence === true &&
+      counts !== null && typeof counts === 'object' &&
+      zeroPersistenceTables.every((table) => (counts as Record<string, unknown>)[table] === 0)
+    if (!zeroPersistence) blockers.push('Bukti zero-persistence worker shadow belum lengkap.')
+  }
+
+  const lastPoll = evidence.connector?.last_polled_at
+  const connectorCurrent = Boolean(
+    evidence.connector?.status === 'ok' &&
+    !evidence.connector.error_message &&
+    lastPoll &&
+    new Date(lastPoll).getTime() >= new Date(item.updated_at).getTime(),
+  )
+  if (!connectorCurrent) blockers.push('Connector health current config belum sehat.')
+  return blockers
+}
 
 export default function OfficialSourcesSettingsPage() {
   const { session, loading, signOut } = useAuth()
@@ -55,6 +111,8 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
   const [rollbackReasons, setRollbackReasons] = useState<Record<string, string>>({})
   const [previews, setPreviews] = useState<Record<string, OfficialSourcePreview>>({})
   const [history, setHistory] = useState<Record<string, OfficialSourceHistory>>({})
+  const [activationEvidence, setActivationEvidence] = useState<Record<string, ActivationEvidence>>({})
+  const [activationApprovals, setActivationApprovals] = useState<Record<string, ActivationApproval>>({})
   const [messages, setMessages] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -68,7 +126,26 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
       setMappingDrafts(Object.fromEntries(
         loaded.map((item) => [item.source_name, JSON.stringify(item.field_mapping ?? {}, null, 2)]),
       ))
+      setActivationEvidence(Object.fromEntries(
+        loaded.map((item) => [item.source_name, { loaded: false, history: null, connector: null }]),
+      ))
       setError(null)
+
+      const [healthResult, ...historyResults] = await Promise.allSettled([
+        getConnectorHealth(),
+        ...loaded.map((item) => getOfficialSourceHistory(item.source_name)),
+      ])
+      const connectors = healthResult.status === 'fulfilled' ? healthResult.value : []
+      const connectorByName = new Map(connectors.map((connector) => [connector.name, connector]))
+      setActivationEvidence(Object.fromEntries(loaded.map((item, index) => {
+        const historyResult = historyResults[index]
+        const evidenceLoaded = healthResult.status === 'fulfilled' && historyResult?.status === 'fulfilled'
+        return [item.source_name, {
+          loaded: evidenceLoaded,
+          history: historyResult?.status === 'fulfilled' ? historyResult.value : null,
+          connector: connectorByName.get(item.source_name) ?? null,
+        }]
+      })))
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Gagal memuat pengaturan.'
       setError(message.includes('403')
@@ -106,9 +183,11 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
       custom_api_url: item.custom_api_url,
       api_token: tokens[item.source_name] || undefined,
       poll_interval_seconds: item.poll_interval_seconds,
+      expected_interval_seconds: item.expected_interval_seconds,
       change_reason: changeReasons[item.source_name] || undefined,
     })
     setTokens((current) => ({ ...current, [item.source_name]: '' }))
+    setActivationApprovals((current) => ({ ...current, [item.source_name]: { reference: '', note: '' } }))
     setMessages((current) => ({ ...current, [item.source_name]: 'Konfigurasi tersimpan sebagai versi baru.' }))
     await load()
   })
@@ -138,9 +217,20 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
     await load()
   })
 
-  const activate = (source: string) => run(source, async () => {
-    await activateOfficialSource(source)
-    setMessages((current) => ({ ...current, [source]: 'Sumber diaktifkan dari konfigurasi dry-run yang tervalidasi.' }))
+  const activate = (item: OfficialSourceSetting) => run(item.source_name, async () => {
+    const approval = activationApprovals[item.source_name]
+    const approvalReference = approval?.reference.trim() ?? ''
+    const approvalNote = approval?.note.trim() ?? ''
+    const blockers = activationReadiness(item, activationEvidence[item.source_name])
+    if (blockers.length || !approvalReference || !approvalNote) {
+      throw new Error('Aktivasi memerlukan seluruh bukti kesiapan dan metadata persetujuan.')
+    }
+    await activateOfficialSource(item.source_name, {
+      approval_reference: approvalReference,
+      approval_note: approvalNote,
+    })
+    setActivationApprovals((current) => ({ ...current, [item.source_name]: { reference: '', note: '' } }))
+    setMessages((current) => ({ ...current, [item.source_name]: 'Sumber diaktifkan dari konfigurasi dry-run yang tervalidasi.' }))
     await load()
   })
 
@@ -153,6 +243,7 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
     const reason = rollbackReasons[source]?.trim()
     if (!reason) throw new Error('Alasan rollback wajib diisi.')
     await rollbackOfficialSource(source, version, reason)
+    setActivationApprovals((current) => ({ ...current, [source]: { reference: '', note: '' } }))
     setMessages((current) => ({ ...current, [source]: `Rollback ke v${version} dibuat sebagai versi baru.` }))
     await load()
     const loaded = await getOfficialSourceHistory(source)
@@ -244,6 +335,10 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
         {items.map((item) => {
           const result = previews[item.source_name]
           const sourceHistory = history[item.source_name]
+          const approval = activationApprovals[item.source_name] ?? { reference: '', note: '' }
+          const activationBlockers = activationReadiness(item, activationEvidence[item.source_name])
+          const canActivate = activationBlockers.length === 0 &&
+            approval.reference.trim().length > 0 && approval.note.trim().length > 0
           return (
             <article key={item.source_name} className="rounded-xl border border-slate-800 bg-slate-900 p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -270,7 +365,7 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
                 <label className="text-sm">Adapter version
                   <input value={item.adapter_version} onChange={(e) => patchItem(item.source_name, { adapter_version: e.target.value })} className={inputClass} />
                 </label>
-                <label className="text-sm">Mode endpoint
+                <label className="text-sm md:col-span-2">Mode endpoint
                   <select value={item.mode} onChange={(e) => patchItem(item.source_name, { mode: e.target.value as OfficialSourceSetting['mode'] })} className={inputClass}>
                     <option value="auto">Auto</option>
                     <option value="default_public">Default Public</option>
@@ -279,6 +374,9 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
                 </label>
                 <label className="text-sm">Interval polling (detik)
                   <input type="number" min={60} max={86400} value={item.poll_interval_seconds} onChange={(e) => patchItem(item.source_name, { poll_interval_seconds: Number(e.target.value) })} className={inputClass} />
+                </label>
+                <label className="text-sm">Interval data yang diharapkan (detik)
+                  <input type="number" min={60} max={86400} value={item.expected_interval_seconds} onChange={(e) => patchItem(item.source_name, { expected_interval_seconds: Number(e.target.value) })} className={inputClass} />
                 </label>
                 <label className="text-sm md:col-span-2">Custom API URL
                   <input type="url" placeholder={item.default_api_url ?? 'https://... API resmi'} value={item.custom_api_url ?? ''} onChange={(e) => patchItem(item.source_name, { custom_api_url: e.target.value || null })} className={inputClass} />
@@ -295,12 +393,50 @@ function OfficialSourcesSettingsContent({ email, onSignOut }: { email: string; o
                 </label>
               </div>
 
+              <div className="mt-4 border-y border-slate-800 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Persetujuan aktivasi</h3>
+                  <span className={`text-xs font-semibold ${activationBlockers.length ? 'text-amber-300' : 'text-emerald-300'}`}>
+                    {activationBlockers.length ? 'Belum siap' : 'Evidence siap'}
+                  </span>
+                </div>
+                {activationBlockers.length ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-amber-200">
+                    {activationBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                  </ul>
+                ) : null}
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <label className="text-sm">Referensi persetujuan
+                    <input
+                      value={approval.reference}
+                      onChange={(event) => setActivationApprovals((current) => ({
+                        ...current,
+                        [item.source_name]: { ...approval, reference: event.target.value },
+                      }))}
+                      autoComplete="off"
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="text-sm">Catatan persetujuan
+                    <textarea
+                      rows={2}
+                      value={approval.note}
+                      onChange={(event) => setActivationApprovals((current) => ({
+                        ...current,
+                        [item.source_name]: { ...approval, note: event.target.value },
+                      }))}
+                      className={inputClass}
+                    />
+                  </label>
+                </div>
+              </div>
+
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button onClick={() => testConnection(item.source_name)} disabled={busy === item.source_name} className="rounded-lg border border-sky-500/40 px-3 py-2 text-sm text-sky-200">Test API</button>
                 <button onClick={() => preview(item)} disabled={busy === item.source_name} className="rounded-lg border border-violet-500/40 px-3 py-2 text-sm text-violet-200">Preview</button>
                 <button onClick={() => save(item)} disabled={busy === item.source_name} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold disabled:opacity-50">Simpan versi</button>
                 <button onClick={() => dryRun(item.source_name)} disabled={busy === item.source_name || item.run_mode !== 'dry_run'} className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200 disabled:opacity-40">Jalankan dry-run</button>
-                <button onClick={() => activate(item.source_name)} disabled={busy === item.source_name || !item.last_dry_run_valid} className="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm text-emerald-200 disabled:opacity-40">Aktifkan</button>
+                <button onClick={() => activate(item)} disabled={busy === item.source_name || !canActivate} className="rounded-lg border border-emerald-500/40 px-3 py-2 text-sm text-emerald-200 disabled:opacity-40">Aktifkan</button>
                 <button onClick={() => showHistory(item.source_name)} disabled={busy === item.source_name} className="rounded-lg border border-slate-600 px-3 py-2 text-sm">Histori & audit</button>
                 {item.terms_url ? <a href={item.terms_url} target="_blank" rel="noreferrer" className="ml-auto text-xs text-sky-300">Ketentuan sumber ↗</a> : null}
               </div>

@@ -99,9 +99,11 @@ LIMIT 1
 async def create_source_record(
     pool: asyncpg.Pool,
     record: SourceRecordInput,
+    *,
+    connection: asyncpg.Connection | None = None,
 ) -> tuple[dict[str, Any], bool]:
     checksum = payload_checksum(record.raw_payload)
-    async with pool.acquire() as conn:
+    async def execute(conn: asyncpg.Connection) -> tuple[dict[str, Any], bool]:
         row = await conn.fetchrow(
             _INSERT_SOURCE_SQL,
             record.source_name,
@@ -123,7 +125,12 @@ async def create_source_record(
             record.source_record_id,
             checksum,
         )
-    return (dict(existing), False) if existing is not None else ({}, False)
+        return (dict(existing), False) if existing is not None else ({}, False)
+
+    if connection is not None:
+        return await execute(connection)
+    async with pool.acquire() as conn:
+        return await execute(conn)
 
 
 async def link_event_evidence(

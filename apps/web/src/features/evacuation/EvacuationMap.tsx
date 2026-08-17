@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
+import { getOperationalMapEngine } from '../../config/mapEngine'
+import MapLibreEvacuationMap from './MapLibreEvacuationMap'
 import {
   EVACUATION_TYPE_META,
   type EvacuationBBox,
@@ -72,7 +74,7 @@ function FitRoute({ routeTo, userPos }: { routeTo: [number, number] | null; user
   return null
 }
 
-type EvacuationMapProps = {
+export type EvacuationMapProps = {
   locations: EvacuationLocation[]
   userPos: [number, number] | null
   routeTo: [number, number] | null
@@ -82,7 +84,7 @@ type EvacuationMapProps = {
   onViewportChange: (bbox: EvacuationBBox, zoom: number) => void
 }
 
-export default function EvacuationMap({
+export function LeafletEvacuationMap({
   locations, userPos, routeTo, manualPinMode, onMapClick, onSelect, onViewportChange,
 }: EvacuationMapProps) {
   const markers = useMemo(
@@ -125,4 +127,10 @@ export default function EvacuationMap({
       )}
     </MapContainer>
   )
+}
+
+export default function EvacuationMap(props: EvacuationMapProps) {
+  return getOperationalMapEngine() === 'maplibre'
+    ? <MapLibreEvacuationMap {...props} />
+    : <LeafletEvacuationMap {...props} />
 }

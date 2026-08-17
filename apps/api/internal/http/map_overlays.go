@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,13 +27,22 @@ type MapOverlay struct {
 }
 
 const officialOverlayQuery = `
-SELECT id, headline, area_geojson, effective_at, expires_at, source
-FROM official_alerts
-WHERE area_geojson IS NOT NULL
-  AND sent_at >= now() - interval '7 days'
-ORDER BY sent_at DESC
+SELECT id, headline, area_geojson, latitude, longitude, effective_at,
+       expires_at, source, peril_type, source_url
+FROM official_alerts oa
+JOIN official_source_settings s ON s.source_name = oa.source
+WHERE oa.is_current = TRUE
+  AND oa.status = 'active'
+  AND s.enabled = TRUE
+  AND s.run_mode = 'active'
+  AND (oa.area_geojson IS NOT NULL OR (oa.latitude IS NOT NULL AND oa.longitude IS NOT NULL))
+  AND (oa.effective_at IS NULL OR oa.effective_at <= now())
+  AND (oa.expires_at IS NULL OR oa.expires_at > now())
+ORDER BY oa.sent_at DESC
 LIMIT 200
 `
+
+const bmkgAttribution = "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)"
 
 const riskContextOverlayQuery = `
 SELECT rc.id, rc.peril_type, rc.context_key, rc.area_geojson,
@@ -90,10 +100,14 @@ func serveMapRiskOverlays(c *gin.Context, db *sql.DB, subscriberID *string) {
 	}
 	for rows.Next() {
 		var item MapOverlay
-		var headline, source sql.NullString
+		var headline, source, perilType, sourceURL sql.NullString
+		var latitude, longitude sql.NullFloat64
 		var geometry []byte
 		var effective, expires sql.NullTime
-		if err := rows.Scan(&item.ID, &headline, &geometry, &effective, &expires, &source); err != nil {
+		if err := rows.Scan(
+			&item.ID, &headline, &geometry, &latitude, &longitude, &effective,
+			&expires, &source, &perilType, &sourceURL,
+		); err != nil {
 			rows.Close()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
 			return
@@ -101,7 +115,16 @@ func serveMapRiskOverlays(c *gin.Context, db *sql.DB, subscriberID *string) {
 		item.LayerClass = "official"
 		item.Label = valueOr(headline, "Peringatan resmi")
 		item.Geometry = geometry
-		item.Attribution = nullStringPtr(source)
+		item.PerilType = nullStringPtr(perilType)
+		item.Latitude = nullFloat64Ptr(latitude)
+		item.Longitude = nullFloat64Ptr(longitude)
+		item.SourceURL = nullStringPtr(sourceURL)
+		if source.Valid && strings.HasPrefix(strings.ToLower(source.String), "bmkg") {
+			attribution := bmkgAttribution
+			item.Attribution = &attribution
+		} else {
+			item.Attribution = nullStringPtr(source)
+		}
 		if effective.Valid {
 			item.EffectiveAt = &effective.Time
 		}

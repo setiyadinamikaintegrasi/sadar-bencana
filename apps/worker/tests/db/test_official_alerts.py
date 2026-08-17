@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from db.official_alerts import (
     expire_official_alerts,
+    expire_official_alert_revisions,
     payload_checksum,
     upsert_official_alert,
 )
@@ -27,7 +28,23 @@ def _alert(**overrides) -> OfficialAlertInput:
         "expires_at": NOW + timedelta(hours=2),
         "headline": "Peringatan dini cuaca",
         "description": "Hujan lebat berpotensi terjadi.",
-        "area_geojson": {"type": "Polygon", "coordinates": []},
+        "area_geojson": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [107.0, -6.0],
+                    [108.0, -6.0],
+                    [108.0, -7.0],
+                    [107.0, -6.0],
+                ]
+            ],
+        },
+        "peril_type": "weather",
+        "severity": "High",
+        "area_name": "Jawa Barat",
+        "latitude": -6.9,
+        "longitude": 107.6,
+        "source_url": "https://www.bmkg.go.id/alerts/alert-1",
         "raw_payload": {"identifier": "BMKG-001", "severity": "Severe"},
     }
     values.update(overrides)
@@ -71,7 +88,18 @@ async def test_duplicate_payload_returns_existing_revision_without_insert():
 @pytest.mark.asyncio
 async def test_first_payload_creates_revision_one():
     conn = AsyncMock()
-    inserted = {"id": "new", "revision": 1, "status": "active"}
+    inserted = {
+        "id": "new",
+        "revision": 1,
+        "status": "active",
+        "peril_type": "weather",
+        "severity": "High",
+        "category": None,
+        "area_name": "Jawa Barat",
+        "latitude": -6.9,
+        "longitude": 107.6,
+        "source_url": "https://www.bmkg.go.id/alerts/alert-1",
+    }
     conn.fetchrow.side_effect = [None, None, inserted]
     conn.fetchval.return_value = 1
     pool = _pool_with_conn(conn)
@@ -80,11 +108,20 @@ async def test_first_payload_creates_revision_one():
 
     assert created is True
     assert row["revision"] == 1
-    insert_args = conn.fetchrow.await_args_list[2].args
-    assert insert_args[3] == 1
-    assert insert_args[5] == "active"
-    assert insert_args[14] is None
-    assert insert_args[15] is True
+    inserted_args = conn.fetchrow.await_args_list[2].args[1:]
+    assert inserted_args[2] == 1
+    assert inserted_args[4] == "active"
+    assert inserted_args[13] is None
+    assert inserted_args[14] is True
+    assert inserted_args[15:22] == (
+        "weather",
+        "High",
+        None,
+        "Jawa Barat",
+        -6.9,
+        107.6,
+        "https://www.bmkg.go.id/alerts/alert-1",
+    )
 
 
 @pytest.mark.asyncio
@@ -119,11 +156,11 @@ async def test_cancel_creates_linked_revision_and_supersedes_current():
     assert created is True
     assert row["status"] == "cancelled"
     assert conn.execute.await_count == 2
-    insert_args = conn.fetchrow.await_args_list[2].args
-    assert insert_args[3] == 2
-    assert insert_args[5] == "cancelled"
-    assert insert_args[14] == "previous-id"
-    assert insert_args[15] is True
+    inserted_args = conn.fetchrow.await_args_list[2].args[1:]
+    assert inserted_args[2] == 2
+    assert inserted_args[4] == "cancelled"
+    assert inserted_args[13] == "previous-id"
+    assert inserted_args[14] is True
 
 
 @pytest.mark.asyncio
@@ -141,7 +178,7 @@ async def test_already_expired_payload_is_inserted_as_expired():
     )
 
     assert row["status"] == "expired"
-    assert conn.fetchrow.await_args_list[2].args[5] == "expired"
+    assert conn.fetchrow.await_args_list[2].args[1:][4] == "expired"
 
 
 @pytest.mark.asyncio
@@ -175,9 +212,9 @@ async def test_out_of_order_payload_is_retained_without_replacing_current():
     assert created is True
     assert row["is_current"] is False
     assert conn.execute.await_count == 1  # advisory lock only
-    insert_args = conn.fetchrow.await_args_list[2].args
-    assert insert_args[5] == "updated"
-    assert insert_args[15] is False
+    inserted_args = conn.fetchrow.await_args_list[2].args[1:]
+    assert inserted_args[4] == "updated"
+    assert inserted_args[14] is False
 
 
 @pytest.mark.asyncio
@@ -190,3 +227,45 @@ async def test_expire_returns_updated_row_count():
 
     assert count == 2
     assert conn.fetch.await_args.args[1] == NOW
+
+
+@pytest.mark.asyncio
+async def test_expire_revisions_returns_structured_metadata():
+    conn = AsyncMock()
+    expired = {
+        "id": "expired-id",
+        "source": "bmkg_cap",
+        "peril_type": "weather",
+        "severity": "Critical",
+        "category": "Extreme rain",
+        "area_name": "Jawa Barat",
+        "latitude": -6.9,
+        "longitude": 107.6,
+        "source_url": "https://www.bmkg.go.id/alerts/alert-1",
+    }
+    conn.fetch.return_value = [expired]
+    pool = _pool_with_conn(conn)
+
+    revisions = await expire_official_alert_revisions(pool, now=NOW)
+
+    assert revisions == [expired]
+    expire_sql = conn.fetch.await_args.args[0]
+    for field in (
+        "peril_type",
+        "severity",
+        "category",
+        "area_name",
+        "latitude",
+        "longitude",
+        "source_url",
+    ):
+        assert field in expire_sql
+
+
+def test_expiry_requires_an_active_official_source():
+    sql = " ".join(__import__("db.official_alerts", fromlist=["_EXPIRE_SQL"])._EXPIRE_SQL.split())
+
+    assert "official_source_settings" in sql
+    assert "enabled = TRUE" in sql
+    assert "run_mode = 'active'" in sql
+    assert "FOR SHARE" in sql

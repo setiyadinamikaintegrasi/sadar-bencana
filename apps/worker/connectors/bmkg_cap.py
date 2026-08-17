@@ -6,11 +6,13 @@ import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urljoin, urlparse
 
 import httpx
 
+from connectors.bounded_response import read_bounded_text
 from models.official_alert import OfficialAlertInput
+from ssrf_guard import resolve_public_ips
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,14 @@ BMKG_CAP_RSS_URL = "https://www.bmkg.go.id/alerts/nowcast/id"
 BMKG_ATTRIBUTION = "BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)"
 BMKG_CAP_USER_AGENT = "sadar-bencana/0.2 (+https://github.com/setiyadinamikaintegrasi/sadar-bencana)"
 MAX_ACTIVE_ALERTS = 50
+MAX_REDIRECTS = 5
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+CAP_SEVERITY = {
+    "minor": "Moderate",
+    "moderate": "Moderate",
+    "severe": "High",
+    "extreme": "Critical",
+}
 
 
 def _local_name(tag: str) -> str:
@@ -45,12 +55,42 @@ def _parse_datetime(value: str, field: str) -> datetime:
     return parsed
 
 
-def _allowed_cap_url(url: str) -> bool:
+def _parsed_cap_url(url: str) -> ParseResult:
     parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return parsed.scheme == "https" and (
-        host == "bmkg.go.id" or host.endswith(".bmkg.go.id")
-    )
+    host = (parsed.hostname or "").lower().rstrip(".")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"BMKG HTTPS URL required, got {url!r}") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or not (host == "bmkg.go.id" or host.endswith(".bmkg.go.id"))
+    ):
+        raise ValueError(f"BMKG HTTPS URL required, got {url!r}")
+    return parsed
+
+
+def _allowed_cap_url(url: str) -> bool:
+    try:
+        _parsed_cap_url(url)
+    except ValueError:
+        return False
+    return True
+
+
+def _pinned_url(parsed: ParseResult, resolved_ip: str) -> tuple[str, str, str]:
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("BMKG HTTPS URL requires a hostname")
+    hostname = hostname.rstrip(".")
+    ip_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    pinned = parsed._replace(netloc=f"{ip_host}{port}").geturl()
+    host_header = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+    return pinned, host_header, hostname
 
 
 def parse_bmkg_cap_rss(xml_text: str) -> list[str]:
@@ -104,10 +144,19 @@ def _area_geojson(info: ET.Element) -> dict[str, Any] | None:
     return {"type": "MultiPolygon", "coordinates": rings}
 
 
-def _preferred_info(root: ET.Element) -> ET.Element:
+def _area_name(info: ET.Element) -> str | None:
+    names = [
+        _child_text(area, "areaDesc")
+        for area in _children(info, "area")
+        if _child_text(area, "areaDesc")
+    ]
+    return "; ".join(dict.fromkeys(names)) or None
+
+
+def _preferred_info(root: ET.Element) -> ET.Element | None:
     infos = _children(root, "info")
     if not infos:
-        raise ValueError("CAP alert does not contain an info block")
+        return None
     for info in infos:
         language = _child_text(info, "language").lower()
         if language.startswith("id"):
@@ -115,35 +164,47 @@ def _preferred_info(root: ET.Element) -> ET.Element:
     return infos[0]
 
 
-def _lifecycle_identifier(
-    root: ET.Element,
-    identifier: str,
-    message_type: str,
-) -> str:
-    """Use the original referenced identifier for CAP update/cancel revisions."""
-    if message_type == "alert":
-        return identifier
-    references = _child_text(root, "references").split()
-    # CAP references are space-separated entries, each encoded as
-    # sender,identifier,sent. The first entry identifies the original message.
-    if references:
-        first_reference = references[0].split(",", 2)
-        if len(first_reference) == 3 and first_reference[1]:
-            return first_reference[1]
-    return identifier
+def _parse_references(root: ET.Element) -> list[dict[str, str]]:
+    """Preserve CAP references so persistence can resolve chained lifecycles."""
+    references: list[dict[str, str]] = []
+    for raw_reference in _child_text(root, "references").split():
+        parts = raw_reference.split(",", 2)
+        if len(parts) != 3 or any(not part.strip() for part in parts):
+            raise ValueError("CAP message must contain a valid CAP reference")
+        sender, identifier, sent = (part.strip() for part in parts)
+        _parse_datetime(sent, "reference sent")
+        references.append(
+            {
+                "sender": sender,
+                "identifier": identifier,
+                "sent": sent,
+            }
+        )
+    return references
 
 
-def parse_bmkg_cap(xml_text: str) -> OfficialAlertInput:
+def parse_bmkg_cap(
+    xml_text: str,
+    source_url: str | None = None,
+) -> OfficialAlertInput:
     """Normalize one BMKG CAP document into the official alert lifecycle model."""
     root = ET.fromstring(xml_text)
     if _local_name(root.tag) != "alert":
         raise ValueError("CAP document root must be alert")
 
     identifier = _child_text(root, "identifier")
+    sender = _child_text(root, "sender")
     sent_raw = _child_text(root, "sent")
     message_type_raw = (_child_text(root, "msgType") or "Alert").lower()
-    if not identifier or not sent_raw:
-        raise ValueError("CAP identifier and sent are required")
+    if not identifier or not sender or not sent_raw:
+        raise ValueError("CAP identifier, sender, and sent are required")
+
+    cap_status = _child_text(root, "status")
+    if cap_status.casefold() != "actual":
+        raise ValueError(f"CAP status must be Actual, got {cap_status or 'missing'}")
+    cap_scope = _child_text(root, "scope")
+    if cap_scope.casefold() != "public":
+        raise ValueError(f"CAP scope must be Public, got {cap_scope or 'missing'}")
 
     message_type_map = {
         "alert": "alert",
@@ -154,26 +215,59 @@ def parse_bmkg_cap(xml_text: str) -> OfficialAlertInput:
         raise ValueError(f"unsupported CAP msgType: {message_type_raw}")
     message_type = message_type_map[message_type_raw]
 
+    references = _parse_references(root)
+    if message_type in {"update", "cancel"} and not references:
+        raise ValueError(f"CAP {message_type} must contain a valid CAP reference")
+    if message_type in {"update", "cancel"} and any(
+        reference["sender"] != sender for reference in references
+    ):
+        raise ValueError(f"CAP {message_type} references must use the same CAP sender")
+
     info = _preferred_info(root)
-    effective_raw = _child_text(info, "effective")
-    expires_raw = _child_text(info, "expires")
+    if info is None and message_type != "cancel":
+        raise ValueError("CAP alert does not contain an info block")
+    effective_raw = _child_text(info, "effective") if info is not None else ""
+    expires_raw = _child_text(info, "expires") if info is not None else ""
+    payload = {
+        "format": "CAP-XML",
+        "sender": sender,
+        "message_identifier": identifier,
+        "references": references,
+        "referenced_message_identifiers": [
+            reference["identifier"] for reference in references
+        ],
+        "cap_status": cap_status,
+        "cap_scope": cap_scope,
+        "source_url": source_url,
+        "xml": xml_text,
+    }
 
     return OfficialAlertInput(
         source="bmkg_cap",
-        source_alert_id=_lifecycle_identifier(root, identifier, message_type),
+        # This is always the current CAP message identity. Persistence follows
+        # raw_payload.references to resolve the canonical alert lifecycle.
+        source_alert_id=identifier,
         message_type=message_type,
         status="cancelled" if message_type == "cancel" else "active",
         sent_at=_parse_datetime(sent_raw, "sent"),
         effective_at=_parse_datetime(effective_raw, "effective") if effective_raw else None,
         expires_at=_parse_datetime(expires_raw, "expires") if expires_raw else None,
-        headline=_child_text(info, "headline") or _child_text(info, "event") or None,
-        description=_child_text(info, "description") or None,
-        area_geojson=_area_geojson(info),
-        raw_payload={
-            "format": "CAP-XML",
-            "message_identifier": identifier,
-            "xml": xml_text,
-        },
+        headline=(
+            _child_text(info, "headline") or _child_text(info, "event") or None
+            if info is not None
+            else None
+        ),
+        description=_child_text(info, "description") or None if info is not None else None,
+        area_geojson=_area_geojson(info) if info is not None else None,
+        peril_type="weather",
+        severity=(
+            CAP_SEVERITY.get((_child_text(info, "severity") or "").lower())
+            if info is not None
+            else None
+        ),
+        area_name=_area_name(info) if info is not None else None,
+        source_url=source_url,
+        raw_payload=payload,
     )
 
 
@@ -191,30 +285,78 @@ class BMKGCAPConnector:
         self._rss_url = rss_url
         self._api_token = api_token
 
+    async def _get_with_validated_redirects(
+        self,
+        url: str,
+    ) -> tuple[httpx.Response, str]:
+        assert self._client is not None
+        current_url = url
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            parsed = _parsed_cap_url(current_url)
+            hostname = parsed.hostname
+            if not hostname:
+                raise ValueError("BMKG HTTPS URL requires a hostname")
+            resolved_ip = resolve_public_ips(hostname.rstrip("."))[0]
+            pinned_url, host_header, sni_hostname = _pinned_url(parsed, resolved_ip)
+            headers = {
+                "Host": host_header,
+                "User-Agent": BMKG_CAP_USER_AGENT,
+            }
+            if self._api_token:
+                headers["Authorization"] = f"Bearer {self._api_token}"
+            request = self._client.build_request(
+                "GET",
+                pinned_url,
+                headers=headers,
+                extensions={"sni_hostname": sni_hostname},
+            )
+            response = await self._client.send(
+                request,
+                follow_redirects=False,
+                stream=True,
+            )
+            if response.status_code not in REDIRECT_STATUSES:
+                return response, current_url
+
+            try:
+                location = response.headers.get("Location")
+                if not location:
+                    raise ValueError("BMKG redirect response is missing Location")
+                if redirect_count >= MAX_REDIRECTS:
+                    raise ValueError("BMKG redirect limit exceeded")
+                next_url = urljoin(current_url, location)
+                # Validate before DNS resolution or any request to the next target.
+                _parsed_cap_url(next_url)
+                current_url = next_url
+            finally:
+                await response.aclose()
+
+        raise ValueError("BMKG redirect limit exceeded")
+
     async def fetch_active(self) -> tuple[list[OfficialAlertInput], list[str]]:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._timeout,
-                follow_redirects=True,
-                headers={
-                    "User-Agent": BMKG_CAP_USER_AGENT,
-                    **({"Authorization": f"Bearer {self._api_token}"} if self._api_token else {}),
-                },
+                follow_redirects=False,
             )
         assert self._client is not None
 
-        response = await self._client.get(self._rss_url)
-        response.raise_for_status()
-        urls = parse_bmkg_cap_rss(response.text)
+        response, _ = await self._get_with_validated_redirects(self._rss_url)
+        urls = parse_bmkg_cap_rss(await read_bounded_text(
+            response,
+            label="CAP RSS payload",
+        ))
 
         alerts: list[OfficialAlertInput] = []
         errors: list[str] = []
         for url in urls:
             try:
-                detail = await self._client.get(url)
-                detail.raise_for_status()
-                alert = parse_bmkg_cap(detail.text)
-                alert.raw_payload["source_url"] = url
+                detail, detail_url = await self._get_with_validated_redirects(url)
+                detail_text = await read_bounded_text(
+                    detail,
+                    label="CAP detail payload",
+                )
+                alert = parse_bmkg_cap(detail_text, source_url=detail_url)
                 alerts.append(alert)
             except Exception as exc:
                 logger.warning("BMKG CAP detail failed for %s: %s", url, exc)

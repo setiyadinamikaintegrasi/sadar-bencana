@@ -147,13 +147,16 @@ type nearestResult struct {
 
 // detectActiveDisaster mencari jenis bencana dari event aktif (24 jam
 // terakhir) terdekat dalam 25 km. String kosong = tidak ada.
-func detectActiveDisaster(c *gin.Context, db *sql.DB, lat, lon float64) string {
-	minLat, maxLat, minLon, maxLon := boundingBox(lat, lon, 25)
-	rows, err := db.QueryContext(c.Request.Context(), `
+var detectActiveDisasterQuery = `
 SELECT event_type, latitude, longitude FROM events
 WHERE latitude BETWEEN $1 AND $2 AND longitude BETWEEN $3 AND $4
   AND event_time >= now() - interval '24 hours'
-ORDER BY event_time DESC LIMIT 50`, minLat, maxLat, minLon, maxLon)
+  AND ` + productionEventSQLPredicate("source", "event_id") + `
+ORDER BY event_time DESC LIMIT 50`
+
+func detectActiveDisaster(c *gin.Context, db *sql.DB, lat, lon float64) string {
+	minLat, maxLat, minLon, maxLon := boundingBox(lat, lon, 25)
+	rows, err := db.QueryContext(c.Request.Context(), detectActiveDisasterQuery, minLat, maxLat, minLon, maxLon)
 	if err != nil {
 		return ""
 	}

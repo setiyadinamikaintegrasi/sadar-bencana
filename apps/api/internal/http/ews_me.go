@@ -523,9 +523,13 @@ func EWSMeNotifications(db *sql.DB) gin.HandlerFunc {
 			}
 		}
 		rows, err := db.QueryContext(c.Request.Context(),
-			`SELECT id, alert_id, channel, status, error_message, sent_at, created_at
-			 FROM ews_notification_log WHERE subscriber_id = $1
-			 ORDER BY created_at DESC LIMIT $2`, subID, limit)
+			`SELECT l.id, l.alert_id, l.channel, l.status, l.error_message, l.sent_at,
+			        l.created_at, oa.headline, oa.peril_type, l.lifecycle_action, z.label
+			 FROM ews_notification_log l
+			 LEFT JOIN official_alerts oa ON oa.id = l.official_alert_id
+			 LEFT JOIN ews_watch_zones z ON z.id = l.matched_watch_zone_id
+			 WHERE l.subscriber_id = $1
+			 ORDER BY l.created_at DESC LIMIT $2`, subID, limit)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database_query_failed", "message": err.Error()})
 			return
@@ -534,10 +538,13 @@ func EWSMeNotifications(db *sql.DB) gin.HandlerFunc {
 		entries := make([]gin.H, 0)
 		for rows.Next() {
 			var id, channel, status string
-			var alertID, errMsg sql.NullString
+			var alertID, errMsg, headline, perilType, lifecycleAction, matchedWatchZoneLabel sql.NullString
 			var sentAt sql.NullTime
 			var createdAt time.Time
-			if err := rows.Scan(&id, &alertID, &channel, &status, &errMsg, &sentAt, &createdAt); err != nil {
+			if err := rows.Scan(
+				&id, &alertID, &channel, &status, &errMsg, &sentAt, &createdAt,
+				&headline, &perilType, &lifecycleAction, &matchedWatchZoneLabel,
+			); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed", "message": err.Error()})
 				return
 			}
@@ -549,6 +556,9 @@ func EWSMeNotifications(db *sql.DB) gin.HandlerFunc {
 				"id": id, "alert_id": nullStringPtr(alertID), "channel": channel,
 				"status": status, "error_message": nullStringPtr(errMsg),
 				"sent_at": sentAtPtr, "created_at": createdAt,
+				"headline": nullStringPtr(headline), "peril_type": nullStringPtr(perilType),
+				"lifecycle_action":         nullStringPtr(lifecycleAction),
+				"matched_watch_zone_label": nullStringPtr(matchedWatchZoneLabel),
 			})
 		}
 		if err := rows.Err(); err != nil {

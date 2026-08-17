@@ -8,12 +8,13 @@ Purpose:
 Usage:
     set -a && . /tmp/risk-runtime.env && set +a
     source .venv/bin/activate
-    python scripts/seed_indonesia_regional_events.py
+    ALLOW_SYNTHETIC_EVENT_SEEDING=true python scripts/seed_indonesia_regional_events.py
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 
 from alerts.evaluator import evaluate_alerts
@@ -86,6 +87,11 @@ def build_seed_events() -> list[EarthquakeEvent]:
 
 
 async def main() -> None:
+    if os.getenv("ALLOW_SYNTHETIC_EVENT_SEEDING", "").strip().lower() != "true":
+        raise RuntimeError(
+            "refusing synthetic event writes; set "
+            "ALLOW_SYNTHETIC_EVENT_SEEDING=true to opt in explicitly"
+        )
     await init_pool()
     pool = get_pool()
     events = build_seed_events()

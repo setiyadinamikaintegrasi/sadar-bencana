@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import socket
 import smtplib
 from email.message import EmailMessage
 from typing import Any
@@ -13,6 +15,29 @@ from alerts.channels.base import BaseChannel
 from alerts.channels.email_template import render_html_email
 
 logger = logging.getLogger(__name__)
+
+
+async def _await_bounded_smtp(task: asyncio.Task[None]) -> None:
+    """Do not abandon a bounded SMTP thread when its caller is cancelled."""
+    try:
+        await asyncio.shield(task)
+        return
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None:
+            current.uncancel()
+        logger.warning(
+            "Email delivery cancellation deferred until SMTP outcome is known"
+        )
+
+    while True:
+        try:
+            await asyncio.shield(task)
+            return
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None:
+                current.uncancel()
 
 
 class EmailChannel(BaseChannel):
@@ -26,14 +51,32 @@ class EmailChannel(BaseChannel):
         self, recipient: str, message: str, **kwargs: Any
     ) -> dict[str, Any]:
         host = os.getenv("SMTP_HOST")
-        port = int(os.getenv("SMTP_PORT", "587"))
+        port_value = os.getenv("SMTP_PORT", "587")
         user = os.getenv("SMTP_USER")
         password = os.getenv("SMTP_PASSWORD")
         from_addr = os.getenv("SMTP_FROM", "ews@example.com")
 
         if not host or not user or not password or not from_addr:
-            return {"success": False, "provider_id": None,
-                    "error": "SMTP not configured"}
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "SMTP not configured",
+                "ambiguous": False,
+                "retryable": False,
+            }
+
+        try:
+            port = int(port_value)
+            if not 1 <= port <= 65535:
+                raise ValueError("SMTP port is out of range")
+        except ValueError:
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "SMTP port is invalid",
+                "ambiguous": False,
+                "retryable": False,
+            }
 
         try:
             subject = str(
@@ -43,6 +86,12 @@ class EmailChannel(BaseChannel):
             msg["From"] = from_addr
             msg["To"] = recipient
             msg["Subject"] = subject
+            idempotency_key = str(kwargs.get("idempotency_key") or "")
+            if idempotency_key:
+                safe_key = idempotency_key.replace("\r", " ").replace("\n", " ")[:200]
+                digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+                msg["Message-ID"] = f"<ews-{digest}@sadarbencana.id>"
+                msg["X-SadarBencana-Idempotency-Key"] = safe_key
             msg.set_content(message)
             msg.add_alternative(
                 render_html_email(
@@ -52,19 +101,52 @@ class EmailChannel(BaseChannel):
                     **{
                         key: value
                         for key, value in kwargs.items()
-                        if key not in {"subject", "public_base_url"}
+                        if key not in {
+                            "subject",
+                            "public_base_url",
+                            "idempotency_key",
+                        }
                     },
                 ),
                 subtype="html",
             )
 
-            # Run blocking SMTP in thread executor for async compatibility.
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, self._smtp_send, host, port, user, password,
-                from_addr, recipient, msg.as_string(),
+            # The SMTP socket timeout bounds this thread. Keep observing it even
+            # during shutdown so the delivery transaction can record the result.
+            smtp_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self._smtp_send,
+                    host,
+                    port,
+                    user,
+                    password,
+                    from_addr,
+                    recipient,
+                    msg.as_string(),
+                )
             )
+            await _await_bounded_smtp(smtp_task)
             return {"success": True, "provider_id": None}
+        except (
+            TimeoutError,
+            socket.timeout,
+            smtplib.SMTPServerDisconnected,
+            ConnectionResetError,
+            BrokenPipeError,
+            OSError,
+        ) as exc:
+            logger.warning(
+                "Email delivery ended with an ambiguous provider result "
+                "(error_type=%s)",
+                type(exc).__name__,
+            )
+            return {
+                "success": False,
+                "provider_id": None,
+                "error": "email_delivery_ambiguous",
+                "ambiguous": True,
+                "retryable": False,
+            }
         except Exception as exc:
             logger.warning(
                 "Email delivery failed (error_type=%s)",

@@ -1,12 +1,16 @@
 // apps/web/src/components/RiskMap.tsx
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, MapContainer, Marker, Polygon, Popup, TileLayer, useMap } from 'react-leaflet'
+import { useEffect, useMemo, useRef } from 'react'
+import { Circle, CircleMarker, MapContainer, Marker, Polygon, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { Event, MapOverlay, NewsItem } from '../lib/api/client'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
-type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news'
+export type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news'
+
+export function operationalMapPerils(filter: PerilFilter): string[] {
+  return ['earthquake', 'wildfire', 'volcano', 'flood'].includes(filter) ? [filter] : []
+}
 
 const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; accent: string }> = [
   { key: 'all', label: 'Semua', icon: '◎', accent: 'text-indigo-200' },
@@ -16,6 +20,98 @@ const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; acce
   { key: 'flood', label: 'Banjir', icon: '◒', accent: 'text-sky-300' },
   { key: 'news', label: 'News', icon: '✦', accent: 'text-emerald-300' },
 ]
+
+export type RiskOverlayClass = 'official' | 'static_risk' | 'watch_zone'
+
+export interface ExecutiveMapControlsProps {
+  events: Event[]
+  news: NewsItem[]
+  activePerilFilter: PerilFilter
+  onFilterChange: (filter: PerilFilter) => void
+  visibleOverlayClasses: ReadonlySet<RiskOverlayClass>
+  onOverlayClassToggle: (layerClass: RiskOverlayClass) => void
+  timelineHoursAgo: number
+  onTimelineChange: (hoursAgo: number) => void
+}
+
+export function ExecutiveMapControls({
+  events,
+  news,
+  activePerilFilter,
+  onFilterChange,
+  visibleOverlayClasses,
+  onOverlayClassToggle,
+  timelineHoursAgo,
+  onTimelineChange,
+}: ExecutiveMapControlsProps) {
+  const countFor = (filter: PerilFilter) => events.filter((event) => eventMatchesFilter(event, filter)).length
+  const counts: Record<PerilFilter, number> = {
+    all: events.length,
+    earthquake: countFor('earthquake'),
+    wildfire: countFor('wildfire'),
+    volcano: countFor('volcano'),
+    flood: countFor('flood'),
+    news: news.filter((item) => item.lat != null && item.lon != null).length,
+  }
+
+  return (
+    <div className="mb-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {LAYER_FILTERS.map((filter) => (
+          <button
+            key={filter.key}
+            type="button"
+            aria-label={`${filter.label} (${counts[filter.key]})`}
+            onClick={() => onFilterChange(filter.key)}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-[11px] font-semibold transition ${
+              activePerilFilter === filter.key
+                ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40'
+                : 'bg-slate-950/70 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+            }`}
+          >
+            <span className={filter.accent}>{filter.icon}</span>
+            {filter.label}
+            <span className="rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-500">
+              {counts[filter.key]}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+        {([
+          ['official', 'Warning resmi'],
+          ['static_risk', 'Kajian risiko'],
+          ['watch_zone', 'Watch zone'],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={visibleOverlayClasses.has(key)}
+            onClick={() => onOverlayClassToggle(key)}
+            className={`rounded-lg border px-2 py-1 ${
+              visibleOverlayClasses.has(key)
+                ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
+                : 'border-slate-700 text-slate-500'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <label className="ml-auto flex items-center gap-2">
+          Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}
+          <input
+            aria-label="Waktu lifecycle peta"
+            type="range"
+            min="0"
+            max="72"
+            value={timelineHoursAgo}
+            onChange={(event) => onTimelineChange(Number(event.target.value))}
+          />
+        </label>
+      </div>
+    </div>
+  )
+}
 
 const MAP_ANIMATION_CSS = `
   .risk-exec-marker {
@@ -128,6 +224,61 @@ function pointInRing(latitude: number, longitude: number, ring: [number, number]
   return inside
 }
 
+export function overlayPolygons(overlay: MapOverlay): [number, number][][] {
+  if (!overlay.geometry) return []
+  if (overlay.geometry.type === 'Polygon') {
+    const rings = overlay.geometry.coordinates as number[][][]
+    return [rings[0].map(([longitude, latitude]) => [latitude, longitude])]
+  }
+  const polygons = overlay.geometry.coordinates as number[][][][]
+  return polygons.map((polygon) =>
+    polygon[0].map(([longitude, latitude]) => [latitude, longitude]),
+  )
+}
+
+export type OverlayFocusRequest = { id: string; nonce: number }
+
+export function nextOverlayFocusRequest(
+  current: OverlayFocusRequest | null,
+  id: string,
+): OverlayFocusRequest {
+  return { id, nonce: (current?.nonce ?? 0) + 1 }
+}
+
+export function overlayPathOptions(overlay: MapOverlay, selected: boolean): L.PathOptions {
+  const official = overlay.layer_class === 'official'
+  return {
+    color: selected ? '#f8fafc' : official ? '#e879f9' : '#8b5cf6',
+    fillColor: official ? '#e879f9' : '#8b5cf6',
+    fillOpacity: selected ? 0.4 : official ? 0.24 : 0.1,
+    weight: selected ? 4 : 3,
+    dashArray: official ? undefined : '6 5',
+  }
+}
+
+type OverlayMapController = Pick<L.Map, 'fitBounds' | 'flyTo'>
+
+export function focusOverlay(map: OverlayMapController, overlay: MapOverlay): void {
+  const polygons = overlayPolygons(overlay)
+  if (polygons.length > 0) {
+    map.fitBounds(polygons.flat(), { padding: [32, 32], maxZoom: 9 })
+    return
+  }
+  if (overlay.latitude != null && overlay.longitude != null) {
+    map.flyTo([overlay.latitude, overlay.longitude], 9, { animate: true, duration: 0.8 })
+  }
+}
+
+export function openOverlayPopup(layer: { openPopup: () => unknown } | null): void {
+  layer?.openPopup()
+}
+
+export function isOverlayActiveAt(overlay: MapOverlay, now = Date.now()): boolean {
+  if (overlay.layer_class !== 'official' || !overlay.expires_at) return true
+  const expiresAt = new Date(overlay.expires_at).getTime()
+  return Number.isNaN(expiresAt) || expiresAt > now
+}
+
 function createEventIcon(event: Event, selected: boolean): L.DivIcon {
   const color = eventColor(event)
   const critical = event.magnitude >= 6 || ['wildfire', 'volcano', 'flood'].includes((event.event_type ?? '').toLowerCase())
@@ -217,14 +368,104 @@ function MiniMapController({ events, selectedEvent }: { events: Event[]; selecte
   return null
 }
 
+function OverlayFocusController({
+  overlay,
+  focusNonce,
+}: {
+  overlay?: MapOverlay
+  focusNonce: number
+}) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!overlay) return
+    focusOverlay(map, overlay)
+  }, [focusNonce, map, overlay])
+
+  return null
+}
+
+function OverlayPolygonLayer({
+  overlay,
+  positions,
+  selected,
+  focusNonce,
+}: {
+  overlay: MapOverlay
+  positions: [number, number][]
+  selected: boolean
+  focusNonce: number
+}) {
+  const layerRef = useRef<L.Polygon | null>(null)
+
+  useEffect(() => {
+    if (selected) openOverlayPopup(layerRef.current)
+  }, [focusNonce, selected])
+
+  return (
+    <Polygon ref={layerRef} positions={positions} pathOptions={overlayPathOptions(overlay, selected)}>
+      <Popup>
+        <strong>{overlay.label}</strong>
+        <br />
+        <span>{overlay.layer_class === 'official' ? 'Warning resmi' : 'Kajian risiko statis'}</span>
+        <br />
+        <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+          {overlay.attribution ?? 'Sumber belum dicantumkan'}
+          {overlay.layer_class === 'static_risk'
+            ? ` · vintage ${overlay.data_vintage ?? 'tidak tersedia'}`
+            : ''}
+        </span>
+      </Popup>
+    </Polygon>
+  )
+}
+
+function OfficialPointLayer({
+  overlay,
+  selected,
+  focusNonce,
+}: {
+  overlay: MapOverlay
+  selected: boolean
+  focusNonce: number
+}) {
+  const layerRef = useRef<L.CircleMarker | null>(null)
+
+  useEffect(() => {
+    if (selected) openOverlayPopup(layerRef.current)
+  }, [focusNonce, selected])
+
+  return (
+    <CircleMarker
+      ref={layerRef}
+      center={[overlay.latitude!, overlay.longitude!]}
+      radius={selected ? 11 : 8}
+      pathOptions={overlayPathOptions(overlay, selected)}
+    >
+      <Popup>
+        <strong>{overlay.label}</strong>
+        <br />
+        <span>Warning resmi</span>
+        <br />
+        <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+          {overlay.attribution ?? 'Sumber belum dicantumkan'}
+        </span>
+      </Popup>
+    </CircleMarker>
+  )
+}
+
 interface RiskMapProps {
   events: Event[]
   news?: NewsItem[]
   overlays?: MapOverlay[]
-  activePerilFilter: string
-  onFilterChange: (filter: string) => void
+  activePerilFilter: PerilFilter
   onEventClick: (event: Event) => void
   selectedEvent?: Event | null
+  selectedOverlayId?: string | null
+  overlayFocusNonce?: number
+  timelineHoursAgo: number
+  visibleOverlayClasses: ReadonlySet<RiskOverlayClass>
   height?: number | string
 }
 
@@ -233,15 +474,14 @@ export default function RiskMap({
   news = [],
   overlays = [],
   activePerilFilter,
-  onFilterChange,
   onEventClick,
   selectedEvent,
+  selectedOverlayId,
+  overlayFocusNonce = 0,
+  timelineHoursAgo,
+  visibleOverlayClasses,
   height = 430,
 }: RiskMapProps) {
-  const [timelineHoursAgo, setTimelineHoursAgo] = useState(0)
-  const [visibleOverlayClasses, setVisibleOverlayClasses] = useState(
-    new Set(['official', 'static_risk', 'watch_zone']),
-  )
   useEffect(() => {
     if (document.getElementById('risk-exec-map-css')) return
     const style = document.createElement('style')
@@ -253,18 +493,6 @@ export default function RiskMap({
   const currentFilter = LAYER_FILTERS.some((filter) => filter.key === activePerilFilter)
     ? (activePerilFilter as PerilFilter)
     : 'all'
-
-  const counts = useMemo(() => {
-    const countFor = (filter: PerilFilter) => events.filter((event) => eventMatchesFilter(event, filter)).length
-    return {
-      all: events.length,
-      earthquake: countFor('earthquake'),
-      wildfire: countFor('wildfire'),
-      volcano: countFor('volcano'),
-      flood: countFor('flood'),
-      news: news.filter((item) => item.lat != null && item.lon != null).length,
-    }
-  }, [events, news])
 
   const visibleEvents = useMemo(() => {
     if (currentFilter === 'news') return []
@@ -279,9 +507,15 @@ export default function RiskMap({
     [news, currentFilter],
   )
 
+  const currentTime = Date.now()
+  const selectedOverlay = overlays.find((overlay) => {
+    if (overlay.id !== selectedOverlayId) return false
+    return isOverlayActiveAt(overlay, currentTime)
+  })
   const focusEvent = selectedEvent ?? visibleEvents[0] ?? events[0]
   const timelineAt = Date.now() - timelineHoursAgo * 60 * 60 * 1000
   const visibleOverlays = overlays.filter((overlay) => {
+    if (overlay.id === selectedOverlay?.id) return true
     if (!visibleOverlayClasses.has(overlay.layer_class)) return false
     if (overlay.layer_class !== 'official') return true
     const effective = overlay.effective_at ? new Date(overlay.effective_at).getTime() : 0
@@ -289,24 +523,6 @@ export default function RiskMap({
     return effective <= timelineAt && expires >= timelineAt
   })
 
-  const toggleOverlayClass = (layerClass: string) => {
-    setVisibleOverlayClasses((current) => {
-      const next = new Set(current)
-      if (next.has(layerClass)) next.delete(layerClass)
-      else next.add(layerClass)
-      return next
-    })
-  }
-
-  const overlayPolygons = (overlay: MapOverlay): [number, number][][] => {
-    if (!overlay.geometry) return []
-    if (overlay.geometry.type === 'Polygon') {
-      const rings = overlay.geometry.coordinates as number[][][]
-      return [rings[0].map(([lon, lat]) => [lat, lon])]
-    }
-    const polygons = overlay.geometry.coordinates as number[][][][]
-    return polygons.map((polygon) => polygon[0].map(([lon, lat]) => [lat, lon]))
-  }
   const officialPolygons = visibleOverlays
     .filter((overlay) => overlay.layer_class === 'official')
     .flatMap(overlayPolygons)
@@ -318,65 +534,16 @@ export default function RiskMap({
   )
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {LAYER_FILTERS.map((filter) => (
-          <button
-            key={filter.key}
-            type="button"
-            onClick={() => onFilterChange(filter.key)}
-            className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-[11px] font-semibold transition ${
-              currentFilter === filter.key
-                ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40'
-                : 'bg-slate-950/70 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
-            }`}
-          >
-            <span className={filter.accent}>{filter.icon}</span>
-            {filter.label}
-            <span className="rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-500">
-              {counts[filter.key]}
-            </span>
-          </button>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-        {[
-          ['official', 'Warning resmi'],
-          ['static_risk', 'Kajian risiko'],
-          ['watch_zone', 'Watch zone'],
-        ].map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            aria-pressed={visibleOverlayClasses.has(key)}
-            onClick={() => toggleOverlayClass(key)}
-            className={`rounded-lg border px-2 py-1 ${
-              visibleOverlayClasses.has(key)
-                ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
-                : 'border-slate-700 text-slate-500'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-        <label className="ml-auto flex items-center gap-2">
-          Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}
-          <input
-            aria-label="Waktu lifecycle peta"
-            type="range"
-            min="0"
-            max="72"
-            value={timelineHoursAgo}
-            onChange={(event) => setTimelineHoursAgo(Number(event.target.value))}
-          />
-        </label>
-      </div>
-
+    <div>
       <div className="risk-exec-map relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
         <div className="pointer-events-none absolute left-3 top-3 z-[500] max-w-[70%] rounded-xl border border-slate-700/80 bg-slate-950/85 px-3 py-2 shadow-2xl shadow-slate-950/50 backdrop-blur">
           <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Map Focus</p>
           <p className="mt-1 line-clamp-1 text-xs font-semibold text-slate-100">
-            {focusEvent ? `${eventLabel(focusEvent.event_type)} · ${focusEvent.place}` : 'Menunggu data peta'}
+            {selectedOverlay
+              ? `Peringatan resmi · ${selectedOverlay.label}`
+              : focusEvent
+                ? `${eventLabel(focusEvent.event_type)} · ${focusEvent.place}`
+                : 'Menunggu data peta'}
           </p>
           <p className="mt-1 text-[10px] text-slate-500">
             Events {visibleEvents.length} · News pins {visibleNews.length}
@@ -407,34 +574,36 @@ export default function RiskMap({
             style={{ height: '100%', width: '100%', background: '#020617' }}
           >
             <MiniMapController events={visibleEvents.length > 0 ? visibleEvents : events} selectedEvent={selectedEvent} />
+            <OverlayFocusController overlay={selectedOverlay} focusNonce={overlayFocusNonce} />
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
 
             {visibleOverlays.flatMap((overlay) =>
               overlayPolygons(overlay).map((positions, index) => (
-                <Polygon
+                <OverlayPolygonLayer
                   key={`${overlay.id}-${index}`}
+                  overlay={overlay}
                   positions={positions}
-                  pathOptions={{
-                    color: overlay.layer_class === 'official' ? '#e879f9' : '#8b5cf6',
-                    fillOpacity: overlay.layer_class === 'official' ? 0.24 : 0.1,
-                    dashArray: overlay.layer_class === 'official' ? undefined : '6 5',
-                  }}
-                >
-                  <Popup>
-                    <strong>{overlay.label}</strong>
-                    <br />
-                    <span>{overlay.layer_class === 'official' ? 'Warning resmi' : 'Kajian risiko statis'}</span>
-                    <br />
-                    <span style={{ color: '#94a3b8', fontSize: '11px' }}>
-                      {overlay.attribution ?? 'Sumber belum dicantumkan'}
-                      {overlay.layer_class === 'static_risk'
-                        ? ` · vintage ${overlay.data_vintage ?? 'tidak tersedia'}`
-                        : ''}
-                    </span>
-                  </Popup>
-                </Polygon>
+                  selected={overlay.id === selectedOverlay?.id}
+                  focusNonce={overlayFocusNonce}
+                />
               )),
             )}
+
+            {visibleOverlays
+              .filter((overlay) =>
+                overlay.layer_class === 'official'
+                && overlay.latitude != null
+                && overlay.longitude != null
+                && !overlay.geometry,
+              )
+              .map((overlay) => (
+                <OfficialPointLayer
+                  key={overlay.id}
+                  overlay={overlay}
+                  selected={overlay.id === selectedOverlay?.id}
+                  focusNonce={overlayFocusNonce}
+                />
+              ))}
 
             {visibleOverlays
               .filter((overlay) => overlay.layer_class === 'watch_zone' && overlay.latitude != null && overlay.longitude != null)
