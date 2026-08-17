@@ -302,7 +302,7 @@ FROM organizations WHERE id=$1`, orgID).Scan(&memberCount, &pendingCount, &maxUs
 		token := base64.RawURLEncoding.EncodeToString(raw)
 		hash := sha256.Sum256([]byte(token))
 		var id string
-		err := db.QueryRowContext(c.Request.Context(), `
+		err = db.QueryRowContext(c.Request.Context(), `
 INSERT INTO organization_invitations
   (organization_id,email,role,token_hash,expires_at,invited_by)
 VALUES ($1,lower($2),$3,$4,now()+interval '7 days',$5)
