@@ -7,10 +7,11 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$PROJECT_DIR/.logs"
 mkdir -p "$LOG_DIR"
 
-# --- Load local environment (Supabase DB credentials, etc.) ---
-# .env.local is gitignored; it must set DATABASE_URL to the Supabase pooled
-# connection string. Services now fail fast when DATABASE_URL is missing instead
-# of falling back to a local PostgreSQL database.
+# --- Load local environment (database credentials, auth JWT secret, etc.) ---
+# .env.local is gitignored; it must set DATABASE_URL to the local self-hosted
+# PostgreSQL (docker compose -f infra/local/docker-compose.yml up -d) and
+# SUPABASE_JWT_SECRET for signing local auth tokens. Services fail fast when
+# DATABASE_URL is missing.
 if [ -f "$PROJECT_DIR/.env.local" ]; then
   set -a
   . "$PROJECT_DIR/.env.local"

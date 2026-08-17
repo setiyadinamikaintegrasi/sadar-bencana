@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
+# =============================================================================
+# init-db.sh — bootstrap the local dev database (wrapper, kept for convention)
+# Usage   : bash scripts/init-db.sh
+# Delegates to infra/local/init-db.sh — the dev stack now mirrors production
+# (PostgreSQL 17 + PostGIS 3.5, container `sadar-postgres`, network `sadar-net`).
+# =============================================================================
 set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
-
-if [[ ! -f "${COMPOSE_FILE}" ]]; then
-  echo "docker-compose.yml not found at ${COMPOSE_FILE}" >&2
-  exit 1
-fi
-
-echo "Starting PostgreSQL and Redis..."
-docker compose -f "${COMPOSE_FILE}" up -d postgres redis
-
-echo "Waiting for PostgreSQL to become healthy..."
-until docker compose -f "${COMPOSE_FILE}" ps postgres --format json | grep -q '"Health":"healthy"'; do
-  sleep 2
-done
-
-echo "PostgreSQL is healthy. Schema files under db/schema/ are mounted into /docker-entrypoint-initdb.d and applied automatically on first initialization."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec bash "${SCRIPT_DIR}/infra/local/init-db.sh" "$@"
