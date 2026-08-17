@@ -248,7 +248,8 @@ DATABASE_URL=postgresql://sadar:***@127.0.0.1:5432/sadar_bencana
 
 # Secret HS256 untuk auth lokal (register/login/me via API Go).
 # Sama dengan GOTRUE_JWT_SECRET bila menjalankan GoTrue.
-SUPABASE_JWT_SECRET=replace-with-jwt-secret-min-32-chars
+# Generate: openssl rand -base64 32 (minimal 32 karakter).
+SUPABASE_JWT_SECRET=replace-with-jwt-secret
 
 # JWKS endpoint opsional untuk token asimetris (mis. GoTrue/ES256)
 # SUPABASE_JWKS_URL=https://auth.example.com/.well-known/jwks.json
