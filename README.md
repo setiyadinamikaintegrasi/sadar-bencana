@@ -64,7 +64,7 @@ Satu codebase Apache 2.0 mendukung dua mode deployment:
 | **Admin Evakuasi** | ✅ Admin | Kelola lokasi, import CSV, upload foto |
 | Executive Overview | ❌ | Public dashboard |
 | Events, Alerts, Briefing, Riwayat Wilayah | ❌ | Public |
-| AI Copilot | ✅ | Generative AI berbayar; wajib sesi Supabase dan rate limit |
+| AI Copilot | ✅ | Generative AI berbayar; wajib login dan rate limit |
 | Source Health | ❌ | Public |
 | Lokasi Evakuasi | ❌ | Publik — informasi keselamatan |
 
@@ -86,9 +86,9 @@ dapat digunakan mandiri tanpa bergantung pada layanan lisensi.
 | Data Access | database/sql + pgx | sql, pgx |
 | Worker / Ingestion | Python + FastAPI | 3.11+ + uvicorn |
 | AI / Briefing | TypeScript + Mastra | sesuai lockfile |
-| Database | Supabase Postgres / PostgreSQL | kompatibel PostgreSQL 16 |
+| Database | PostgreSQL + PostGIS (self-hosted) | 17 + 3.5 (paritas prod) |
 | Cache | Redis | 7 |
-| Auth | Supabase Auth (JWT ES256) | — |
+| Auth | Auth lokal API Go (JWT HS256); GoTrue opsional | — |
 | Package Manager | npm (monorepo workspaces) | v10+ (Node 20+) |
 
 ---
@@ -111,11 +111,14 @@ dapat digunakan mandiri tanpa bergantung pada layanan lisensi.
 
 - **Docker & Docker Compose** (untuk opsi A)
 - **Node.js 20+**, **Go 1.25**, **Python 3.11+** (untuk opsi B)
-- **PostgreSQL 16** + **Redis 7** (untuk opsi B; atau gunakan container)
+- **PostgreSQL 17 + PostGIS 3.5** & **Redis 7** (opsi B; DB tersedia via
+  `docker compose -f infra/local/docker-compose.yml up -d`)
 
 ### Opsi A: Docker Compose (Paling Sederhana)
 
-Menjalankan stack aplikasi dalam container: redis, api, worker, web. Database utama tetap Supabase melalui `DATABASE_URL`.
+Menjalankan stack aplikasi dalam container: redis, api, worker, web. Database
+self-hosted PostgreSQL 17 + PostGIS via `DATABASE_URL` (production memakai
+`infra/production/docker-compose.db.yml`; dev memakai `infra/local`).
 
 ```bash
 # 1. Clone repo dan masuk direktori
@@ -125,8 +128,8 @@ cd sadar-bencana
 # 2. Copy .env.example ke .env
 cp .env.example .env
 
-# 3. Isi DATABASE_URL, konfigurasi Supabase, dan dua token internal di .env
-# Generate WORKER_API_TOKEN dan MASTRA_API_TOKEN secara terpisah:
+# 3. Isi DATABASE_URL, SUPABASE_JWT_SECRET (secret auth lokal), dan dua token
+#    internal di .env. Generate WORKER_API_TOKEN dan MASTRA_API_TOKEN:
 openssl rand -hex 32
 openssl rand -hex 32
 
@@ -139,14 +142,14 @@ docker compose up -d
 
 **Troubleshooting Docker Compose:**
 
-- Jika API/worker gagal start, cek `DATABASE_URL`, konfigurasi Supabase,
+- Jika API/worker gagal start, cek `DATABASE_URL`, `SUPABASE_JWT_SECRET`,
   `WORKER_API_TOKEN`, dan `MASTRA_API_TOKEN`.
 - Lihat status semua container: `docker compose ps`
 - Hentikan semua service: `docker compose down`
 
 ### Opsi B: Pengembangan Lokal (tanpa container app)
 
-Jalankan Redis dalam container, namun API, Web, Mastra dijalankan di host. Database tetap Supabase melalui `.env.local`.
+Jalankan Redis dalam container, namun API, Web, Mastra dijalankan di host. Database lokal self-hosted (paritas production: PostgreSQL 17 + PostGIS 3.5) via `infra/local`.
 
 ```bash
 # 1. Clone repo dan masuk direktori
@@ -156,8 +159,10 @@ cd sadar-bencana
 # 2. Install dependency Node.js dari root
 npm install
 
-# 3. Jalankan Redis saja dalam container
+# 3. Jalankan DB (paritas production) + Redis
+docker compose -f infra/local/docker-compose.yml up -d
 docker compose up -d redis
+bash infra/local/init-db.sh   # first init: apply semua migrasi db/schema
 
 # 4. Copy .env.example menjadi .env.local, lalu edit nilainya
 cp .env.example .env
@@ -203,10 +208,10 @@ uvicorn main:app --reload --port 8002  # :8002
 
 ### Root `.env` (untuk Docker Compose)
 
-Disalin dari `.env.example`. Digunakan saat `docker compose up`. Runtime utama memakai Supabase; jangan arahkan `DATABASE_URL` ke Postgres Docker lokal kecuali sedang menjalankan eksperimen isolated dev di `infra/local`. Variabel:
+Disalin dari `.env.example`. Digunakan saat `docker compose up`. Arahkan `DATABASE_URL` ke PostgreSQL self-hosted (production: `sadar-postgres` via `sadar-net`; lokal: `infra/local/docker-compose.yml`). Variabel:
 
-- `DATABASE_URL` — **wajib** Supabase pooled connection string
-- `SUPABASE_URL`, `SUPABASE_JWT_SECRET` — konfigurasi Supabase Auth/JWT
+- `DATABASE_URL` — **wajib** connection string PostgreSQL 17 + PostGIS
+- `SUPABASE_JWT_SECRET` — secret HS256 auth lokal (sama dengan `GOTRUE_JWT_SECRET` bila menjalankan GoTrue)
 - `REDIS_URL` — koneksi Redis
 - `API_HOST`, `API_PORT`, `API_ENV` — konfigurasi API
 - `WORKER_BASE_URL` — alamat internal worker untuk proxy operasi import/preview
@@ -238,15 +243,15 @@ Untuk rollout production BMKG dashboard dan EWS di `sadarbencana.id`, gunakan
 Dibaca oleh `start.sh`. Variabel kunci:
 
 ```env
-# Database — gunakan Supabase pooled connection string
-DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+# Database — PostgreSQL self-hosted (dev: infra/local; prod: infra/production)
+DATABASE_URL=postgresql://sadar:***@127.0.0.1:5432/sadar_bencana
 
-# Supabase Auth (opsional, jika menggunakan Supabase)
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_JWT_SECRET=replace-with-supabase-jwt-secret
+# Secret HS256 untuk auth lokal (register/login/me via API Go).
+# Sama dengan GOTRUE_JWT_SECRET bila menjalankan GoTrue.
+SUPABASE_JWT_SECRET=replace-with-jwt-secret-min-32-chars
 
-# Supabase JWKS endpoint (opsional, diturunkan otomatis dari SUPABASE_URL)
-# SUPABASE_JWKS_URL=https://your-project.supabase.co/auth/v1/.well-known/jwks.json
+# JWKS endpoint opsional untuk token asimetris (mis. GoTrue/ES256)
+# SUPABASE_JWKS_URL=https://auth.example.com/.well-known/jwks.json
 
 # Mode community untuk development/self-hosted
 DEPLOYMENT_MODE=community
@@ -262,13 +267,9 @@ RISK_FREE_LIMIT=0
 
 ### `apps/web/.env.local` (untuk frontend, gitignored)
 
-Disalin dari `apps/web/.env.example`. Variabel:
+Disalin dari `apps/web/.env.example`. Auth lewat API Go (`/auth/login`, `/auth/register`, `/auth/me`) — tidak ada variabel Supabase. Variabel:
 
 ```env
-# Supabase Auth
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=replace-with-supabase-anon-key
-
 # (Opsional) API base URL — default: /api/v1
 # VITE_API_BASE_URL=/api/v1
 ```
@@ -284,34 +285,43 @@ MASTRA_BASE_URL=http://127.0.0.1:4111
 DEPLOYMENT_MODE=community
 PERSONAL_ASSET_LIMIT=20
 RISK_FREE_LIMIT=0
-DATABASE_URL=postgresql://postgres.<project-ref>:***@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+DATABASE_URL=(tidak ada default — API gagal start bila kosong)
 ```
 
 ---
 
-## Setup Supabase Auth
+## Setup Auth Lokal (self-hosted)
 
-Jika menggunakan Supabase untuk autentikasi (recommended untuk production):
+Autentikasi sekarang ditangani API Go sendiri (tabel `local_users`, token JWT
+HS256) — tanpa Supabase. Endpoint: `/api/v1/auth/register`, `/auth/login`,
+`/auth/me`. Frontend langsung memanggil endpoint ini (lihat
+`apps/web/src/lib/auth/AuthProvider.tsx`).
 
-1. **Buat project di Supabase:**
-   - Buka https://supabase.com
-   - Buat project baru, catat **Project URL** dan **anon key** (Settings → API)
-
-2. **Konfigurasi frontend** (`apps/web/.env.local`):
+1. **Generate secret JWT** (simpan di root `.env.local` / `.env`):
    ```env
-   VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=replace-with-supabase-anon-key
+   SUPABASE_JWT_SECRET=hasil-openssl-rand-base64-32
+   ```
+   ```bash
+   openssl rand -base64 32
    ```
 
-3. **Konfigurasi backend** (root `.env.local`):
-   ```env
-   SUPABASE_URL=https://your-project.supabase.co
-   SUPABASE_JWT_SECRET=replace-with-supabase-jwt-secret
+2. **Pastikan migrasi `db/schema/041_local_auth_users.sql` sudah diterapkan**
+   (otomatis bila memakai `bash infra/local/init-db.sh`).
+
+3. **Daftar akun pertama** lewat UI login (Register) atau API:
+   ```bash
+   curl -X POST http://localhost:8001/api/v1/auth/register \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"admin@example.com","password":"minimal8karakter"}'
    ```
 
-4. **Verifikasi koneksi:**
-   - API secara otomatis mengambil JWKS dari Supabase dan memverifikasi token user (ES256).
-   - Frontend dapat login/signup melalui Supabase Auth UI.
+4. **(Opsional) GoTrue self-hosted** untuk paritas penuh production — lihat
+   `infra/production/docker-compose.auth.yml` (dev: profile `auth` di
+   `infra/local/docker-compose.yml`). Token GoTrue kompatibel selama
+   `GOTRUE_JWT_SECRET` = `SUPABASE_JWT_SECRET`.
+
+5. **Turnstile (production):** set `TURNSTILE_SECRET_KEY` (API) dan
+   `VITE_TURNSTILE_SITE_KEY` (web). Kosong di dev = captcha dilewati.
 
 ---
 
@@ -363,33 +373,36 @@ Lihat [Pengaturan Sumber Resmi](docs/official-source-settings.md),
 
 ## Migrasi Database
 
-File migrasi SQL tersimpan di `db/schema/` (`001_init.sql` sampai
-`033_bmkg_data_online_import.sql`). Terapkan **berurutan** menurut nomor.
+File migrasi SQL tersimpan di `db/schema/` (berurutan menurut nomor, terakhir
+`041_local_auth_users.sql`). Terapkan **berurutan** menurut nomor.
 
 ### Untuk Docker Compose
 
-Root Docker Compose tidak lagi menjalankan PostgreSQL lokal. Migrasi schema harus diterapkan ke Supabase/Postgres target menggunakan `DATABASE_URL`.
+Root Docker Compose tidak menjalankan PostgreSQL. Jalankan DB paritas
+production dari `infra/local` lalu terapkan migrasi via `DATABASE_URL`.
 
-### Untuk pengembangan lokal (manual)
+### Untuk pengembangan lokal
 
-Terapkan migrasi langsung ke database Supabase/Postgres target:
+Cara termudah — script init otomatis menerapkan semua migrasi berurutan:
 
 ```bash
-# Untuk setiap file migrasi (001_init.sql, 002_*, etc.) jalankan ke Supabase:
+docker compose -f infra/local/docker-compose.yml up -d
+bash infra/local/init-db.sh
+```
+
+Atau manual ke database target:
+
+```bash
+# Untuk setiap file migrasi (001_init.sql, 002_*, etc.):
 psql "$DATABASE_URL" -f db/schema/001_init.sql
 psql "$DATABASE_URL" -f db/schema/002_briefings.sql
 # ... lanjutkan untuk semua file
 ```
 
-Atau, jika menggunakan Supabase:
-
-- Buka **SQL Editor** di dashboard Supabase
-- Copy-paste isi tiap file `db/schema/00*.sql` dan jalankan secara berurutan
-
 ### Verifikasi migrasi
 
 ```bash
-# Cek tabel di Supabase/Postgres target
+# Cek tabel di database target
 psql "$DATABASE_URL" -c '\dt'
 ```
 
@@ -425,7 +438,7 @@ bash scripts/verify-structure.sh
   ```bash
   docker compose logs -f api      # tail API logs
   docker compose logs -f worker   # tail Worker logs
-  # Database logs ada di Supabase Dashboard, bukan container lokal root compose.
+  # Database logs: docker logs sadar-postgres (stack infra/local atau infra/production).
   ```
 
 - **Pengembangan lokal:**
@@ -443,7 +456,7 @@ bash scripts/verify-structure.sh
 Untuk informasi lebih detail tentang arsitektur, deployment, dan fitur:
 
 - **[Daftar Risiko Deployment](docs/daftar-risiko-deployment.md)** — mode community/hosted, aset personal, dan token organisasi
-- **[BMKG Production Rollout](docs/bmkg-production-rollout.md)** — preflight, backup Supabase, migration 040, rollout Compose, activation bertahap, dan rollback
+- **[BMKG Production Rollout](docs/bmkg-production-rollout.md)** — preflight, backup database, migration 040, rollout Compose, activation bertahap, dan rollback
 - **[EWS Setup](docs/ews-setup.md)** — konfigurasi Early Warning System
 - **[Official Alert Lifecycle](docs/official-alert-lifecycle.md)** — revision, expiry, update, dan cancellation alert resmi
 - **[BMKG CAP Nowcast](docs/bmkg-cap-nowcast.md)** — konfigurasi, attribution, normalisasi, dan lifecycle peringatan BMKG

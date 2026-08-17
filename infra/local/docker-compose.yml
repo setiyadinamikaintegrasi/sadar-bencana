@@ -1,87 +1,88 @@
 # =============================================================================
-# docker-compose.yml — Sadar Bencana (local dev stack)
-# Project : Sadar Bencana
+# docker-compose.yml — Sadar Bencana (local dev stack, mirrors production)
 # Usage   : docker compose -f infra/local/docker-compose.yml up -d
-# Docs    : see infra/local/README.md
+#           docker compose -f infra/local/docker-compose.yml --profile auth up -d
+# Docs    : see infra/local/README.md — paritas dengan infra/production
 # =============================================================================
 
-name: risk-local
+name: sadar-dev
 
 networks:
-  risk-net:
+  sadar-net:
+    name: sadar-net
     driver: bridge
 
 volumes:
-  pgdata:
-    driver: local
-  grafana-data:
+  sadar-pgdata:
     driver: local
 
 services:
   # ---------------------------------------------------------------------------
-  # PostgreSQL 16 — primary datastore (events, alerts, risk_scores, ...)
+  # PostgreSQL 17 + PostGIS 3.5 — sama persis dengan production
+  # (infra/production/docker-compose.db.yml). Container name & network sama
+  # (sadar-postgres / sadar-net) sehingga aplikasi kontainer mengakses DB lewat
+  # hostname `sadar-postgres:5432` seperti di production.
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16-alpine
+    image: postgis/postgis:17-3.5
+    # Official postgis:17 image belum punya build arm64; di Apple Silicon
+    # dijalankan via emulasi amd64 (Rosetta) — SAMA seperti production yang
+    # memakai tag ini. Di host x86_64 baris ini tidak berpengaruh.
+    platform: linux/amd64
     container_name: sadar-postgres
     restart: unless-stopped
     profiles: ["", "core"]
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sadar}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sadar_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-sadar_bencana}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - sadar-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sadar} -d ${POSTGRES_DB:-sadar_bencana}"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
       start_period: 10s
     networks:
-      - risk-net
+      - sadar-net
 
   # ---------------------------------------------------------------------------
-  # Redis 7 — cache / pub-sub / rate-limit / broker-lite
+  # GoTrue (Supabase Auth) self-hosted — OPSIONAL, hanya untuk paritas penuh
+  # dengan production. Flow auth utama (register/login/me) sudah ditangani
+  # API Go via tabel local_users dan TIDAK butuh service ini.
+  # Aktifkan dengan: --profile auth
   # ---------------------------------------------------------------------------
-  redis:
-    image: redis:7-alpine
-    container_name: sadar-redis
+  gotrue:
+    image: supabase/gotrue:v2.181.0
+    container_name: sadar-gotrue
     restart: unless-stopped
-    profiles: ["", "core"]
-    ports:
-      - "6379:6379"
-    command: ["redis-server", "--appendonly", "yes"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    networks:
-      - risk-net
-
-  # ---------------------------------------------------------------------------
-  # Grafana (optional) — dashboards for risk & event metrics.
-  # Disabled by default: run with `--profile monitoring`.
-  #   docker compose -f infra/local/docker-compose.yml --profile monitoring up -d
-  # ---------------------------------------------------------------------------
-  grafana:
-    image: grafana/grafana:latest
-    container_name: risk-grafana
-    restart: unless-stopped
-    profiles: ["monitoring"]
-    ports:
-      - "3002:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - grafana-data:/var/lib/grafana
+    profiles: ["auth"]
     depends_on:
       postgres:
         condition: service_healthy
+    ports:
+      - "127.0.0.1:9999:9999"
     networks:
-      - risk-net
+      - sadar-net
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${GOTRUE_API_EXTERNAL_URL:-http://127.0.0.1:9999}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: ${GOTRUE_DB_URL:-postgres://supabase_auth_admin:sadar_dev_password@sadar-postgres:5432/sadar_bencana}
+      GOTRUE_SITE_URL: ${GOTRUE_SITE_URL:-http://localhost:3001}
+      GOTRUE_URI_ALLOW_LIST: ${GOTRUE_URI_ALLOW_LIST:-http://localhost:3001}
+      # Harus sama dengan SUPABASE_JWT_SECRET agar token saling kompatibel.
+      GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:-dev-only-gotrue-jwt-secret-rotate-me-please-32b}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SECURITY_CAPTCHA_ENABLED: "false"
+      GOTRUE_PASSWORD_MIN_LENGTH: "8"
+      GOTRUE_LOG_LEVEL: info
+      GOTRUE_DISABLE_SIGNUP: "false"
