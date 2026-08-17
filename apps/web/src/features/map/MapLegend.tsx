@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+import { SEVERITY_TONES, type SeverityTone } from '../../components/severityTones'
 import type { PublicMapLayerResult, PublicMapLayerViewState } from './mapApi'
 import { PUBLIC_OPERATIONAL_MAP_LAYERS, type PublicOperationalMapLayer } from './types'
 
@@ -23,6 +25,14 @@ const healthLabel: Record<PublicMapLayerViewState['health'], string> = {
   empty: 'Kosong',
 }
 
+// Kunci severity: kritis & tinggi ditandai berkedip di peta/notifikasi.
+const SEVERITY_KEY: Array<{ tone: Exclude<SeverityTone, 'none'>; blinks: boolean }> = [
+  { tone: 'critical', blinks: true },
+  { tone: 'high', blinks: true },
+  { tone: 'moderate', blinks: false },
+  { tone: 'low', blinks: false },
+]
+
 function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayerViewState | undefined {
   if (!result) return undefined
   return {
@@ -33,6 +43,15 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
 }
 
 export function MapLegend({ enabledLayers, results, layerStates, onToggle }: MapLegendProps) {
+  const detailsRef = useRef<HTMLDetailsElement | null>(null)
+  // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
+  // membukanya lewat summary. Desktop tetap terbuka.
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    if (window.matchMedia('(max-width: 42rem)').matches && detailsRef.current) {
+      detailsRef.current.open = false
+    }
+  }, [])
   const states = PUBLIC_OPERATIONAL_MAP_LAYERS.map((layer) => layerStates?.[layer] ?? fallbackState(results[layer]))
   const collections = states.flatMap((state) => state?.collection ? [state.collection] : [])
   const stale = states.some((state) => state?.health === 'stale')
@@ -43,25 +62,44 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle }: Map
 
   return (
     <aside className="operational-map__legend" aria-label="Lapisan peta">
-      <fieldset className="operational-map__layer-controls">
-        <legend>Lapisan</legend>
-        {PUBLIC_OPERATIONAL_MAP_LAYERS.map((layer) => (
-          <label key={layer} className="operational-map__layer-toggle">
-            <input
-              type="checkbox"
-              aria-label={LAYER_LABELS[layer]}
-              checked={enabledLayers.includes(layer)}
-              onChange={() => onToggle(layer)}
-            />
-            <span>{LAYER_LABELS[layer]}</span>
-            {enabledLayers.includes(layer) && (layerStates?.[layer] ?? fallbackState(results[layer])) ? (
-              <span className="operational-map__layer-health" data-state={(layerStates?.[layer] ?? fallbackState(results[layer]))?.health}>
-                {healthLabel[(layerStates?.[layer] ?? fallbackState(results[layer]))!.health]}
-              </span>
-            ) : null}
-          </label>
-        ))}
-      </fieldset>
+      <details ref={detailsRef} className="operational-map__legend-details" open>
+        <summary>Lapisan</summary>
+        <fieldset className="operational-map__layer-controls">
+          {PUBLIC_OPERATIONAL_MAP_LAYERS.map((layer) => (
+            <label key={layer} className="operational-map__layer-toggle">
+              <input
+                type="checkbox"
+                aria-label={LAYER_LABELS[layer]}
+                checked={enabledLayers.includes(layer)}
+                onChange={() => onToggle(layer)}
+              />
+              <span>{LAYER_LABELS[layer]}</span>
+              {enabledLayers.includes(layer) && (layerStates?.[layer] ?? fallbackState(results[layer])) ? (
+                <span className="operational-map__layer-health" data-state={(layerStates?.[layer] ?? fallbackState(results[layer]))?.health}>
+                  {healthLabel[(layerStates?.[layer] ?? fallbackState(results[layer]))!.health]}
+                </span>
+              ) : null}
+            </label>
+          ))}
+        </fieldset>
+        <div className="operational-map__severity-key" aria-label="Tingkat kewaspadaan">
+          <p className="operational-map__severity-title">Tingkat kewaspadaan</p>
+          <ul>
+            {SEVERITY_KEY.map(({ tone, blinks }) => (
+              <li key={tone}>
+                <span
+                  className="operational-map__severity-dot"
+                  data-tone={tone}
+                  style={{ backgroundColor: SEVERITY_TONES[tone].color }}
+                />
+                <span>{SEVERITY_TONES[tone].label}</span>
+                {blinks ? <span className="operational-map__severity-blink-hint">berkedip</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </details>
+      {/* Nota status & atribusi tetap terlihat meski legenda diringkas. */}
       {enabledLayers.length === 0 ? <p className="operational-map__notice">Aktifkan setidaknya satu lapisan.</p> : null}
       {states.some((state) => state?.refreshing) ? <p className="operational-map__notice">Memperbarui data peta.</p> : null}
       {states.some((state) => state?.refreshFailed) ? <p className="operational-map__notice" data-state="stale">Data tersimpan, muat ulang gagal.</p> : null}

@@ -2,12 +2,36 @@
   position: relative;
   min-height: 20rem;
   overflow: hidden;
-  background: #e8edf0;
+  background: #0f172a;
+  border-radius: 16px;
 }
 
 .operational-map__canvas {
   position: absolute;
   inset: 0;
+}
+
+/* --- Glassmorphism panel ala "Apple Air" (vibrancy gelap) --- */
+.operational-map__status,
+.operational-map__fallback,
+.operational-map__legend,
+.operational-map__detail-sheet {
+  background: rgba(15, 23, 42, 0.55);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(2, 6, 23, 0.35);
+  color: #e2e8f0;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .operational-map__status,
+  .operational-map__fallback,
+  .operational-map__legend,
+  .operational-map__detail-sheet {
+    background: rgba(15, 23, 42, 0.92);
+  }
 }
 
 .operational-map__status,
@@ -17,18 +41,15 @@
   bottom: 0.75rem;
   max-width: min(24rem, calc(100% - 1.5rem));
   margin: 0;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #b8c4c9;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.94);
-  color: #1d2d35;
-  font-size: 0.875rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.8125rem;
   line-height: 1.35;
+  color: #cbd5e1;
 }
 
 .operational-map__fallback {
-  border-color: #c96a53;
-  background: #fff8f5;
+  border-color: rgba(244, 63, 94, 0.4);
+  color: #fecdd3;
 }
 
 .operational-map__legend {
@@ -36,14 +57,40 @@
   z-index: 1;
   top: 0.75rem;
   left: 0.75rem;
-  width: min(15rem, calc(100% - 1.5rem));
-  padding: 0.625rem;
-  border: 1px solid #b8c4c9;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.94);
-  color: #1d2d35;
+  width: min(16rem, calc(100% - 1.5rem));
+  padding: 0.625rem 0.875rem;
   font-size: 0.8125rem;
   line-height: 1.35;
+}
+
+.operational-map__legend-details {
+  max-height: min(70%, 26rem);
+  overflow: auto;
+}
+
+.operational-map__legend-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.375rem;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.operational-map__legend-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.operational-map__legend-details > summary::after {
+  content: '▾';
+  color: #94a3b8;
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+}
+
+.operational-map__legend-details[open] > summary::after {
+  transform: rotate(180deg);
 }
 
 .operational-map__layer-controls {
@@ -52,11 +99,6 @@
   margin: 0;
   padding: 0;
   border: 0;
-}
-
-.operational-map__layer-controls legend {
-  margin-bottom: 0.375rem;
-  font-weight: 700;
 }
 
 .operational-map__layer-toggle {
@@ -70,19 +112,82 @@
   width: 1rem;
   height: 1rem;
   margin: 0;
-  accent-color: #186f65;
+  accent-color: #2dd4bf;
 }
 
 .operational-map__layer-health {
   margin-left: auto;
-  color: #53656e;
+  color: #94a3b8;
   font-size: 0.75rem;
 }
 
 .operational-map__layer-health[data-state='stale'],
 .operational-map__layer-health[data-state='unavailable'] {
-  color: #8b4b12;
+  color: #fdba74;
   font-weight: 600;
+}
+
+/* --- Kunci tingkat kewaspadaan --- */
+.operational-map__severity-key {
+  margin-top: 0.625rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.operational-map__severity-title {
+  margin: 0 0 0.375rem;
+  color: #94a3b8;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operational-map__severity-key ul {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.operational-map__severity-key li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.operational-map__severity-dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  flex: 0 0 auto;
+  border-radius: 9999px;
+}
+
+.operational-map__severity-dot[data-tone='critical'],
+.operational-map__severity-dot[data-tone='high'] {
+  animation: map-severity-blink 1.2s ease-in-out infinite;
+}
+
+.operational-map__severity-dot[data-tone='high'] {
+  animation-duration: 1.8s;
+}
+
+.operational-map__severity-blink-hint {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 0.6875rem;
+  font-style: italic;
+}
+
+@keyframes map-severity-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .operational-map__notice,
@@ -90,16 +195,21 @@
   margin: 0.5rem 0 0;
 }
 
+.operational-map__notice {
+  color: #cbd5e1;
+}
+
 .operational-map__notice[data-state='stale'] {
-  color: #8b4b12;
+  color: #fdba74;
   font-weight: 600;
 }
 
 .operational-map__attribution {
-  color: #44545d;
+  color: #94a3b8;
   font-size: 0.75rem;
 }
 
+/* --- Detail sheet (glass) --- */
 .operational-map__detail-sheet {
   position: absolute;
   z-index: 2;
@@ -109,11 +219,6 @@
   max-height: calc(100% - 1.5rem);
   overflow: auto;
   padding: 0.875rem;
-  border: 1px solid #b8c4c9;
-  border-radius: 4px;
-  background: #ffffff;
-  color: #1d2d35;
-  box-shadow: 0 8px 20px rgba(21, 44, 54, 0.16);
 }
 
 .operational-map__detail-header {
@@ -131,7 +236,7 @@
 
 .operational-map__detail-type {
   margin: 0;
-  color: #44545d;
+  color: #94a3b8;
   font-size: 0.75rem;
   text-transform: capitalize;
 }
@@ -144,15 +249,15 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid #99aab1;
-  border-radius: 4px;
-  background: #ffffff;
-  color: #1d2d35;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
   cursor: pointer;
 }
 
 .operational-map__icon-button:hover {
-  background: #edf3f3;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .operational-map__detail-list {
@@ -168,7 +273,7 @@
 }
 
 .operational-map__detail-row dt {
-  color: #53656e;
+  color: #94a3b8;
 }
 
 .operational-map__detail-row dd {
@@ -182,9 +287,41 @@
   align-items: center;
   gap: 0.375rem;
   margin-top: 1rem;
-  color: #075f59;
+  color: #7dd3fc;
   font-size: 0.875rem;
   font-weight: 600;
+}
+
+/* --- Kontrol MapLibre senada (glass) --- */
+.operational-map .maplibregl-ctrl-group {
+  background: rgba(15, 23, 42, 0.55);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(2, 6, 23, 0.35);
+  overflow: hidden;
+}
+
+.operational-map .maplibregl-ctrl-group button {
+  background: transparent;
+  width: 1.875rem;
+}
+
+.operational-map .maplibregl-ctrl-group button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.operational-map .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(0.9);
+}
+
+/* --- Reduced motion: matikan semua kedipan --- */
+@media (prefers-reduced-motion: reduce) {
+  .operational-map__severity-dot[data-tone='critical'],
+  .operational-map__severity-dot[data-tone='high'] {
+    animation: none;
+  }
 }
 
 @media (max-width: 42rem) {
@@ -198,7 +335,7 @@
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
-    border-radius: 0;
+    border-radius: 16px 16px 0 0;
   }
 
   .operational-map__status {
@@ -207,5 +344,11 @@
 
   .operational-map__fallback {
     bottom: calc(4rem + 0.75rem);
+  }
+
+  .operational-map__legend {
+    top: 0.5rem;
+    left: 0.5rem;
+    width: min(14rem, calc(100% - 1rem));
   }
 }

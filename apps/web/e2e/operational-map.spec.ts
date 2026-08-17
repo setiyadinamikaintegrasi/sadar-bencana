@@ -176,6 +176,9 @@ function ownerToken() {
 
 async function openMap(page: Page): Promise<FixtureState> {
   const fixtures = await installFixtures(page)
+  // Denyut severity (blink JS di OperationalMap) dinonaktifkan agar snapshot
+  // visual deterministik; produk tetap menghormati prefers-reduced-motion.
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Executive Risk Map' })).toBeVisible()
   await expect(page.locator('.operational-map__canvas canvas.maplibregl-canvas')).toBeVisible()
@@ -269,6 +272,8 @@ test('falls back when WebGL is unavailable and keeps mobile navigation unobscure
     }
   })
   const fixtures = await installFixtures(page)
+  // Snapshot deterministik: tanpa animasi CSS/JS severity.
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
 
   const fallback = page.getByRole('alert')

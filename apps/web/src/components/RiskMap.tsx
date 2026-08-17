@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Circle, CircleMarker, MapContainer, Marker, Polygon, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { Event, MapOverlay, NewsItem } from '../lib/api/client'
+import { SEVERITY_TONES, severityTone } from './severityTones'
 
 const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
@@ -173,14 +174,18 @@ const MAP_ANIMATION_CSS = `
 `
 
 function eventColor(event: Event): string {
+  // Utamakan severity dari API agar konsisten dengan MapLibre + notifikasi;
+  // fallback ke heuristik magnitude/jenis bila severity kosong.
+  const tone = severityTone(event.severity)
+  if (tone !== 'none') return SEVERITY_TONES[tone].color
   const type = (event.event_type ?? '').toLowerCase()
   if (type.includes('wildfire') || type.includes('fire')) return '#f97316'
-  if (type.includes('volcano')) return '#ef4444'
+  if (type.includes('volcano')) return '#f43f5e'
   if (type.includes('flood')) return '#38bdf8'
-  if (event.magnitude >= 7) return '#dc2626'
+  if (event.magnitude >= 7) return '#f43f5e'
   if (event.magnitude >= 6) return '#f97316'
-  if (event.magnitude >= 5) return '#eab308'
-  return '#22c55e'
+  if (event.magnitude >= 5) return '#fbbf24'
+  return '#34d399'
 }
 
 function eventGlyph(event: Event): string {
@@ -550,14 +555,14 @@ export default function RiskMap({
           </p>
         </div>
 
-        <div className="pointer-events-none absolute bottom-3 left-3 z-[500] flex flex-wrap gap-2 rounded-xl border border-slate-700/80 bg-slate-950/85 px-3 py-2 text-[10px] text-slate-400 shadow-2xl shadow-slate-950/50 backdrop-blur">
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-500" /> Gempa</span>
+        <div className="pointer-events-none absolute bottom-3 left-3 z-[500] flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-slate-950/55 px-3.5 py-2.5 text-[10px] text-slate-300 shadow-2xl shadow-slate-950/50 backdrop-blur-xl">
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500 severity-blink severity-blink--critical" /> Kritis</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-500 severity-blink severity-blink--high" /> Tinggi</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" /> Sedang</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400" /> Rendah</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-sky-400" /> Banjir</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" /> Vulkanik</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-400" /> Karhutla</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded bg-emerald-400" /> News</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 bg-fuchsia-400" /> Official</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-400" /> Observed</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 bg-violet-400/50" /> Static / inferred</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 bg-slate-400" /> Unverified</span>
         </div>

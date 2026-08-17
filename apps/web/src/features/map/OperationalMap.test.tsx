@@ -794,6 +794,24 @@ describe('OperationalMap', () => {
     expect(onToggle).toHaveBeenCalledWith('official-alerts')
   })
 
+  it('renders the severity awareness key with blink hints for critical and high', () => {
+    render(
+      <MapLegend
+        enabledLayers={['events']}
+        results={{}}
+        onToggle={() => {}}
+      />,
+    )
+
+    expect(screen.getByText('Tingkat kewaspadaan')).toBeTruthy()
+    expect(screen.getByText('Kritis')).toBeTruthy()
+    expect(screen.getByText('Tinggi')).toBeTruthy()
+    expect(screen.getByText('Sedang')).toBeTruthy()
+    expect(screen.getByText('Rendah')).toBeTruthy()
+    // Kritis & tinggi ditandai berkedip; sedang & rendah tidak.
+    expect(screen.getAllByText('berkedip')).toHaveLength(2)
+  })
+
   it('renders typed public feature details without raw GeoJSON and closes from its accessible icon control', () => {
     const onClose = vi.fn()
     render(

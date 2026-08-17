@@ -54,8 +54,8 @@ type IntelligenceMoment = {
 const severityClasses: Record<Severity, string> = {
   Low: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30',
   Medium: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
-  High: 'bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30',
-  Critical: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
+  High: 'bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30 severity-blink severity-blink--high',
+  Critical: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30 severity-blink severity-blink--critical',
 }
 
 const perilLabels: Record<string, string> = {
@@ -640,7 +640,11 @@ export default function ExecutiveOverview({
           ) : latestBmkgEarthquake ? (
             <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center">
               <div className="flex items-center gap-3 lg:min-w-[250px]">
-                <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-orange-300/30 bg-orange-500/15 text-orange-100">
+                <div
+                  className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-orange-300/30 bg-orange-500/15 text-orange-100 ${
+                    severityFor(latestBmkgEarthquake.magnitude) === 'Critical' ? 'severity-blink severity-blink--critical' : ''
+                  }`}
+                >
                   <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-300">Mag</span>
                   <span className="text-2xl font-black leading-none">{latestBmkgEarthquake.magnitude.toFixed(1)}</span>
                 </div>

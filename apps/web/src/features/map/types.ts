@@ -39,6 +39,8 @@ export interface OperationalMapFeatureProperties {
   attribution: string
   source_url?: string
   verification_status: string
+  /** Rank numerik severity 0–4 (dihitung client-side oleh layer events). */
+  severity_rank?: number
   observed_at?: string
   effective_at?: string
   expires_at?: string

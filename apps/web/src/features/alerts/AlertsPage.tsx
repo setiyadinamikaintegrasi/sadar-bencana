@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import SourceBadge from '../../components/SourceBadge'
+import SeverityBadge from '../../components/SeverityBadge'
+import { SEVERITY_TONES, severityTone } from '../../components/severityTones'
 import {
   acknowledgeAlert,
   getAlertActionCard,
   getAlerts,
   type Alert,
   type AlertActionCard,
-  type AlertSeverity,
   type AlertVerification,
 } from '../../lib/api/client'
 
@@ -14,10 +15,13 @@ const REFRESH_INTERVAL_MS = 300_000
 
 const ALL_SOURCES = '__all__'
 
-const severityClasses: Record<AlertSeverity, string> = {
-  Moderate: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
-  High: 'bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30',
-  Critical: 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30',
+/** Rail + efek kedip kartu untuk alert yang belum di-acknowledge. */
+function alertCardAccent(alert: Alert): string {
+  if (alert.acknowledged) return ''
+  const tone = severityTone(alert.severity)
+  if (tone === 'critical') return 'severity-blink severity-blink--critical'
+  if (tone === 'high') return 'severity-blink severity-blink--high'
+  return ''
 }
 
 const verificationClasses: Record<AlertVerification, string> = {
@@ -307,23 +311,23 @@ export default function AlertsPage() {
         </section>
       ) : (
         <section className="space-y-4">
-          {filteredAlerts.map((alert) => (
+          {filteredAlerts.map((alert) => {
+            const tone = SEVERITY_TONES[severityTone(alert.severity)]
+            const accent = alertCardAccent(alert)
+            return (
             <article
               key={alert.id}
-              className={`rounded-2xl border bg-slate-900 p-6 shadow-2xl shadow-slate-950/40 transition ${
+              className={`relative overflow-hidden rounded-2xl border bg-slate-900 p-6 shadow-2xl shadow-slate-950/40 transition ${
                 alert.acknowledged
                   ? 'border-slate-800 opacity-80'
                   : 'border-slate-700 ring-1 ring-inset ring-slate-700/60'
-              }`}
+              } ${accent}`}
             >
+              <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${tone.rail}`} />
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span
-                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[alert.severity]}`}
-                    >
-                      {alert.severity}
-                    </span>
+                    <SeverityBadge severity={alert.severity} pulse={!alert.acknowledged} />
                     <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 ring-1 ring-inset ring-slate-700">
                       {alert.alert_type}
                     </span>
@@ -405,7 +409,8 @@ export default function AlertsPage() {
                 </div>
               ) : null}
             </article>
-          ))}
+            )
+          })}
         </section>
       )}
     </div>

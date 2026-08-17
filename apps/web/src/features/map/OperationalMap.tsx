@@ -5,8 +5,8 @@ import { MapLegend } from './MapLegend'
 import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState, type PublicMapViewport } from './mapApi'
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
-import { eventsLayer } from './layers/events'
-import { officialAlertsLayer } from './layers/officialAlerts'
+import { EVENTS_PULSE_LAYERS, eventsLayer } from './layers/events'
+import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -25,6 +25,26 @@ export type OperationalMapFocusRequest = {
 }
 
 const MAP_REFRESH_DEBOUNCE_MS = 250
+
+// Denyut severity: kritis berkedip lebih cepat (siklus ~800ms) daripada
+// tinggi (~1600ms) agar hierarki urgensi langsung terbaca di peta.
+const PULSE_INTERVAL_MS = 400
+const PULSE_OPACITY = {
+  criticalOn: 0.55,
+  criticalOff: 0.12,
+  highOn: 0.4,
+  highOff: 0.08,
+} as const
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function setPulsePaint(map: maplibregl.Map, layerId: string, property: 'circle-opacity' | 'line-opacity', opacity: number): void {
+  if (typeof map.getLayer !== 'function' || typeof map.setPaintProperty !== 'function') return
+  if (map.getLayer(layerId)) map.setPaintProperty(layerId, property, opacity)
+}
+
 const EMPTY_CONTROLLED_COLLECTIONS: Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>> = {}
 
 const layerAdapters = {
@@ -232,6 +252,7 @@ export default function OperationalMap({
     let disposed = false
     let suppressNextCameraWrite = false
     let lastFocusedRequestKey: string | undefined
+    let pulseTimer: number | undefined
 
     const focusGeometry = (geometry: GeoJSON.Geometry) => {
       if (!map) return
@@ -533,6 +554,7 @@ export default function OperationalMap({
       disposed = true
       observer?.disconnect()
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      if (pulseTimer !== undefined) window.clearInterval(pulseTimer)
       refreshController?.abort()
       privateController?.abort()
       loadLayersRef.current = null
@@ -619,6 +641,23 @@ export default function OperationalMap({
       for (const layerId of adapter.layerIds) map.on('click', layerId, selectFeature)
     }
     map.on('click', eventsLayer.layerIds[0], expandCluster)
+
+    // Denyut severity di peta: dilewati bila pengguna meminta reduced motion
+    // atau lingkungan tanpa matchMedia (jsdom).
+    if (!prefersReducedMotion()) {
+      let pulseTick = 0
+      pulseTimer = window.setInterval(() => {
+        if (disposed || !map) return
+        pulseTick += 1
+        const criticalOn = pulseTick % 2 === 0
+        const highOn = Math.floor(pulseTick / 2) % 2 === 0
+        setPulsePaint(map, EVENTS_PULSE_LAYERS.critical, 'circle-opacity', criticalOn ? PULSE_OPACITY.criticalOn : PULSE_OPACITY.criticalOff)
+        setPulsePaint(map, EVENTS_PULSE_LAYERS.cluster, 'circle-opacity', criticalOn ? 0.5 : 0.14)
+        setPulsePaint(map, OFFICIAL_ALERTS_PULSE_LAYERS.point, 'circle-opacity', criticalOn ? PULSE_OPACITY.criticalOn : PULSE_OPACITY.criticalOff)
+        setPulsePaint(map, OFFICIAL_ALERTS_PULSE_LAYERS.outline, 'line-opacity', criticalOn ? 0.95 : 0.35)
+        setPulsePaint(map, EVENTS_PULSE_LAYERS.high, 'circle-opacity', highOn ? PULSE_OPACITY.highOn : PULSE_OPACITY.highOff)
+      }, PULSE_INTERVAL_MS)
+    }
 
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => {

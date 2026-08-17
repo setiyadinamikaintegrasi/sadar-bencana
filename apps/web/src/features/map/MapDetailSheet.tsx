@@ -1,5 +1,6 @@
 import { ExternalLink, X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import SeverityBadge from '../../components/SeverityBadge'
 import type { OperationalMapFeature } from './types'
 
 interface MapDetailSheetProps {
@@ -89,6 +90,11 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
       </header>
       <dl className="operational-map__detail-list">
         <DetailRow label="Sumber">{properties.source}</DetailRow>
+        {properties.severity ? (
+          <DetailRow label="Severity">
+            <SeverityBadge severity={properties.severity} pulse />
+          </DetailRow>
+        ) : null}
         <DetailRow label="Atribusi">{properties.attribution}</DetailRow>
         <DetailRow label="Verifikasi">{properties.verification_status}</DetailRow>
         {observation ? <DetailRow label="Pengamatan">{observation}</DetailRow> : null}

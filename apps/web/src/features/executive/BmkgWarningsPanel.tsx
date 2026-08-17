@@ -39,8 +39,8 @@ export type BmkgWarningsPanelProps = {
 const PM25_BMKG_URL = 'https://iklim.bmkg.go.id/en/kualitas-udara-indonesia/'
 
 const severityClasses: Record<string, string> = {
-  Critical: 'border-rose-400/40 bg-rose-500/15 text-rose-200',
-  High: 'border-orange-400/40 bg-orange-500/15 text-orange-200',
+  Critical: 'border-rose-400/40 bg-rose-500/15 text-rose-200 severity-blink severity-blink--critical',
+  High: 'border-orange-400/40 bg-orange-500/15 text-orange-200 severity-blink severity-blink--high',
   Moderate: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
 }
 
