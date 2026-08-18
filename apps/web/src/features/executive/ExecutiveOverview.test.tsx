@@ -75,6 +75,10 @@ vi.mock('../../lib/api/client', () => ({
   getAlerts: vi.fn().mockResolvedValue({ data: [], meta: { count: 0, unacknowledged: 0 } }),
   getConnectorHealth: vi.fn().mockResolvedValue([]),
   getEvents: vi.fn(() => Promise.resolve(dashboardState.events)),
+  getEventsWithMeta: vi.fn(() => Promise.resolve({
+    data: dashboardState.events,
+    meta: { count: dashboardState.events.length, limit: 310, window_hours: 72, window_total: dashboardState.events.length },
+  })),
   getMapOverlays: vi.fn(() => Promise.resolve(dashboardState.mapOverlays)),
   getMeta: vi.fn().mockResolvedValue({ service: 'api', environment: 'test', version: '1' }),
   getNews: vi.fn().mockResolvedValue([]),

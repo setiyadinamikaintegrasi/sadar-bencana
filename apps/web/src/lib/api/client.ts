@@ -199,9 +199,21 @@ export async function getMeta(): Promise<Meta> {
   return request<Meta>('/meta')
 }
 
+export type EventsMeta = {
+  count: number
+  limit: number
+  window_hours?: number
+  window_total?: number
+}
+
 export async function getEvents(): Promise<Event[]> {
-  const res = await request<{ data: Event[]; meta: { count: number; limit: number } }>('/events')
+  const res = await request<{ data: Event[]; meta: EventsMeta }>('/events')
   return res.data
+}
+
+/** Feed event terkurasi + total aktivitas nyata window monitor (72 jam). */
+export async function getEventsWithMeta(): Promise<{ data: Event[]; meta: EventsMeta }> {
+  return request<{ data: Event[]; meta: EventsMeta }>('/events')
 }
 
 export type MapOverlay = {

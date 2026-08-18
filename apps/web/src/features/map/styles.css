@@ -198,6 +198,14 @@
   font-style: italic;
 }
 
+.operational-map__peril-glyph {
+  width: 0.875rem;
+  flex: 0 0 auto;
+  font-size: 0.6875rem;
+  line-height: 1;
+  text-align: center;
+}
+
 @keyframes map-severity-blink {
   0%,
   100% {

@@ -6,7 +6,7 @@ import { MapLegend } from './MapLegend'
 import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState, type PublicMapViewport } from './mapApi'
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
-import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
+import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
@@ -668,7 +668,7 @@ export default function OperationalMap({
       for (const adapter of Object.values(layerAdapters)) {
         for (const layerId of adapter.layerIds) m.on('click', layerId, selectFeature)
       }
-      m.on('click', eventsLayer.layerIds[0], expandCluster)
+      m.on('click', EVENTS_CLUSTERS_LAYER_ID, expandCluster)
       for (const layerId of HOVERABLE_LAYER_IDS) {
         m.on('mousemove', layerId, hoverFeatureFromEvent)
         m.on('mouseleave', layerId, clearHover)
@@ -718,7 +718,7 @@ export default function OperationalMap({
       currentMap.off('moveend', synchronizeView)
       currentMap.off('webglcontextlost', showFallback)
       currentMap.off('click', pickLocation)
-      currentMap.off('click', eventsLayer.layerIds[0], expandCluster)
+      currentMap.off('click', EVENTS_CLUSTERS_LAYER_ID, expandCluster)
       for (const layerId of HOVERABLE_LAYER_IDS) {
         currentMap.off('mousemove', layerId, hoverFeatureFromEvent)
         currentMap.off('mouseleave', layerId, clearHover)

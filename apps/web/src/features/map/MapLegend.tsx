@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { SEVERITY_TONES, type SeverityTone } from '../../components/severityTones'
+import { eventPerilLegend } from './layers/eventIcons'
 import type { PublicMapLayerResult, PublicMapLayerViewState } from './mapApi'
 import { PUBLIC_OPERATIONAL_MAP_LAYERS, type PublicOperationalMapLayer } from './types'
 
@@ -171,6 +172,17 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
                 />
                 <span>{SEVERITY_TONES[tone].label}</span>
                 {blinks ? <span className="operational-map__severity-blink-hint">berkedip</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="operational-map__severity-key" aria-label="Jenis bencana">
+          <p className="operational-map__severity-title">Jenis bencana</p>
+          <ul>
+            {eventPerilLegend().map((icon) => (
+              <li key={icon.imageId}>
+                <span className="operational-map__peril-glyph" aria-hidden="true">{icon.glyph}</span>
+                <span>{icon.label}</span>
               </li>
             ))}
           </ul>
