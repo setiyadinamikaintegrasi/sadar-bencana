@@ -15,6 +15,9 @@ interface MapLegendProps {
   results: Partial<Record<PublicOperationalMapLayer, PublicMapLayerResult>>
   layerStates?: Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>>
   onToggle: (layer: PublicOperationalMapLayer) => void
+  /** Mode heatmap kepadatan kejadian (menggantikan titik/klaster). */
+  heatmapOn?: boolean
+  onToggleHeatmap?: (next: boolean) => void
 }
 
 const healthLabel: Record<PublicMapLayerViewState['health'], string> = {
@@ -42,7 +45,7 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
   }
 }
 
-export function MapLegend({ enabledLayers, results, layerStates, onToggle }: MapLegendProps) {
+export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap }: MapLegendProps) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
   // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
   // membukanya lewat summary. Desktop tetap terbuka.
@@ -82,6 +85,18 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle }: Map
             </label>
           ))}
         </fieldset>
+        {onToggleHeatmap ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Mode heatmap kepadatan"
+              checked={heatmapOn}
+              disabled={!enabledLayers.includes('events')}
+              onChange={() => onToggleHeatmap(!heatmapOn)}
+            />
+            <span>Heatmap kepadatan</span>
+          </label>
+        ) : null}
         <div className="operational-map__severity-key" aria-label="Tingkat kewaspadaan">
           <p className="operational-map__severity-title">Tingkat kewaspadaan</p>
           <ul>
