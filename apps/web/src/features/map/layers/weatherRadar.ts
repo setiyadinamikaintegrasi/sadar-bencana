@@ -112,7 +112,8 @@ export const weatherRadarLayer = {
     }
   },
   setVisible(map: Map, visible: boolean): void {
-    if (typeof map.getLayer !== 'function' || !map.getLayer(WEATHER_RADAR_LAYER_ID)) return
+    if (typeof map.getLayer !== 'function' || typeof map.setLayoutProperty !== 'function') return
+    if (!map.getLayer(WEATHER_RADAR_LAYER_ID)) return
     map.setLayoutProperty(WEATHER_RADAR_LAYER_ID, 'visibility', visible ? 'visible' : 'none')
   },
   remove(map: Map): void {

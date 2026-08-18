@@ -90,6 +90,7 @@ const maplibre = vi.hoisted(() => {
       }),
       getLayer: vi.fn((id: string) => layers.has(id) ? { id } : undefined),
       getSource: vi.fn((id: string) => sources.get(id)),
+      setLayoutProperty: vi.fn(),
       getZoom: vi.fn(() => {
         assertLive()
         return 5
