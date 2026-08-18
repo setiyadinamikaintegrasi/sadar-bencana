@@ -18,9 +18,12 @@ export function setEventsHeatmapVisible(map: Map, visible: boolean): void {
   }
   if (map.getLayer(POINTS_LAYER_ID)) {
     map.setLayoutProperty(POINTS_LAYER_ID, 'visibility', 'visible')
-    map.setPaintProperty(POINTS_LAYER_ID, 'circle-opacity', visible ? 0.25 : 1)
-    map.setPaintProperty(POINTS_LAYER_ID, 'circle-stroke-opacity', visible ? 0.35 : 1)
-    map.setPaintProperty(POINTS_LAYER_ID, 'circle-radius', visible ? 3.5 : 7)
+    // Titik tetap terlihat jelas DI ATAS heatmap: cukup besar, semi-opaque,
+    // dengan ring putih tebal agar kontras — tetap bisa diklik & di-hover.
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-opacity', visible ? 0.85 : 1)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-stroke-opacity', visible ? 1 : 1)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-stroke-width', visible ? 2.5 : 2)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-radius', visible ? 6 : 7)
   }
 }
 
@@ -114,7 +117,10 @@ export const eventsLayer = {
       },
     })
     // Heatmap kepadatan kejadian (default tersembunyi; toggle dari legenda).
-    // Intensitas diberat severity agar hotspot kritis menonjol.
+    // PENTING: source events ber-CLUSTER — pada zoom rendah hampir semua titik
+    // tergabung jadi klaster, maka heatmap TIDAK boleh mengecualikan klaster.
+    // Bobot = point_count (jumlah event) × faktor severity maksimum klaster,
+    // sehingga kepadatan akurat pada semua level zoom.
     map.addLayer({
       id: HEATMAP_LAYER_ID,
       type: 'heatmap',
@@ -122,23 +128,24 @@ export const eventsLayer = {
       layout: { visibility: 'none' },
       paint: {
         'heatmap-weight': [
-          'interpolate', ['linear'], ['get', 'severity_rank'],
-          0, 0.3, 2, 0.6, 3, 0.85, 4, 1,
+          '*',
+          ['coalesce', ['get', 'point_count'], 1],
+          ['interpolate', ['linear'], ['get', 'severity_rank'],
+            0, 0.6, 2, 0.8, 3, 1, 4, 1.3],
         ],
         'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 8, 2.5],
         'heatmap-color': [
           'interpolate', ['linear'], ['heatmap-density'],
-          0, 'rgba(15,23,42,0)',
-          0.2, 'rgba(56,189,248,0.35)',
-          0.4, 'rgba(52,211,153,0.5)',
-          0.6, 'rgba(251,191,36,0.65)',
-          0.8, 'rgba(249,115,22,0.8)',
-          1, 'rgba(244,63,94,0.9)',
+          0, 'rgba(30,64,175,0)',
+          0.15, 'rgba(37,99,235,0.4)',
+          0.35, 'rgba(5,150,105,0.55)',
+          0.6, 'rgba(217,119,6,0.7)',
+          0.8, 'rgba(234,88,12,0.82)',
+          1, 'rgba(220,38,38,0.92)',
         ],
-        'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 12, 6, 22, 10, 34],
+        'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 16, 6, 26, 10, 40],
         'heatmap-opacity': 0.85,
       },
-      filter: ['!', ['has', 'point_count']],
     })
     // Halo berkedip untuk klaster yang mengandung event kritis.
     map.addLayer({
