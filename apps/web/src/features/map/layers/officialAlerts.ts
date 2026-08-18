@@ -40,10 +40,13 @@ export const officialAlertsLayer = {
     }
 
     map.addSource(this.sourceId, { type: 'geojson', data: collection })
-    const polygonFilter: FilterSpecification = ['==', '$type', 'Polygon']
-    const extremePolygonFilter: FilterSpecification = ['all', ['==', '$type', 'Polygon'], ['==', ['get', 'severity'], 'extreme']]
-    const pointFilter: FilterSpecification = ['==', '$type', 'Point']
-    const extremePointFilter: FilterSpecification = ['all', pointFilter, ['==', ['get', 'severity'], 'extreme']]
+    // Filter full-expression: MapLibre v5 menolak campuran operator legacy
+    // ($type) dengan expression (['get', ...]) dalam satu ['all', ...]
+    // ("filter[2][1]: string expected"). Gunakan ['geometry-type'].
+    const polygonFilter: FilterSpecification = ['==', ['geometry-type'], 'Polygon']
+    const pointFilter: FilterSpecification = ['==', ['geometry-type'], 'Point']
+    const extremePolygonFilter: FilterSpecification = ['all', ['==', ['geometry-type'], 'Polygon'], ['==', ['get', 'severity'], 'extreme']]
+    const extremePointFilter: FilterSpecification = ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'severity'], 'extreme']]
     map.addLayer({
       id: this.layerIds[0],
       type: 'fill',
