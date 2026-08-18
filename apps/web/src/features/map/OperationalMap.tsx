@@ -8,6 +8,7 @@ import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
+import { setGlobeProjection, terrainLayer } from './layers/terrain'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -238,6 +239,11 @@ export default function OperationalMap({
   const [radarOn, setRadarOn] = useState(false)
   const [radarVintage, setRadarVintage] = useState<string | null>(null)
   const radarVisibleRef = useRef(false)
+  // Terrain 3D (DEM AWS Terrarium) + proyeksi globe.
+  const [terrainOn, setTerrainOn] = useState(false)
+  const [globeOn, setGlobeOn] = useState(false)
+  const terrainVisibleRef = useRef(false)
+  const globeRef = useRef(false)
 
   perilsRef.current = perils
   onPickRef.current = onPick
@@ -516,6 +522,11 @@ export default function OperationalMap({
           if (disposed) return
           void fetchLatestWeatherRadarFrame().then(applyRadar)
         }, WEATHER_RADAR_REFRESH_MS)
+
+        // Terrain 3D (AWS Terrarium) + hillshade: dipasang sekali (sembunyi),
+        // diaktifkan lewat toggle legenda. Globe dipulihkan dari state toggle.
+        terrainLayer.apply(map)
+        if (globeRef.current) setGlobeProjection(map, true)
       }
       if (map) onViewportChangeRef.current?.(publicViewport(map, viewStateRef.current))
     }
@@ -779,6 +790,18 @@ export default function OperationalMap({
     if (mapRef.current) weatherRadarLayer.setVisible(mapRef.current, next)
   }
 
+  const toggleTerrain = (next: boolean) => {
+    setTerrainOn(next)
+    terrainVisibleRef.current = next
+    if (mapRef.current) terrainLayer.setVisible(mapRef.current, next)
+  }
+
+  const toggleGlobe = (next: boolean) => {
+    setGlobeOn(next)
+    globeRef.current = next
+    if (mapRef.current) setGlobeProjection(mapRef.current, next)
+  }
+
   const toggleLayer = (layer: PublicOperationalMapLayer) => {
     const nextLayers = enabledLayersRef.current.includes(layer)
       ? enabledLayersRef.current.filter((current) => current !== layer)
@@ -824,6 +847,10 @@ export default function OperationalMap({
               radarOn={radarOn}
               radarVintage={radarVintage}
               onToggleRadar={toggleRadar}
+              terrainOn={terrainOn}
+              onToggleTerrain={toggleTerrain}
+              globeOn={globeOn}
+              onToggleGlobe={toggleGlobe}
             />
           ) : null}
           {visibleStatus ? (
