@@ -33,6 +33,9 @@ export interface ExecutiveMapControlsProps {
   onOverlayClassToggle: (layerClass: RiskOverlayClass) => void
   timelineHoursAgo: number
   onTimelineChange: (hoursAgo: number) => void
+  /** Sembunyikan slider waktu bila timeline replay ditampilkan terpisah
+   *  (engine MapLibre memakai MapTimeline di atas peta). */
+  hideTimeSlider?: boolean
 }
 
 export function ExecutiveMapControls({
@@ -44,6 +47,7 @@ export function ExecutiveMapControls({
   onOverlayClassToggle,
   timelineHoursAgo,
   onTimelineChange,
+  hideTimeSlider = false,
 }: ExecutiveMapControlsProps) {
   const countFor = (filter: PerilFilter) => events.filter((event) => eventMatchesFilter(event, filter)).length
   const counts: Record<PerilFilter, number> = {
@@ -98,17 +102,19 @@ export function ExecutiveMapControls({
             {label}
           </button>
         ))}
-        <label className="ml-auto flex items-center gap-2">
-          Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}
-          <input
-            aria-label="Waktu lifecycle peta"
-            type="range"
-            min="0"
-            max="72"
-            value={timelineHoursAgo}
-            onChange={(event) => onTimelineChange(Number(event.target.value))}
-          />
-        </label>
+        {hideTimeSlider ? null : (
+          <label className="ml-auto flex items-center gap-2">
+            Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}
+            <input
+              aria-label="Waktu lifecycle peta"
+              type="range"
+              min="0"
+              max="72"
+              value={timelineHoursAgo}
+              onChange={(event) => onTimelineChange(Number(event.target.value))}
+            />
+          </label>
+        )}
       </div>
     </div>
   )

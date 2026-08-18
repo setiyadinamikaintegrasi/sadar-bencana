@@ -184,6 +184,25 @@ async function openMap(page: Page): Promise<FixtureState> {
   // Denyut severity (blink JS di OperationalMap) dinonaktifkan agar snapshot
   // visual deterministik; produk tetap menghormati prefers-reduced-motion.
   await page.emulateMedia({ reducedMotion: 'reduce' })
+  // Bekukan jam: label timeline replay (menit saat ini) membuat snapshot
+  // berubah tiap menit — deterministik dengan clock tetap.
+  await page.addInitScript(() => {
+    const FIXED = 1787000000000
+    const RealDate = Date
+    // eslint-disable-next-line no-global-assign
+    Date = class extends RealDate {
+      constructor(...args: ConstructorParameters<typeof RealDate>) {
+        if (args.length === 0) {
+          super(FIXED)
+        } else {
+          super(...args)
+        }
+      }
+      static now() {
+        return FIXED
+      }
+    }
+  })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Executive Risk Map' })).toBeVisible()
   await expect(page.locator('.operational-map__canvas canvas.maplibregl-canvas')).toBeVisible()

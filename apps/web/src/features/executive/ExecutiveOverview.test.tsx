@@ -271,7 +271,7 @@ describe('ExecutiveOverview official warning navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Kajian risiko' }))
     expect((operationalMapState.props.localOverlay as GeoJSON.FeatureCollection).features).toEqual([])
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Waktu lifecycle peta' }), { target: { value: '24' } })
+    fireEvent.change(screen.getByRole('slider', { name: 'Posisi waktu replay' }), { target: { value: '24' } })
     expect(typeof operationalMapState.props.mapTime).toBe('string')
   })
 
