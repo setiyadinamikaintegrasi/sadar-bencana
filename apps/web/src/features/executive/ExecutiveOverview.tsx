@@ -24,7 +24,7 @@ import { useBmkgWarnings } from './useBmkgWarnings'
 import {
   getAlerts,
   getConnectorHealth,
-  getEvents,
+  getEventsWithMeta,
   getMapOverlays,
   getMeta,
   getNews,
@@ -170,6 +170,8 @@ export default function ExecutiveOverview({
   const { session } = useAuth()
   const mapEngine = getOperationalMapEngine()
   const [events, setEvents] = useState<Event[]>([])
+  // Total aktivitas nyata 72 jam (dari meta API) vs feed terkurasi.
+  const [eventsWindowTotal, setEventsWindowTotal] = useState<number | null>(null)
   const [meta, setMeta] = useState<Meta | null>(null)
   const [news, setNews] = useState<NewsItem[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -201,15 +203,16 @@ export default function ExecutiveOverview({
     else setRefreshing(true)
     setError(null)
     try {
-      const [eventsData, metaData, alertsData, riskScoresData, connectorData, overlayData] = await Promise.all([
-        getEvents(),
+      const [eventsResult, metaData, alertsData, riskScoresData, connectorData, overlayData] = await Promise.all([
+        getEventsWithMeta(),
         getMeta(),
         getAlerts().catch(() => ({ data: [], meta: { count: 0, unacknowledged: 0 } })),
         getRiskScores().catch(() => ({ data: [], meta: { count: 0, limit: 0 } })),
         getConnectorHealth().catch(() => []),
         getMapOverlays().catch(() => []),
       ])
-      setEvents(eventsData)
+      setEvents(eventsResult.data)
+      setEventsWindowTotal(eventsResult.meta.window_total ?? null)
       setMeta(metaData)
       setAlerts(alertsData.data)
       setRiskScores(riskScoresData.data)
@@ -569,7 +572,12 @@ export default function ExecutiveOverview({
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
             {events.length > 0 && (
-              <span className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1">{events.length} events</span>
+              <span
+                className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1"
+                title={`Total kejadian nyata 72 jam terakhir: ${eventsWindowTotal ?? events.length} · feed peta terkurasi: ${events.length}`}
+              >
+                {eventsWindowTotal != null ? `${eventsWindowTotal} event 72 jam` : `${events.length} events`}
+              </span>
             )}
             <span className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1">{news.length} news</span>
           </div>
