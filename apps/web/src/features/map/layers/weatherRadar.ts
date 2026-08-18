@@ -76,6 +76,10 @@ export const weatherRadarLayer = {
       tiles: frame.tiles,
       tileSize: 256,
       attribution: 'Radar cuaca © RainViewer',
+      // Data radar RainViewer hanya tersedia hingga z7 — di atasnya server
+      // menyajikan tile error. maxzoom membuat MapLibre over-zoom tile z7
+      // (diperbesar + resampling linear) sehingga zoom tinggi tetap aman.
+      maxzoom: 7,
       // Raster tidak boleh ter-cache terlalu lama: frame berganti tiap 10 menit.
       volatile: true,
     }
