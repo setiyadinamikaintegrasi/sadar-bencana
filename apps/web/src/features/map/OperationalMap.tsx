@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
+import type { StyleSpecification } from 'maplibre-gl'
 import { MapDetailSheet } from './MapDetailSheet'
 import { MapLegend } from './MapLegend'
 import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState, type PublicMapViewport } from './mapApi'
@@ -9,6 +10,7 @@ import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './lay
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
+import { patchDarkStyle } from './darkStyle'
 import { PitchControl } from './PitchControl'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
@@ -283,6 +285,8 @@ export default function OperationalMap({
     let lastFocusedRequestKey: string | undefined
     let pulseTimer: number | undefined
     let radarTimer: number | undefined
+    // Cache style gelap ter-patch (fetch sekali per sesi peta).
+    let darkStyleCache: StyleSpecification | null = null
 
     const focusGeometry = (geometry: GeoJSON.Geometry) => {
       if (!map) return
@@ -562,16 +566,39 @@ export default function OperationalMap({
       loadPublicLayers()
     }
 
+    // Style gelap di-patch klien (fetch sekali, cache) agar daratan/laut/
+    // kontur terbedakan — style dark mentah OpenFreeMap nyaris hitam total.
+    const loadDarkStyle = async (): Promise<StyleSpecification | string> => {
+      if (darkStyleCache) return darkStyleCache
+      try {
+        const response = await fetch(OPERATIONAL_MAP_DARK_STYLE_URL)
+        if (!response.ok) throw new Error(String(response.status))
+        const style = (await response.json()) as StyleSpecification
+        darkStyleCache = patchDarkStyle(style)
+      } catch {
+        // Fallback: pakai URL mentah (tetap berfungsi, hanya lebih gelap).
+      }
+      return darkStyleCache ?? OPERATIONAL_MAP_DARK_STYLE_URL
+    }
+
     const applyTheme = (next: OperationalMapTheme): void => {
       themeRef.current = next
       setTheme(next)
       const m = mapRef.current
       if (!m || disposed) return
-      m.setStyle(next === 'dark' ? OPERATIONAL_MAP_DARK_STYLE_URL : OPERATIONAL_MAP_BASE_STYLE_URL)
-      m.once('styledata', () => {
+      const swap = (style: StyleSpecification | string): void => {
         if (disposed || !m) return
-        rehydrateOperationalLayers(m)
-      })
+        m.setStyle(style as string | StyleSpecification)
+        m.once('styledata', () => {
+          if (disposed || !m) return
+          rehydrateOperationalLayers(m)
+        })
+      }
+      if (next === 'dark') {
+        void loadDarkStyle().then(swap)
+      } else {
+        swap(OPERATIONAL_MAP_BASE_STYLE_URL)
+      }
     }
     applyThemeRef.current = applyTheme
 
