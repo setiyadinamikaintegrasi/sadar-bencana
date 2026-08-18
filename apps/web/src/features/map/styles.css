@@ -415,6 +415,45 @@
   filter: invert(0.9);
 }
 
+/* --- Kontrol kemiringan (PitchControl) --- */
+.operational-map__pitch-ctrl {
+  position: absolute;
+  z-index: 2;
+  /* Kiri-bawah: di atas bar skala — tidak menutupi legenda (kiri-atas)
+     maupun detail sheet (kanan-atas / bottom-sheet di mobile). */
+  bottom: 3rem;
+  left: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.operational-map__pitch-ctrl button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.operational-map__pitch-ctrl button:not(:first-child) {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.operational-map__pitch-ctrl button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.operational-map__pitch-ctrl button:disabled {
+  color: #475569;
+  cursor: default;
+}
+
 /* --- Reduced motion: matikan semua kedipan --- */
 @media (prefers-reduced-motion: reduce) {
   .operational-map__severity-dot[data-tone='critical'],

@@ -95,6 +95,8 @@ const maplibre = vi.hoisted(() => {
         assertLive()
         return 5
       }),
+      getPitch: vi.fn(() => 0),
+      getBearing: vi.fn(() => 0),
       getStyle: vi.fn(() => {
         assertLive()
         return { layers: [], sources: {} }
@@ -976,9 +978,9 @@ describe('OperationalMap', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    // Radar cuaca memang dipasang saat load; layer data publik tidak boleh.
-    const addSourceCalls = map.addSource.mock.calls.map((call) => String(call[0]))
-    expect(addSourceCalls).toEqual(['operational-map-weather-radar-source'])
+    // Radar cuaca & terrain memang dipasang saat load; layer data publik tidak boleh.
+    const addSourceCalls = map.addSource.mock.calls.map((call) => String(call[0])).sort()
+    expect(addSourceCalls).toEqual(['operational-map-terrain-dem-source', 'operational-map-weather-radar-source'])
   })
 
   it('expands an event cluster while leaf points continue to open details', async () => {

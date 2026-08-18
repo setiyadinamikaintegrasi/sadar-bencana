@@ -8,12 +8,18 @@ import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
+import { setGlobeProjection, terrainLayer } from './layers/terrain'
+import { PitchControl } from './PitchControl'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
 
-// This public style is a reviewed application constant, never user-controlled input.
+// Basemap terang default. Gelap memakai style resmi OpenFreeMap (domain
+// sama — tanpa perubahan CSP production); dipilih lewat toggle tema.
 export const OPERATIONAL_MAP_BASE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
+export const OPERATIONAL_MAP_DARK_STYLE_URL = 'https://tiles.openfreemap.org/styles/dark'
+
+export type OperationalMapTheme = 'light' | 'dark'
 
 const OPERATIONAL_MAP_ID_PREFIX = 'operational-map-'
 
@@ -218,6 +224,7 @@ export default function OperationalMap({
   const onViewportChangeRef = useRef(onViewportChange)
   const localOverlayRef = useRef(localOverlay)
   const loadLayersRef = useRef<(() => void) | null>(null)
+  const applyThemeRef = useRef<((next: OperationalMapTheme) => void) | null>(null)
   const synchronizeVisibleLayersRef = useRef<((layers: PublicOperationalMapLayer[]) => void) | null>(null)
   const synchronizeControlledCollectionsRef = useRef<((collections: Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>>) => void) | null>(null)
   const synchronizeFocusRef = useRef<(() => void) | null>(null)
@@ -227,6 +234,7 @@ export default function OperationalMap({
   const focusCenterRef = useRef<((center: readonly [number, number]) => void) | null>(null)
   const [ready, setReady] = useState(false)
   const [fallback, setFallback] = useState(false)
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null)
   const [enabledLayers, setEnabledLayers] = useState<PublicOperationalMapLayer[]>(enabledLayersRef.current)
   const [layerStates, setLayerStates] = useState<Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>>>({})
   const [selectedFeature, setSelectedFeature] = useState<OperationalMapFeature | null>(null)
@@ -238,6 +246,16 @@ export default function OperationalMap({
   const [radarOn, setRadarOn] = useState(false)
   const [radarVintage, setRadarVintage] = useState<string | null>(null)
   const radarVisibleRef = useRef(false)
+  // Terrain 3D (DEM AWS Terrarium) + proyeksi globe.
+  const [terrainOn, setTerrainOn] = useState(false)
+  const [globeOn, setGlobeOn] = useState(false)
+  const terrainVisibleRef = useRef(false)
+  const globeRef = useRef(false)
+  // Tema basemap (light/dark) — dipulihkan setelah setStyle.
+  const [theme, setTheme] = useState<OperationalMapTheme>('light')
+  const themeRef = useRef<OperationalMapTheme>('light')
+  // Frame radar terakhir agar bisa dipasang ulang setelah ganti style.
+  const radarFrameRef = useRef<WeatherRadarFrame | null>(null)
 
   perilsRef.current = perils
   onPickRef.current = onPick
@@ -507,6 +525,7 @@ export default function OperationalMap({
       if (mode === 'viewer' && map) {
         const applyRadar = (frame: WeatherRadarFrame | null) => {
           if (!map || disposed) return
+          radarFrameRef.current = frame
           weatherRadarLayer.apply(map, frame ?? fallbackFrame())
           weatherRadarLayer.setVisible(map, radarVisibleRef.current)
           setRadarVintage(frame?.time ? new Date(frame.time * 1000).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : null)
@@ -516,9 +535,45 @@ export default function OperationalMap({
           if (disposed) return
           void fetchLatestWeatherRadarFrame().then(applyRadar)
         }, WEATHER_RADAR_REFRESH_MS)
+
+        // Terrain 3D (AWS Terrarium) + hillshade: dipasang sekali (sembunyi),
+        // diaktifkan lewat toggle legenda. Globe dipulihkan dari state toggle.
+        terrainLayer.apply(map)
+        if (globeRef.current) setGlobeProjection(map, true)
       }
       if (map) onViewportChangeRef.current?.(publicViewport(map, viewStateRef.current))
     }
+
+    // Pasang ulang SEMUA layer operasional setelah setStyle (tema basemap)
+    // karena MapLibre menghapus seluruh source/layer saat ganti style.
+    const rehydrateOperationalLayers = (m: maplibregl.Map): void => {
+      for (const layer of enabledLayersRef.current) {
+        const collection = collectionsRef.current[layer]
+        if (collection) layerAdapters[layer].apply(m, collection)
+      }
+      weatherRadarLayer.apply(m, radarFrameRef.current ?? fallbackFrame())
+      weatherRadarLayer.setVisible(m, radarVisibleRef.current)
+      terrainLayer.apply(m)
+      terrainLayer.setVisible(m, terrainVisibleRef.current)
+      if (globeRef.current) setGlobeProjection(m, true)
+      registerLayerInteractions(m)
+      synchronizeLocalOverlayRef.current?.(localOverlayRef.current)
+      loadPrivateLayers()
+      loadPublicLayers()
+    }
+
+    const applyTheme = (next: OperationalMapTheme): void => {
+      themeRef.current = next
+      setTheme(next)
+      const m = mapRef.current
+      if (!m || disposed) return
+      m.setStyle(next === 'dark' ? OPERATIONAL_MAP_DARK_STYLE_URL : OPERATIONAL_MAP_BASE_STYLE_URL)
+      m.once('styledata', () => {
+        if (disposed || !m) return
+        rehydrateOperationalLayers(m)
+      })
+    }
+    applyThemeRef.current = applyTheme
 
     const synchronizeView = (event?: { geolocateSource?: boolean }) => {
       if (disposed || !map) return
@@ -579,6 +634,20 @@ export default function OperationalMap({
       if (map) map.getCanvas().style.cursor = ''
     }
 
+    // Registrasi interaksi layer (klik, klaster, hover). Dipakai saat
+    // inisialisasi DAN setelah setStyle (tema basemap) yang menghapus layer.
+    const registerLayerInteractions = (m: maplibregl.Map): void => {
+      m.on('click', pickLocation)
+      for (const adapter of Object.values(layerAdapters)) {
+        for (const layerId of adapter.layerIds) m.on('click', layerId, selectFeature)
+      }
+      m.on('click', eventsLayer.layerIds[0], expandCluster)
+      for (const layerId of HOVERABLE_LAYER_IDS) {
+        m.on('mousemove', layerId, hoverFeatureFromEvent)
+        m.on('mouseleave', layerId, clearHover)
+      }
+    }
+
     const pickLocation = (event: { lngLat?: { lat: number; lng: number } }) => {
       if (event.lngLat) onPickRef.current?.(event.lngLat.lat, event.lngLat.lng)
     }
@@ -606,6 +675,7 @@ export default function OperationalMap({
       refreshController?.abort()
       privateController?.abort()
       loadLayersRef.current = null
+      applyThemeRef.current = null
       synchronizePrivateLayersRef.current = null
       synchronizeVisibleLayersRef.current = null
       synchronizeControlledCollectionsRef.current = null
@@ -635,6 +705,7 @@ export default function OperationalMap({
       clearOperationalMapArtifacts(currentMap)
       currentMap.remove()
       if (mapRef.current === currentMap) mapRef.current = null
+      setMapInstance(null)
       map = null
     }
 
@@ -657,6 +728,7 @@ export default function OperationalMap({
     }
 
     mapRef.current = map
+    setMapInstance(map)
     loadLayersRef.current = loadPublicLayers
     synchronizeVisibleLayersRef.current = synchronizeVisibleLayers
     synchronizeControlledCollectionsRef.current = (collections) => {
@@ -692,17 +764,7 @@ export default function OperationalMap({
     map.on('load', markReady)
     map.on('moveend', synchronizeView)
     map.once('webglcontextlost', showFallback)
-    map.on('click', pickLocation)
-    for (const adapter of Object.values(layerAdapters)) {
-      for (const layerId of adapter.layerIds) map.on('click', layerId, selectFeature)
-    }
-    map.on('click', eventsLayer.layerIds[0], expandCluster)
-
-    // Hover tooltip pada layer titik interaktif (events/alerts/air-quality).
-    for (const layerId of HOVERABLE_LAYER_IDS) {
-      map.on('mousemove', layerId, hoverFeatureFromEvent)
-      map.on('mouseleave', layerId, clearHover)
-    }
+    registerLayerInteractions(map)
 
     // Denyut severity di peta: dilewati bila pengguna meminta reduced motion
     // atau lingkungan tanpa matchMedia (jsdom).
@@ -779,6 +841,22 @@ export default function OperationalMap({
     if (mapRef.current) weatherRadarLayer.setVisible(mapRef.current, next)
   }
 
+  const toggleTerrain = (next: boolean) => {
+    setTerrainOn(next)
+    terrainVisibleRef.current = next
+    if (mapRef.current) terrainLayer.setVisible(mapRef.current, next)
+  }
+
+  const toggleGlobe = (next: boolean) => {
+    setGlobeOn(next)
+    globeRef.current = next
+    if (mapRef.current) setGlobeProjection(mapRef.current, next)
+  }
+
+  const toggleTheme = (next: OperationalMapTheme) => {
+    applyThemeRef.current?.(next)
+  }
+
   const toggleLayer = (layer: PublicOperationalMapLayer) => {
     const nextLayers = enabledLayersRef.current.includes(layer)
       ? enabledLayersRef.current.filter((current) => current !== layer)
@@ -824,6 +902,12 @@ export default function OperationalMap({
               radarOn={radarOn}
               radarVintage={radarVintage}
               onToggleRadar={toggleRadar}
+              terrainOn={terrainOn}
+              onToggleTerrain={toggleTerrain}
+              globeOn={globeOn}
+              onToggleGlobe={toggleGlobe}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           ) : null}
           {visibleStatus ? (
@@ -848,6 +932,8 @@ export default function OperationalMap({
               ) : null}
             </div>
           ) : null}
+          {/* Kontrol kemiringan peta (tilt) tanpa ctrl+drag. */}
+          {mode === 'viewer' && !fallback ? <PitchControl map={mapInstance} /> : null}
           <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
         </>
       )}
