@@ -949,6 +949,9 @@ export default function OperationalMap({
               style={{ left: hoverPoint.x + 12, top: hoverPoint.y + 12 }}
             >
               <p className="operational-map__hover-title">{hoverFeature.properties.label}</p>
+              {hoverFeature.properties.magnitude != null ? (
+                <p className="operational-map__hover-severity">M {hoverFeature.properties.magnitude.toFixed(1)}</p>
+              ) : null}
               {hoverFeature.properties.severity ? (
                 <p className="operational-map__hover-severity" data-tone={hoverFeature.properties.severity.toLowerCase()}>
                   {hoverFeature.properties.severity}

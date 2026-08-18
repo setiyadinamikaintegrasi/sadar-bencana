@@ -1,7 +1,7 @@
 import { ExternalLink, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import SeverityBadge from '../../components/SeverityBadge'
-import type { OperationalMapFeature } from './types'
+import type { OperationalMapFeature, OperationalMapFeatureProperties } from './types'
 
 interface MapDetailSheetProps {
   feature: OperationalMapFeature | null
@@ -40,6 +40,23 @@ function safeExternalUrl(source: string, value: string | undefined): string | un
     // Omit invalid source URLs rather than presenting untrusted navigation.
   }
   return undefined
+}
+
+const PERIL_LABELS: Record<string, string> = {
+  earthquake: 'Gempa bumi',
+  wildfire: 'Karhutla',
+  flood: 'Banjir',
+  volcano: 'Aktivitas vulkanik',
+  wind: 'Angin kencang',
+  storm: 'Badai',
+  tsunami: 'Tsunami',
+}
+
+function layerTypeLabel(properties: OperationalMapFeatureProperties): string {
+  if (properties.layer === 'events' && properties.peril_type) {
+    return PERIL_LABELS[properties.peril_type] ?? properties.peril_type
+  }
+  return properties.layer
 }
 
 function formatTimestamp(value: string): string {
@@ -81,7 +98,7 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
     <aside className="operational-map__detail-sheet" role="dialog" aria-label="Detail peta">
       <header className="operational-map__detail-header">
         <div>
-          <p className="operational-map__detail-type">{properties.layer}</p>
+          <p className="operational-map__detail-type">{layerTypeLabel(properties)}</p>
           <h2>{properties.label}</h2>
         </div>
         <button type="button" className="operational-map__icon-button" aria-label="Tutup detail" title="Tutup detail" onClick={onClose}>
@@ -89,6 +106,12 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
         </button>
       </header>
       <dl className="operational-map__detail-list">
+        {properties.magnitude != null ? (
+          <DetailRow label="Magnitudo">
+            <strong className="operational-map__magnitude">M {properties.magnitude.toFixed(1)}</strong>
+          </DetailRow>
+        ) : null}
+        {properties.place ? <DetailRow label="Lokasi">{properties.place}</DetailRow> : null}
         <DetailRow label="Sumber">{properties.source}</DetailRow>
         {properties.severity ? (
           <DetailRow label="Severity">
