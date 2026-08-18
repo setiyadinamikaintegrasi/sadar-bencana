@@ -7,13 +7,20 @@ const CLUSTER_COUNT_LAYER_ID = 'operational-map-events-cluster-count'
 const POINTS_LAYER_ID = 'operational-map-events-points'
 const HEATMAP_LAYER_ID = 'operational-map-events-heatmap'
 
-/** Toggle heatmap kepadatan: saat aktif, titik/klaster/halo disembunyikan
- *  agar tidak dobel visual; heatmap berbagi source dengan titik event. */
+/** Toggle heatmap kepadatan. Saat aktif, klaster/halo disembunyikan dan
+ *  titik dikecilkan+dirupakan (tetap visible!) supaya TETAP BISA DIKLIK &
+ *  DI-HOVER — MapLibre tidak mengirim event interaksi ke layer tersembunyi. */
 export function setEventsHeatmapVisible(map: Map, visible: boolean): void {
   if (typeof map.getLayer !== 'function' || !map.getLayer(HEATMAP_LAYER_ID)) return
   map.setLayoutProperty(HEATMAP_LAYER_ID, 'visibility', visible ? 'visible' : 'none')
-  for (const id of [CLUSTERS_LAYER_ID, CLUSTER_COUNT_LAYER_ID, POINTS_LAYER_ID, EVENTS_PULSE_LAYERS.critical, EVENTS_PULSE_LAYERS.high, EVENTS_PULSE_LAYERS.cluster]) {
+  for (const id of [CLUSTERS_LAYER_ID, CLUSTER_COUNT_LAYER_ID, EVENTS_PULSE_LAYERS.critical, EVENTS_PULSE_LAYERS.high, EVENTS_PULSE_LAYERS.cluster]) {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'none' : 'visible')
+  }
+  if (map.getLayer(POINTS_LAYER_ID)) {
+    map.setLayoutProperty(POINTS_LAYER_ID, 'visibility', 'visible')
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-opacity', visible ? 0.25 : 1)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-stroke-opacity', visible ? 0.35 : 1)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-radius', visible ? 3.5 : 7)
   }
 }
 
