@@ -7,6 +7,7 @@ import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
+import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -25,6 +26,8 @@ export type OperationalMapFocusRequest = {
 }
 
 const MAP_REFRESH_DEBOUNCE_MS = 250
+// Frame radar cuaca berganti tiap 10 menit; refresh tiap 5 menit aman.
+const WEATHER_RADAR_REFRESH_MS = 5 * 60 * 1000
 
 // Denyut severity: kritis berkedip lebih cepat (siklus ~800ms) daripada
 // tinggi (~1600ms) agar hierarki urgensi langsung terbaca di peta.
@@ -231,6 +234,10 @@ export default function OperationalMap({
   const [hoverFeature, setHoverFeature] = useState<OperationalMapFeature | null>(null)
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null)
   const [heatmapOn, setHeatmapOn] = useState(false)
+  // Overlay radar cuaca (RainViewer) + vintage frame terpasang.
+  const [radarOn, setRadarOn] = useState(false)
+  const [radarVintage, setRadarVintage] = useState<string | null>(null)
+  const radarVisibleRef = useRef(false)
 
   perilsRef.current = perils
   onPickRef.current = onPick
@@ -257,6 +264,7 @@ export default function OperationalMap({
     let suppressNextCameraWrite = false
     let lastFocusedRequestKey: string | undefined
     let pulseTimer: number | undefined
+    let radarTimer: number | undefined
 
     const focusGeometry = (geometry: GeoJSON.Geometry) => {
       if (!map) return
@@ -494,6 +502,21 @@ export default function OperationalMap({
       loadPublicLayers()
       loadPrivateLayers()
       synchronizeLocalOverlay(localOverlayRef.current)
+      // Radar cuaca (RainViewer): pasang sekali di bawah layer titik agar
+      // overlay hujan tidak menutupi marker. Frame di-refresh berkala.
+      if (mode === 'viewer' && map) {
+        const applyRadar = (frame: WeatherRadarFrame | null) => {
+          if (!map || disposed) return
+          weatherRadarLayer.apply(map, frame ?? fallbackFrame())
+          weatherRadarLayer.setVisible(map, radarVisibleRef.current)
+          setRadarVintage(frame?.time ? new Date(frame.time * 1000).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : null)
+        }
+        void fetchLatestWeatherRadarFrame().then(applyRadar)
+        radarTimer = window.setInterval(() => {
+          if (disposed) return
+          void fetchLatestWeatherRadarFrame().then(applyRadar)
+        }, WEATHER_RADAR_REFRESH_MS)
+      }
       if (map) onViewportChangeRef.current?.(publicViewport(map, viewStateRef.current))
     }
 
@@ -579,6 +602,7 @@ export default function OperationalMap({
       observer?.disconnect()
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
       if (pulseTimer !== undefined) window.clearInterval(pulseTimer)
+      if (radarTimer !== undefined) window.clearInterval(radarTimer)
       refreshController?.abort()
       privateController?.abort()
       loadLayersRef.current = null
@@ -749,6 +773,12 @@ export default function OperationalMap({
     if (mapRef.current) setEventsHeatmapVisible(mapRef.current, next)
   }
 
+  const toggleRadar = (next: boolean) => {
+    setRadarOn(next)
+    radarVisibleRef.current = next
+    if (mapRef.current) weatherRadarLayer.setVisible(mapRef.current, next)
+  }
+
   const toggleLayer = (layer: PublicOperationalMapLayer) => {
     const nextLayers = enabledLayersRef.current.includes(layer)
       ? enabledLayersRef.current.filter((current) => current !== layer)
@@ -791,6 +821,9 @@ export default function OperationalMap({
               onToggle={toggleLayer}
               heatmapOn={heatmapOn}
               onToggleHeatmap={toggleHeatmap}
+              radarOn={radarOn}
+              radarVintage={radarVintage}
+              onToggleRadar={toggleRadar}
             />
           ) : null}
           {visibleStatus ? (

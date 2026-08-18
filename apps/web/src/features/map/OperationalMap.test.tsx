@@ -159,9 +159,26 @@ vi.mock('./mapApi', async (importOriginal) => {
   return { ...original, fetchPrivateMapLayer: privateApi.fetchPrivateMapLayer }
 })
 
+// Radar cuaca diuji terpisah; di sini frame dimock agar tidak ada fetch
+// network dan jumlah pemanggilan fetch publik tetap deterministik.
+const radarApi = vi.hoisted(() => ({ fetchLatestWeatherRadarFrame: vi.fn() }))
+vi.mock('./layers/weatherRadar', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./layers/weatherRadar')>()
+  return {
+    ...original,
+    fetchLatestWeatherRadarFrame: radarApi.fetchLatestWeatherRadarFrame,
+  }
+})
+
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', TestResizeObserver)
   privateApi.fetchPrivateMapLayer.mockReset()
+  radarApi.fetchLatestWeatherRadarFrame.mockReset()
+  radarApi.fetchLatestWeatherRadarFrame.mockResolvedValue({
+    time: 1787000000,
+    tiles: ['https://fixture.rainviewer.example/{z}/{x}/{y}/256/4.png'],
+    nowcast: false,
+  })
 })
 
 afterEach(() => {
@@ -958,7 +975,9 @@ describe('OperationalMap', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(map.addSource).not.toHaveBeenCalled()
+    // Radar cuaca memang dipasang saat load; layer data publik tidak boleh.
+    const addSourceCalls = map.addSource.mock.calls.map((call) => String(call[0]))
+    expect(addSourceCalls).toEqual(['operational-map-weather-radar-source'])
   })
 
   it('expands an event cluster while leaf points continue to open details', async () => {
