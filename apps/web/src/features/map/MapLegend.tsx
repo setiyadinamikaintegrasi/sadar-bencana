@@ -18,6 +18,10 @@ interface MapLegendProps {
   /** Mode heatmap kepadatan kejadian (menggantikan titik/klaster). */
   heatmapOn?: boolean
   onToggleHeatmap?: (next: boolean) => void
+  /** Overlay radar cuaca (RainViewer). */
+  radarOn?: boolean
+  radarVintage?: string | null
+  onToggleRadar?: (next: boolean) => void
 }
 
 const healthLabel: Record<PublicMapLayerViewState['health'], string> = {
@@ -45,7 +49,7 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
   }
 }
 
-export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap }: MapLegendProps) {
+export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar }: MapLegendProps) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
   // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
   // membukanya lewat summary. Desktop tetap terbuka.
@@ -95,6 +99,22 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
               onChange={() => onToggleHeatmap(!heatmapOn)}
             />
             <span>Heatmap kepadatan</span>
+          </label>
+        ) : null}
+        {onToggleRadar ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Radar cuaca hujan"
+              checked={radarOn}
+              onChange={() => onToggleRadar(!radarOn)}
+            />
+            <span>Radar cuaca</span>
+            {radarOn && radarVintage ? (
+              <span className="operational-map__layer-health" title="Waktu observasi frame radar">
+                {radarVintage}
+              </span>
+            ) : null}
           </label>
         ) : null}
         <div className="operational-map__severity-key" aria-label="Tingkat kewaspadaan">
