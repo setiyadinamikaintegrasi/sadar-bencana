@@ -28,6 +28,9 @@ interface MapLegendProps {
   /** Proyeksi globe (vs mercator). */
   globeOn?: boolean
   onToggleGlobe?: (next: boolean) => void
+  /** Tema basemap terang/gelap. */
+  theme?: 'light' | 'dark'
+  onToggleTheme?: (next: 'light' | 'dark') => void
 }
 
 const healthLabel: Record<PublicMapLayerViewState['health'], string> = {
@@ -55,7 +58,7 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
   }
 }
 
-export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe }: MapLegendProps) {
+export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme }: MapLegendProps) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
   // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
   // membukanya lewat summary. Desktop tetap terbuka.
@@ -143,6 +146,17 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
               onChange={() => onToggleGlobe(!globeOn)}
             />
             <span>Globe</span>
+          </label>
+        ) : null}
+        {onToggleTheme ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Tema peta gelap"
+              checked={theme === 'dark'}
+              onChange={() => onToggleTheme(theme === 'dark' ? 'light' : 'dark')}
+            />
+            <span>Tema gelap</span>
           </label>
         ) : null}
         <div className="operational-map__severity-key" aria-label="Tingkat kewaspadaan">
