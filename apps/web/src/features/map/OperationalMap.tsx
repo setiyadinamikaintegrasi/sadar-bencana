@@ -5,7 +5,7 @@ import { MapLegend } from './MapLegend'
 import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState, type PublicMapViewport } from './mapApi'
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
-import { EVENTS_PULSE_LAYERS, eventsLayer } from './layers/events'
+import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
@@ -227,6 +227,10 @@ export default function OperationalMap({
   const [enabledLayers, setEnabledLayers] = useState<PublicOperationalMapLayer[]>(enabledLayersRef.current)
   const [layerStates, setLayerStates] = useState<Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>>>({})
   const [selectedFeature, setSelectedFeature] = useState<OperationalMapFeature | null>(null)
+  // Fitur di bawah kursor untuk tooltip hover + highlight (Paket A #2).
+  const [hoverFeature, setHoverFeature] = useState<OperationalMapFeature | null>(null)
+  const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null)
+  const [heatmapOn, setHeatmapOn] = useState(false)
 
   perilsRef.current = perils
   onPickRef.current = onPick
@@ -532,6 +536,26 @@ export default function OperationalMap({
       }
     }
 
+    // Hover: tooltip mini + highlight marker (mousemove pada layer interaktif).
+    const HOVERABLE_LAYER_IDS = [
+      eventsLayer.layerIds[eventsLayer.layerIds.length - 1],
+      officialAlertsLayer.layerIds[officialAlertsLayer.layerIds.length - 1],
+      airQualityLayer.layerIds[airQualityLayer.layerIds.length - 1],
+    ].filter((id) => id && !id.includes('heatmap'))
+    const hoverFeatureFromEvent = (event: { features?: unknown[]; point?: { x: number; y: number } }): void => {
+      const feature = mapFeatureFromClick(event.features?.[0])
+      setHoverFeature(feature ?? null)
+      setHoverPoint(event.point ? { x: event.point.x, y: event.point.y } : null)
+      if (!map) return
+      const canvas = map.getCanvas()
+      canvas.style.cursor = feature ? 'pointer' : ''
+    }
+    const clearHover = (): void => {
+      setHoverFeature(null)
+      setHoverPoint(null)
+      if (map) map.getCanvas().style.cursor = ''
+    }
+
     const pickLocation = (event: { lngLat?: { lat: number; lng: number } }) => {
       if (event.lngLat) onPickRef.current?.(event.lngLat.lat, event.lngLat.lng)
     }
@@ -574,6 +598,10 @@ export default function OperationalMap({
       currentMap.off('webglcontextlost', showFallback)
       currentMap.off('click', pickLocation)
       currentMap.off('click', eventsLayer.layerIds[0], expandCluster)
+      for (const layerId of HOVERABLE_LAYER_IDS) {
+        currentMap.off('mousemove', layerId, hoverFeatureFromEvent)
+        currentMap.off('mouseleave', layerId, clearHover)
+      }
       for (const adapter of Object.values(layerAdapters)) {
         for (const layerId of adapter.layerIds) currentMap.off('click', layerId, selectFeature)
         adapter.remove(currentMap)
@@ -631,6 +659,10 @@ export default function OperationalMap({
     if (mode === 'viewer') {
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
       map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'top-right')
+      // Paket A #3: bar skala untuk estimasi jarak (evakuasi/dampak) dan
+      // mode layar penuh untuk command center.
+      map.addControl(new maplibregl.ScaleControl({ maxWidth: 96, unit: 'metric' }), 'bottom-left')
+      map.addControl(new maplibregl.FullscreenControl(), 'top-right')
     }
 
     map.on('load', markReady)
@@ -641,6 +673,12 @@ export default function OperationalMap({
       for (const layerId of adapter.layerIds) map.on('click', layerId, selectFeature)
     }
     map.on('click', eventsLayer.layerIds[0], expandCluster)
+
+    // Hover tooltip pada layer titik interaktif (events/alerts/air-quality).
+    for (const layerId of HOVERABLE_LAYER_IDS) {
+      map.on('mousemove', layerId, hoverFeatureFromEvent)
+      map.on('mouseleave', layerId, clearHover)
+    }
 
     // Denyut severity di peta: dilewati bila pengguna meminta reduced motion
     // atau lingkungan tanpa matchMedia (jsdom).
@@ -706,6 +744,11 @@ export default function OperationalMap({
     if (ready && focusCenter) focusCenterRef.current?.(focusCenter)
   }, [focusKey, ready])
 
+  const toggleHeatmap = (next: boolean) => {
+    setHeatmapOn(next)
+    if (mapRef.current) setEventsHeatmapVisible(mapRef.current, next)
+  }
+
   const toggleLayer = (layer: PublicOperationalMapLayer) => {
     const nextLayers = enabledLayersRef.current.includes(layer)
       ? enabledLayersRef.current.filter((current) => current !== layer)
@@ -741,12 +784,36 @@ export default function OperationalMap({
       ) : (
         <>
           {mode === 'viewer' && showLegend ? (
-            <MapLegend enabledLayers={enabledLayers} results={{}} layerStates={layerStates} onToggle={toggleLayer} />
+            <MapLegend
+              enabledLayers={enabledLayers}
+              results={{}}
+              layerStates={layerStates}
+              onToggle={toggleLayer}
+              heatmapOn={heatmapOn}
+              onToggleHeatmap={toggleHeatmap}
+            />
           ) : null}
           {visibleStatus ? (
             <p className="operational-map__status" role="status" data-state={visibleStatus}>
               {statusMessage(visibleStatus)}
             </p>
+          ) : null}
+          {hoverFeature && hoverPoint ? (
+            <div
+              className="operational-map__hover-tip"
+              role="status"
+              style={{ left: hoverPoint.x + 12, top: hoverPoint.y + 12 }}
+            >
+              <p className="operational-map__hover-title">{hoverFeature.properties.label}</p>
+              {hoverFeature.properties.severity ? (
+                <p className="operational-map__hover-severity" data-tone={hoverFeature.properties.severity.toLowerCase()}>
+                  {hoverFeature.properties.severity}
+                </p>
+              ) : null}
+              {hoverFeature.properties.observed_at ? (
+                <p className="operational-map__hover-time">{hoverFeature.properties.observed_at}</p>
+              ) : null}
+            </div>
           ) : null}
           <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
         </>

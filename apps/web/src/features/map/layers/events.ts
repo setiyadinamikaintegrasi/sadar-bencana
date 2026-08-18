@@ -5,6 +5,27 @@ import type { OperationalMapFeature, OperationalMapFeatureCollection } from '../
 const CLUSTERS_LAYER_ID = 'operational-map-events-clusters'
 const CLUSTER_COUNT_LAYER_ID = 'operational-map-events-cluster-count'
 const POINTS_LAYER_ID = 'operational-map-events-points'
+const HEATMAP_LAYER_ID = 'operational-map-events-heatmap'
+
+/** Toggle heatmap kepadatan. Saat aktif, klaster/halo disembunyikan dan
+ *  titik dikecilkan+dirupakan (tetap visible!) supaya TETAP BISA DIKLIK &
+ *  DI-HOVER — MapLibre tidak mengirim event interaksi ke layer tersembunyi. */
+export function setEventsHeatmapVisible(map: Map, visible: boolean): void {
+  if (typeof map.getLayer !== 'function' || !map.getLayer(HEATMAP_LAYER_ID)) return
+  map.setLayoutProperty(HEATMAP_LAYER_ID, 'visibility', visible ? 'visible' : 'none')
+  for (const id of [CLUSTERS_LAYER_ID, CLUSTER_COUNT_LAYER_ID, EVENTS_PULSE_LAYERS.critical, EVENTS_PULSE_LAYERS.high, EVENTS_PULSE_LAYERS.cluster]) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'none' : 'visible')
+  }
+  if (map.getLayer(POINTS_LAYER_ID)) {
+    map.setLayoutProperty(POINTS_LAYER_ID, 'visibility', 'visible')
+    // Titik tetap terlihat jelas DI ATAS heatmap: cukup besar, semi-opaque,
+    // dengan ring putih tebal agar kontras — tetap bisa diklik & di-hover.
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-opacity', visible ? 0.85 : 1)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-stroke-opacity', visible ? 1 : 1)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-stroke-width', visible ? 2.5 : 2)
+    map.setPaintProperty(POINTS_LAYER_ID, 'circle-radius', visible ? 6 : 7)
+  }
+}
 
 // Warna severity: 4 = Kritis (merah berkedip), 3 = Tinggi (oranye berkedip),
 // 2 = Sedang (amber), sisanya kembali ke warna per jenis bencana.
@@ -68,6 +89,7 @@ function withSeverityRank(collection: OperationalMapFeatureCollection): Operatio
 export const eventsLayer = {
   sourceId: 'operational-map-events-source',
   layerIds: [
+    HEATMAP_LAYER_ID,
     EVENTS_PULSE_LAYERS.cluster,
     CLUSTERS_LAYER_ID,
     CLUSTER_COUNT_LAYER_ID,
@@ -92,6 +114,37 @@ export const eventsLayer = {
       // Severity maksimum di dalam klaster menentukan warna & denyut klaster.
       clusterProperties: {
         severity_rank: ['max', ['get', 'severity_rank']],
+      },
+    })
+    // Heatmap kepadatan kejadian (default tersembunyi; toggle dari legenda).
+    // PENTING: source events ber-CLUSTER — pada zoom rendah hampir semua titik
+    // tergabung jadi klaster, maka heatmap TIDAK boleh mengecualikan klaster.
+    // Bobot = point_count (jumlah event) × faktor severity maksimum klaster,
+    // sehingga kepadatan akurat pada semua level zoom.
+    map.addLayer({
+      id: HEATMAP_LAYER_ID,
+      type: 'heatmap',
+      source: this.sourceId,
+      layout: { visibility: 'none' },
+      paint: {
+        'heatmap-weight': [
+          '*',
+          ['coalesce', ['get', 'point_count'], 1],
+          ['interpolate', ['linear'], ['get', 'severity_rank'],
+            0, 0.6, 2, 0.8, 3, 1, 4, 1.3],
+        ],
+        'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 8, 2.5],
+        'heatmap-color': [
+          'interpolate', ['linear'], ['heatmap-density'],
+          0, 'rgba(30,64,175,0)',
+          0.15, 'rgba(37,99,235,0.4)',
+          0.35, 'rgba(5,150,105,0.55)',
+          0.6, 'rgba(217,119,6,0.7)',
+          0.8, 'rgba(234,88,12,0.82)',
+          1, 'rgba(220,38,38,0.92)',
+        ],
+        'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 16, 6, 26, 10, 40],
+        'heatmap-opacity': 0.85,
       },
     })
     // Halo berkedip untuk klaster yang mengandung event kritis.

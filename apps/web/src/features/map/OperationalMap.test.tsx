@@ -145,6 +145,8 @@ const maplibre = vi.hoisted(() => {
     Map,
     NavigationControl: vi.fn(),
     GeolocateControl: vi.fn(),
+    ScaleControl: vi.fn(),
+    FullscreenControl: vi.fn(),
   }
 })
 
@@ -184,7 +186,8 @@ describe('OperationalMap', () => {
       center: [106.8456, -6.2088],
       zoom: 9,
     }))
-    expect(maplibre.instances[0].addControl).toHaveBeenCalledTimes(2)
+    // Viewer menambahkan Navigation, Geolocate, Scale, dan Fullscreen control.
+    expect(maplibre.instances[0].addControl).toHaveBeenCalledTimes(4)
 
     unmount()
 
@@ -810,6 +813,48 @@ describe('OperationalMap', () => {
     expect(screen.getByText('Rendah')).toBeTruthy()
     // Kritis & tinggi ditandai berkedip; sedang & rendah tidak.
     expect(screen.getAllByText('berkedip')).toHaveLength(2)
+  })
+
+  it('toggles the events density heatmap from the legend and swaps point visibility', async () => {
+    const onToggleHeatmap = vi.fn()
+    const { rerender } = render(
+      <MapLegend
+        enabledLayers={['events']}
+        results={{}}
+        onToggle={() => {}}
+        heatmapOn={false}
+        onToggleHeatmap={onToggleHeatmap}
+      />,
+    )
+
+    const toggle = screen.getByRole('checkbox', { name: 'Mode heatmap kepadatan' }) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    fireEvent.click(toggle)
+    expect(onToggleHeatmap).toHaveBeenCalledWith(true)
+
+    rerender(
+      <MapLegend
+        enabledLayers={['events']}
+        results={{}}
+        onToggle={() => {}}
+        heatmapOn
+        onToggleHeatmap={onToggleHeatmap}
+      />,
+    )
+    expect((screen.getByRole('checkbox', { name: 'Mode heatmap kepadatan' }) as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('disables the heatmap toggle when the events layer is off', () => {
+    render(
+      <MapLegend
+        enabledLayers={['official-alerts']}
+        results={{}}
+        onToggle={() => {}}
+        heatmapOn={false}
+        onToggleHeatmap={() => {}}
+      />,
+    )
+    expect((screen.getByRole('checkbox', { name: 'Mode heatmap kepadatan' }) as HTMLInputElement).disabled).toBe(true)
   })
 
   it('renders typed public feature details without raw GeoJSON and closes from its accessible icon control', () => {
