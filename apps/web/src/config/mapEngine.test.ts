@@ -1,12 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getOperationalMapEngine } from './mapEngine'
 
 describe('getOperationalMapEngine', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('selects MapLibre only for the explicit maplibre build flag', () => {
     expect(getOperationalMapEngine('maplibre')).toBe('maplibre')
   })
 
   it('defaults to Leaflet when the build flag is omitted', () => {
+    // Hermetik: jangan biarkan .env.local developer (mis. maplibre)
+    // memengaruhi nilai default import.meta.env.
+    vi.stubEnv('VITE_OPERATIONAL_MAP_ENGINE', '')
     expect(getOperationalMapEngine(undefined)).toBe('leaflet')
   })
 
