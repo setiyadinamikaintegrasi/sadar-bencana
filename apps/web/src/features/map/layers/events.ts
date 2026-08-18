@@ -1,19 +1,24 @@
 import type { ExpressionSpecification, GeoJSONSource, Map } from 'maplibre-gl'
 import { severityRank } from '../../../components/severityTones'
+import { DEFAULT_EVENT_ICON, EVENT_PERIL_ICONS, registerEventIcons } from './eventIcons'
 import type { OperationalMapFeature, OperationalMapFeatureCollection } from '../types'
 
 const CLUSTERS_LAYER_ID = 'operational-map-events-clusters'
 const CLUSTER_COUNT_LAYER_ID = 'operational-map-events-cluster-count'
 const POINTS_LAYER_ID = 'operational-map-events-points'
+const ICONS_LAYER_ID = 'operational-map-events-icons'
 const HEATMAP_LAYER_ID = 'operational-map-events-heatmap'
 
-/** Toggle heatmap kepadatan. Saat aktif, klaster/halo disembunyikan dan
+/** ID layer klaster (dipakai handler klik-ekspansi di OperationalMap). */
+export const EVENTS_CLUSTERS_LAYER_ID = CLUSTERS_LAYER_ID
+
+/** Toggle heatmap kepadatan. Saat aktif, klaster/halo/ikon disembunyikan dan
  *  titik dikecilkan+dirupakan (tetap visible!) supaya TETAP BISA DIKLIK &
  *  DI-HOVER — MapLibre tidak mengirim event interaksi ke layer tersembunyi. */
 export function setEventsHeatmapVisible(map: Map, visible: boolean): void {
   if (typeof map.getLayer !== 'function' || !map.getLayer(HEATMAP_LAYER_ID)) return
   map.setLayoutProperty(HEATMAP_LAYER_ID, 'visibility', visible ? 'visible' : 'none')
-  for (const id of [CLUSTERS_LAYER_ID, CLUSTER_COUNT_LAYER_ID, EVENTS_PULSE_LAYERS.critical, EVENTS_PULSE_LAYERS.high, EVENTS_PULSE_LAYERS.cluster]) {
+  for (const id of [CLUSTERS_LAYER_ID, CLUSTER_COUNT_LAYER_ID, ICONS_LAYER_ID, EVENTS_PULSE_LAYERS.critical, EVENTS_PULSE_LAYERS.high, EVENTS_PULSE_LAYERS.cluster]) {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'none' : 'visible')
   }
   if (map.getLayer(POINTS_LAYER_ID)) {
@@ -96,6 +101,7 @@ export const eventsLayer = {
     EVENTS_PULSE_LAYERS.high,
     EVENTS_PULSE_LAYERS.critical,
     POINTS_LAYER_ID,
+    ICONS_LAYER_ID,
   ],
   apply(map: Map, collection: OperationalMapFeatureCollection): void {
     const data = withSeverityRank(collection)
@@ -104,6 +110,9 @@ export const eventsLayer = {
       existing.setData(data)
       return
     }
+
+    // Ikon per jenis bencana (emoji -> image MapLibre) sebelum layer symbol.
+    registerEventIcons(map)
 
     map.addSource(this.sourceId, {
       type: 'geojson',
@@ -206,16 +215,43 @@ export const eventsLayer = {
         'circle-opacity': 0.55,
       },
     })
+    // Titik = chip putih dengan RING severity — jenis bencana ditunjukkan
+    // ikon emoji di layer symbol di atasnya (lihat ICONS_LAYER_ID).
     map.addLayer({
       id: POINTS_LAYER_ID,
       type: 'circle',
       source: this.sourceId,
       filter: ['!', ['has', 'point_count']],
       paint: {
-        'circle-color': SEVERITY_POINT_COLOR,
-        'circle-radius': 7,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
+        'circle-color': 'rgba(255,255,255,0.92)',
+        'circle-radius': 9,
+        'circle-stroke-width': 2.5,
+        'circle-stroke-color': SEVERITY_POINT_COLOR,
+      },
+    })
+    // Ikon per jenis bencana (gempa/karhutla/banjir/vulkanik...) — membedakan
+    // event sekilas pandang; ukuran ikon mengikuti severity.
+    map.addLayer({
+      id: ICONS_LAYER_ID,
+      type: 'symbol',
+      source: this.sourceId,
+      filter: ['!', ['has', 'point_count']],
+      layout: {
+        'icon-image': [
+          'match',
+          ['get', 'peril_type'],
+          ...Object.entries(EVENT_PERIL_ICONS).flatMap(([peril, icon]) => [peril, icon.imageId]),
+          DEFAULT_EVENT_ICON.imageId,
+        ] as unknown as ExpressionSpecification,
+        'icon-size': [
+          'match',
+          ['get', 'severity_rank'],
+          4, 1.05,
+          3, 0.9,
+          0.78,
+        ] as unknown as ExpressionSpecification,
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
       },
     })
   },
