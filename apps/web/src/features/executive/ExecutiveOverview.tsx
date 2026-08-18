@@ -12,6 +12,7 @@ import RiskMap, {
   type RiskOverlayClass,
 } from '../../components/RiskMap'
 import OperationalMap, { type OperationalMapFocusRequest } from '../map/OperationalMap'
+import { MapTimeline } from '../map/MapTimeline'
 import { sourceQualifiedOperationalMapID } from '../map/types'
 import { getOperationalMapEngine } from '../../config/mapEngine'
 import { useAuth } from '../../lib/auth/AuthProvider'
@@ -593,29 +594,38 @@ export default function ExecutiveOverview({
               onOverlayClassToggle={toggleOverlayClass}
               timelineHoursAgo={timelineHoursAgo}
               onTimelineChange={setTimelineHoursAgo}
+              hideTimeSlider={mapEngine === 'maplibre'}
             />
             {mapEngine === 'maplibre' ? (
-              <OperationalMap
-                mode="viewer"
-                initialLayers={['events', 'official-alerts', 'air-quality']}
-                visibleLayers={visibleOperationalLayers}
-                showLegend
-                perils={operationalMapPerils(activePerilFilter)}
-                mapTime={mapTime}
-                authenticated={Boolean(session)}
-                privateOwnerKey={session?.user.id}
-                privateLayers={operationalPrivateLayers}
-                localOverlay={operationalLocalOverlay}
-                focusRequest={operationalFocusRequest}
-                onFeatureSelect={(feature) => {
-                  if (feature.properties.layer !== 'events') return
-                  const selected = events.find((event) => (
-                    sourceQualifiedOperationalMapID(event.source, event.event_id) === feature.id
-                  ))
-                  if (selected) handleEventClick(selected)
-                }}
-                className="h-[min(62vh,560px)]"
-              />
+              <div className="relative">
+                <OperationalMap
+                  mode="viewer"
+                  initialLayers={['events', 'official-alerts', 'air-quality']}
+                  visibleLayers={visibleOperationalLayers}
+                  showLegend
+                  perils={operationalMapPerils(activePerilFilter)}
+                  mapTime={mapTime}
+                  authenticated={Boolean(session)}
+                  privateOwnerKey={session?.user.id}
+                  privateLayers={operationalPrivateLayers}
+                  localOverlay={operationalLocalOverlay}
+                  focusRequest={operationalFocusRequest}
+                  onFeatureSelect={(feature) => {
+                    if (feature.properties.layer !== 'events') return
+                    const selected = events.find((event) => (
+                      sourceQualifiedOperationalMapID(event.source, event.event_id) === feature.id
+                    ))
+                    if (selected) handleEventClick(selected)
+                  }}
+                  className="h-[min(62vh,560px)]"
+                />
+                {/* Replay timeline: menyapu window 72 jam di atas peta. */}
+                <MapTimeline
+                  hoursAgo={timelineHoursAgo}
+                  onChange={setTimelineHoursAgo}
+                  className="absolute bottom-3 left-1/2 z-10 w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2"
+                />
+              </div>
             ) : (
               <RiskMap
                 events={events}
