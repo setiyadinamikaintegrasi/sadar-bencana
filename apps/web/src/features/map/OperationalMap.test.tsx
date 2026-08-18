@@ -95,6 +95,8 @@ const maplibre = vi.hoisted(() => {
         assertLive()
         return 5
       }),
+      getPitch: vi.fn(() => 0),
+      getBearing: vi.fn(() => 0),
       getStyle: vi.fn(() => {
         assertLive()
         return { layers: [], sources: {} }

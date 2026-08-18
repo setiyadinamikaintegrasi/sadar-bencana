@@ -9,6 +9,7 @@ import { EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './lay
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
+import { PitchControl } from './PitchControl'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -228,6 +229,7 @@ export default function OperationalMap({
   const focusCenterRef = useRef<((center: readonly [number, number]) => void) | null>(null)
   const [ready, setReady] = useState(false)
   const [fallback, setFallback] = useState(false)
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null)
   const [enabledLayers, setEnabledLayers] = useState<PublicOperationalMapLayer[]>(enabledLayersRef.current)
   const [layerStates, setLayerStates] = useState<Partial<Record<PublicOperationalMapLayer, PublicMapLayerViewState>>>({})
   const [selectedFeature, setSelectedFeature] = useState<OperationalMapFeature | null>(null)
@@ -646,6 +648,7 @@ export default function OperationalMap({
       clearOperationalMapArtifacts(currentMap)
       currentMap.remove()
       if (mapRef.current === currentMap) mapRef.current = null
+      setMapInstance(null)
       map = null
     }
 
@@ -668,6 +671,7 @@ export default function OperationalMap({
     }
 
     mapRef.current = map
+    setMapInstance(map)
     loadLayersRef.current = loadPublicLayers
     synchronizeVisibleLayersRef.current = synchronizeVisibleLayers
     synchronizeControlledCollectionsRef.current = (collections) => {
@@ -875,6 +879,8 @@ export default function OperationalMap({
               ) : null}
             </div>
           ) : null}
+          {/* Kontrol kemiringan peta (tilt) tanpa ctrl+drag. */}
+          {mode === 'viewer' && !fallback ? <PitchControl map={mapInstance} /> : null}
           <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
         </>
       )}
