@@ -419,7 +419,9 @@
 .operational-map__pitch-ctrl {
   position: absolute;
   z-index: 2;
-  top: 0.5rem;
+  /* Kiri-bawah: di atas bar skala — tidak menutupi legenda (kiri-atas)
+     maupun detail sheet (kanan-atas / bottom-sheet di mobile). */
+  bottom: 3rem;
   left: 0.5rem;
   display: flex;
   flex-direction: column;
