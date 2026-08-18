@@ -47,8 +47,10 @@ export async function fetchLatestWeatherRadarFrame(signal?: AbortSignal): Promis
     if (!frame) return null
     return {
       time: frame.time,
-      // 2/{size}/{color}: 256px, palet 4 = Universal Blue (kontras di basemap terang).
-      tiles: [`${host}${frame.path}/{z}/{x}/{y}/256/4.png`],
+      // Format resmi RainViewer utk MapLibre (contoh rainviewer-api-example):
+      // {host}{path}/{size}/{z}/{x}/{y}/{color}/{smooth}_{snow}.png —
+      // size 256, color 2 (Universal Blue), smoothing aktif.
+      tiles: [`${host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`],
       nowcast: Boolean(body.radar?.nowcast?.length && body.radar?.nowcast[0]?.time === frame.time),
     }
   } catch {
@@ -59,7 +61,7 @@ export async function fetchLatestWeatherRadarFrame(signal?: AbortSignal): Promis
 export function fallbackFrame(): WeatherRadarFrame {
   return {
     time: 0,
-    tiles: [`${DEFAULT_TILE_HOST}${FALLBACK_FRAME_PATH}/{z}/{x}/{y}/256/4.png`],
+    tiles: [`${DEFAULT_TILE_HOST}${FALLBACK_FRAME_PATH}/256/{z}/{x}/{y}/2/1_1.png`],
     nowcast: false,
   }
 }

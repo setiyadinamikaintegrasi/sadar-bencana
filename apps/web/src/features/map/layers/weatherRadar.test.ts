@@ -30,7 +30,7 @@ describe('fetchLatestWeatherRadarFrame', () => {
     expect(frame).not.toBeNull()
     expect(frame!.nowcast).toBe(true)
     expect(frame!.time).toBe(1787000600)
-    expect(frame!.tiles[0]).toBe('https://tilecache.rainviewer.com/v2/radar/nowcast-frame/{z}/{x}/{y}/256/4.png')
+    expect(frame!.tiles[0]).toBe('https://tilecache.rainviewer.com/v2/radar/nowcast-frame/256/{z}/{x}/{y}/2/1_1.png')
   })
 
   it('memakai frame past terakhir bila nowcast kosong', async () => {

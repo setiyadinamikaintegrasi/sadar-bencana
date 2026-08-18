@@ -177,7 +177,7 @@ beforeEach(() => {
   radarApi.fetchLatestWeatherRadarFrame.mockReset()
   radarApi.fetchLatestWeatherRadarFrame.mockResolvedValue({
     time: 1787000000,
-    tiles: ['https://fixture.rainviewer.example/{z}/{x}/{y}/256/4.png'],
+    tiles: ['https://fixture.rainviewer.example/256/{z}/{x}/{y}/2/1_1.png'],
     nowcast: false,
   })
 })
