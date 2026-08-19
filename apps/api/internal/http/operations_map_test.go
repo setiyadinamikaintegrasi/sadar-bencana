@@ -242,10 +242,10 @@ func TestOperationMapPublicEventsReturnsBoundedSafeFeatures(t *testing.T) {
 
 	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
 	rows := sqlmock.NewRows([]string{
-		"source", "event_id", "event_type", "severity", "place", "event_time", "url", "latitude", "longitude",
+		"source", "event_id", "event_type", "severity", "magnitude", "place", "event_time", "url", "latitude", "longitude",
 	})
 	for range 2001 {
-		rows.AddRow("bmkg", "bmkg-20260802-1", "earthquake", "High", "Jakarta", now, "https://example.test/event", -6.2, 106.8)
+		rows.AddRow("bmkg", "bmkg-20260802-1", "earthquake", "High", 4.5, "Jakarta", now, "https://example.test/event", -6.2, 106.8)
 	}
 	mock.ExpectQuery("(?s)FROM events.*event_time.*latitude.*longitude.*LIMIT \\$8").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), -6.4, -6.0, 106.7, 107.1, nil, 2001).
@@ -269,10 +269,10 @@ func TestOperationMapPublicEventsUsesSourceQualifiedIDsAndNullableFields(t *test
 	from := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)
 	rows := sqlmock.NewRows([]string{
-		"source", "event_id", "event_type", "severity", "place", "event_time", "url", "latitude", "longitude",
+		"source", "event_id", "event_type", "severity", "magnitude", "place", "event_time", "url", "latitude", "longitude",
 	}).
-		AddRow("bmkg", "shared-id", "earthquake", nil, nil, to, nil, -6.2, 106.8).
-		AddRow("usgs", "shared-id", "earthquake", "High", "Jakarta", to, "https://example.test/event", -6.2, 106.8)
+		AddRow("bmkg", "shared-id", "earthquake", nil, nil, nil, to, nil, -6.2, 106.8).
+		AddRow("usgs", "shared-id", "earthquake", "High", 5.2, "Jakarta", to, "https://example.test/event", -6.2, 106.8)
 	productionPredicate := regexp.QuoteMeta(productionEventSQLPredicate("source", "event_id"))
 	mock.ExpectQuery("(?s)SELECT source, event_id.*WHERE "+productionPredicate+".*ORDER BY event_time DESC NULLS LAST, source ASC, event_id ASC.*LIMIT \\$8").
 		WithArgs(from, to, -6.4, -6.0, 106.7, 107.1, `{"earthquake"}`, 2001).
