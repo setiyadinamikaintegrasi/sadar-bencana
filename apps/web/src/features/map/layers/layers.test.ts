@@ -72,6 +72,13 @@ describe('public operational map layer adapters', () => {
     expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-pulse-critical', type: 'circle' }))
     expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-pulse-high', type: 'circle' }))
     expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: 'operational-map-events-clusters-pulse', type: 'circle' }))
+    // Angka klaster wajib text-font eksplisit "Noto Sans Bold": default
+    // MapLibre tidak tersedia di server glyph OpenFreeMap -> 404 (P11).
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'operational-map-events-cluster-count',
+      type: 'symbol',
+      layout: expect.objectContaining({ 'text-font': ['Noto Sans Bold'] }),
+    }))
     expect(map.removeLayer).toHaveBeenCalledWith('operational-map-events-points')
     expect(map.removeSource).toHaveBeenCalledWith(eventsLayer.sourceId)
   })

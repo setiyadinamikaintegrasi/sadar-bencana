@@ -186,7 +186,15 @@ export const eventsLayer = {
       type: 'symbol',
       source: this.sourceId,
       filter: ['has', 'point_count'],
-      layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12 },
+      // Font wajib eksplisit: default MapLibre ("Open Sans Regular,Arial
+      // Unicode MS Regular") tidak tersedia di server glyph OpenFreeMap
+      // (hanya Noto Sans, tanpa dukungan stack koma) -> 404 dan angka klaster
+      // tidak pernah tampil.
+      layout: {
+        'text-field': '{point_count_abbreviated}',
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 12,
+      },
       paint: { 'text-color': '#ffffff' },
     })
     // Halo berkedip oranye untuk titik severity High/severe.
