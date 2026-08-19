@@ -27,6 +27,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
 - Sprint 5 S1: statistik zonal populasi WorldPop (grid 1km UNadj 2020,
   CC BY 4.0) — endpoint /api/v1/spatial/population-summary untuk poligon
   bebas dengan kuota vertex/luas, vintage & atribusi dataset terlihat.
+- Sprint 5 S2: fasilitas kritis dalam radius titik — endpoint
+  /api/v1/spatial/critical-facilities (agregat per jenis + daftar
+  terdekat, sumber OSM + entri manual) dan panel "Estimasi area 30 km"
+  di detail event peta (populasi WorldPop + fasilitas kritis).
 
 ### Security
 

@@ -1,6 +1,7 @@
 import { ExternalLink, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import SeverityBadge from '../../components/SeverityBadge'
+import { IMPACT_RADIUS_KM, useImpactSummary } from './impactSummary'
 import type { OperationalMapFeature, OperationalMapFeatureProperties } from './types'
 
 interface MapDetailSheetProps {
@@ -91,6 +92,64 @@ function TimestampRow({ label, value }: { label: string; value?: string }) {
   )
 }
 
+const FACILITY_TYPE_LABELS: Record<string, string> = {
+  rumah_sakit: 'Rumah sakit',
+  puskesmas: 'Puskesmas/klinik',
+  kantor_polisi: 'Kantor polisi',
+  damkar: 'Damkar',
+  shelter: 'Shelter',
+  tes: 'TES',
+  tea: 'TEA',
+  posko_bnpb_bpbd: 'Posko BNPB/BPBD',
+  pos_sar: 'Pos SAR',
+  gudang_logistik: 'Gudang logistik',
+  titik_kumpul: 'Titik kumpul',
+}
+
+/** Panel ringkasan dampak area (S1 populasi + S2 fasilitas) untuk event. */
+function ImpactPanel({ latitude, longitude }: { latitude: number; longitude: number }) {
+  const impact = useImpactSummary(latitude, longitude)
+  return (
+    <section className="operational-map__impact-panel" aria-label="Estimasi dampak area">
+      <p className="operational-map__impact-title">
+        Estimasi area {IMPACT_RADIUS_KM} km
+      </p>
+      {impact.status === 'loading' ? <p className="operational-map__impact-note">Menghitung dampak area…</p> : null}
+      {impact.status === 'unavailable' ? (
+        <p className="operational-map__impact-note">Data dampak area belum tersedia.</p>
+      ) : null}
+      {impact.status === 'ready' ? (
+        <dl className="operational-map__impact-list">
+          {impact.summary.population !== null ? (
+            <div className="operational-map__impact-row">
+              <dt>Populasi{impact.summary.populationVintage ? ` (${impact.summary.populationVintage})` : ''}</dt>
+              <dd>{Math.round(impact.summary.population).toLocaleString('id-ID')} jiwa</dd>
+            </div>
+          ) : null}
+          {impact.summary.facilities !== null ? (
+            <div className="operational-map__impact-row">
+              <dt>Fasilitas kritis</dt>
+              <dd>
+                <ul>
+                  {Object.entries(impact.summary.facilities)
+                    .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))
+                    .map(([type, count]) => (
+                      <li key={type}>
+                        {FACILITY_TYPE_LABELS[type] ?? type}: <strong>{count}</strong>
+                      </li>
+                    ))}
+                  {impact.summary.truncated ? <li className="operational-map__impact-note">Hasil dibatasi.</li> : null}
+                </ul>
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
+      <p className="operational-map__impact-attribution">WorldPop · OpenStreetMap contributors</p>
+    </section>
+  )
+}
+
 export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
   if (!feature) return null
 
@@ -159,6 +218,9 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
         <TimestampRow label="Berakhir" value={properties.expires_at} />
         <TimestampRow label="Data diperbarui" value={properties.data_vintage} />
       </dl>
+      {properties.layer === 'events' && feature.geometry.type === 'Point' ? (
+        <ImpactPanel latitude={feature.geometry.coordinates[1]} longitude={feature.geometry.coordinates[0]} />
+      ) : null}
       {sourceUrl ? (
         <a className="operational-map__source-link" href={sourceUrl} target="_blank" rel="noreferrer noopener">
           Buka sumber <ExternalLink aria-hidden="true" size={12} />
