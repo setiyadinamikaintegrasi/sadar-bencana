@@ -221,6 +221,30 @@
   margin: 0.375rem 0 0;
 }
 
+.operational-map__snapshot-button {
+  display: block;
+  width: 100%;
+  margin-top: 0.375rem;
+  padding: 0.3125rem 0.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: #cbd5e1;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.operational-map__snapshot-button:hover {
+  background: rgba(148, 163, 184, 0.16);
+  border-color: rgba(203, 213, 225, 0.65);
+}
+
+.operational-map__snapshot-button:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 1px;
+}
+
 .operational-map__notice {
   color: #cbd5e1;
   font-size: 0.6875rem;

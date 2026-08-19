@@ -15,6 +15,9 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   analyst berbasis snapshot terstruktur.
 - Lokasi Evakuasi: peta lokasi evakuasi (sinkron OSM + kurasi admin),
   pencarian tempat aman terdekat berbasis bencana aktif, dan navigasi.
+- Peta operasional: unduh cuplikan peta sebagai PNG dengan footer atribusi
+  (brand, waktu, sumber data, © OpenStreetMap contributors) dari tombol
+  "Unduh peta (PNG)" di panel legenda.
 
 ### Security
 
