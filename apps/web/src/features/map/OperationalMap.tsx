@@ -7,6 +7,7 @@ import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
+import { advanceAircraftPositions, aircraftLayer } from './layers/aircraft'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
@@ -63,7 +64,11 @@ const layerAdapters = {
   'official-alerts': officialAlertsLayer,
   'air-quality': airQualityLayer,
   evacuations: evacuationsLayer,
+  aircraft: aircraftLayer,
 } as const
+
+// Interval animasi pesawat (dead-reckoning antar refresh data).
+const AIRCRAFT_ANIMATION_MS = 2000
 
 export interface OperationalMapProps {
   mode?: OperationalMapMode
@@ -285,6 +290,7 @@ export default function OperationalMap({
     let lastFocusedRequestKey: string | undefined
     let pulseTimer: number | undefined
     let radarTimer: number | undefined
+    let aircraftTimer: number | undefined
     // Cache style gelap ter-patch (fetch sekali per sesi peta).
     let darkStyleCache: StyleSpecification | null = null
 
@@ -518,11 +524,27 @@ export default function OperationalMap({
       }, MAP_REFRESH_DEBOUNCE_MS)
     }
 
+    // Animasi lalu lintas udara: interpolasi posisi (dead-reckoning) tiap
+    // 2 detik dari velocity+heading sehingga pesawat bergerak mulus di antara
+    // refresh data worker (±60 detik).
+    const startAircraftAnimation = () => {
+      if (aircraftTimer !== undefined) window.clearInterval(aircraftTimer)
+      aircraftTimer = window.setInterval(() => {
+        if (disposed || !map) return
+        const collection = collectionsRef.current.aircraft
+        if (!collection || !enabledLayersRef.current.includes('aircraft')) return
+        const advanced = advanceAircraftPositions(collection, AIRCRAFT_ANIMATION_MS / 1000)
+        collectionsRef.current.aircraft = advanced
+        aircraftLayer.apply(map, advanced)
+      }, AIRCRAFT_ANIMATION_MS)
+    }
+
     const markReady = () => {
       mapLoaded = true
       setReady(true)
       loadPublicLayers()
       loadPrivateLayers()
+      startAircraftAnimation()
       synchronizeLocalOverlay(localOverlayRef.current)
       // Radar cuaca (RainViewer): pasang sekali di bawah layer titik agar
       // overlay hujan tidak menutupi marker. Frame di-refresh berkala.
@@ -699,6 +721,7 @@ export default function OperationalMap({
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
       if (pulseTimer !== undefined) window.clearInterval(pulseTimer)
       if (radarTimer !== undefined) window.clearInterval(radarTimer)
+      if (aircraftTimer !== undefined) window.clearInterval(aircraftTimer)
       refreshController?.abort()
       privateController?.abort()
       loadLayersRef.current = null

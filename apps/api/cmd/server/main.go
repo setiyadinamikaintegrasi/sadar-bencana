@@ -197,6 +197,7 @@ func main() {
 	publicMap.GET("/alerts", apihttp.OperationMapAlerts(dbPool))
 	publicMap.GET("/air-quality", apihttp.OperationMapAirQuality(dbPool))
 	publicMap.GET("/evacuations", apihttp.OperationMapEvacuations(dbPool))
+	publicMap.GET("/aircraft", apihttp.OperationMapAircraft(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),

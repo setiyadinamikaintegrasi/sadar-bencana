@@ -9,6 +9,7 @@ const LAYER_LABELS: Record<PublicOperationalMapLayer, string> = {
   'official-alerts': 'Peringatan resmi',
   'air-quality': 'Kualitas udara',
   evacuations: 'Lokasi evakuasi',
+  aircraft: 'Lalu lintas udara',
 }
 
 interface MapLegendProps {

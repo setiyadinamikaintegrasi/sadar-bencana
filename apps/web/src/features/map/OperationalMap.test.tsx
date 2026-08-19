@@ -557,7 +557,8 @@ describe('OperationalMap', () => {
   it('loads enabled public layers in parallel and opens typed feature details from map clicks', async () => {
     const responseFor = (url: string) => {
       const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
-        ? 'air-quality' : url.includes('/evacuations') ? 'evacuations' : 'events'
+        ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
+        : url.includes('/aircraft') ? 'aircraft' : 'events'
       return new Response(JSON.stringify({
         type: 'FeatureCollection',
         layer: wireLayer,
@@ -588,7 +589,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
@@ -962,7 +963,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(requests).toHaveLength(4)
+    expect(requests).toHaveLength(5)
     act(() => map.trigger('moveend'))
     expect(requests.every((request) => request.signal?.aborted)).toBe(true)
 
@@ -1094,7 +1095,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(4)
+    expect(deferredFailures).toHaveLength(5)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()
@@ -1139,7 +1140,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(4)
+    expect(deferredFailures).toHaveLength(5)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()
