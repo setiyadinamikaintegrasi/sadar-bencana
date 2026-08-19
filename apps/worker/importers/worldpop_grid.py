@@ -62,7 +62,7 @@ class ParsedGrid:
 
 
 def _vintage_from_path(path: str) -> str:
-    """Ambil tahun (vintage) dari nama file WorldPop, mis. idn_ppp_2020_... -> 2020."""
+    """Ambil tahun (vintage) dari path/URL WorldPop, mis. idn_ppp_2020_... -> 2020."""
     name = os.path.basename(path)
     for part in name.replace("-", "_").split("_"):
         if len(part) == 4 and part.isdigit() and part.startswith("20"):
@@ -70,12 +70,32 @@ def _vintage_from_path(path: str) -> str:
     raise ValueError(f"cannot infer WorldPop vintage from file name: {name}")
 
 
-def parse_worldpop_tif(source: io.IOBase | str) -> tuple[str, list[GridCell], float]:
+def _infer_vintage(file_name: str, fallback_url: str | None) -> str:
+    """Vintage dari nama file; fallback URL bila nama file tak memuat tahun.
+
+    Mode unduh otomatis menyimpan GeoTIFF ke tempfile acak
+    (``worldpop_<random>.tif``) sehingga nama file tidak bisa dipakai —
+    URL sumber selalu memuat tahun (``.../2020/IDN/idn_ppp_2020_...tif``).
+    """
+    try:
+        return _vintage_from_path(file_name)
+    except ValueError:
+        if fallback_url:
+            return _vintage_from_path(fallback_url)
+        raise
+
+
+def parse_worldpop_tif(
+    source: io.IOBase | str,
+    fallback_url: str | None = None,
+) -> tuple[str, list[GridCell], float]:
     """Baca GeoTIFF WorldPop -> (vintage, sel berpopulasi > 0, total populasi).
 
     ``source`` berupa path file atau objek file-like (mis. hasil unduhan).
+    ``fallback_url`` dipakai untuk inferensi vintage bila nama file temp
+    tidak memuat tahun (lihat ``_infer_vintage``).
     """
-    vintage = _vintage_from_path(getattr(source, "name", "") or str(source))
+    vintage = _infer_vintage(getattr(source, "name", "") or str(source), fallback_url)
 
     with tifffile.TiffFile(source) as tif:
         page = tif.pages[0]
@@ -141,7 +161,7 @@ async def run_ingest(database_url: str, tif_path: str | None, url: str) -> None:
     if not path:
         cleanup = path = _download(url)
 
-    vintage, cells, total = parse_worldpop_tif(path)
+    vintage, cells, total = parse_worldpop_tif(path, fallback_url=url)
     logger.info("parsed %s: %d cells, total population %.0f", vintage, len(cells), total)
 
     conn = await asyncpg.connect(database_url)
@@ -173,6 +193,8 @@ async def run_ingest(database_url: str, tif_path: str | None, url: str) -> None:
     finally:
         await conn.close()
         if cleanup:
+            # File unduhan NamedTemporaryFile berada langsung di dir temp
+            # sistem; cukup unlink file-nya.
             os.unlink(cleanup)
 
     logger.info("ingest complete: %d cells for vintage %s", len(cells), vintage)
