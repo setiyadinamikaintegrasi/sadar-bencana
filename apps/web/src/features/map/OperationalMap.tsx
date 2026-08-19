@@ -7,7 +7,7 @@ import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState
 import { downloadMapSnapshot } from './mapSnapshot'
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
-import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
+import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, rebuildClusterBadges, setEventsHeatmapVisible } from './layers/events'
 import { advanceAircraftPositions, aircraftLayer } from './layers/aircraft'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
@@ -915,6 +915,18 @@ export default function OperationalMap({
 
     map.on('load', markReady)
     map.on('moveend', synchronizeView)
+    // P12: badge komposisi klaster dibangun ulang saat viewport berhenti
+    // bergerak (posisi badge bergantung zoom/proyeksi) dan saat data events
+    // selesai dimuat (komposisi jenis bencana berubah).
+    map.on('moveend', () => {
+      if (!disposed && map) rebuildClusterBadges(map)
+    })
+    map.on('sourcedata', (event) => {
+      if (disposed || !map) return
+      if (event.sourceId === eventsLayer.sourceId && 'isSourceLoaded' in event && event.isSourceLoaded) {
+        rebuildClusterBadges(map)
+      }
+    })
     map.once('webglcontextlost', showFallback)
     registerLayerInteractions(map)
 
