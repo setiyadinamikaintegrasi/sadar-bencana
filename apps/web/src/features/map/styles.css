@@ -389,6 +389,13 @@
   font-size: 0.5625rem;
 }
 
+/* Magnitudo kejadian — angka besar mudah dibaca sekilas. */
+.operational-map__magnitude {
+  font-size: 1rem;
+  line-height: 1.1;
+  color: #f8fafc;
+}
+
 .operational-map__source-link {
   display: inline-flex;
   align-items: center;

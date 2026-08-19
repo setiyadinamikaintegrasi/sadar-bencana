@@ -31,6 +31,9 @@ type OperationMapFeatureProperties struct {
 	Label              string     `json:"label"`
 	PerilType          string     `json:"peril_type,omitempty"`
 	Severity           string     `json:"severity,omitempty"`
+	// Magnitude kejadian (gempa M, dsb.) + tempat agar popup peta informatif.
+	Magnitude          *float64   `json:"magnitude,omitempty"`
+	Place              string     `json:"place,omitempty"`
 	Source             string     `json:"source"`
 	Attribution        string     `json:"attribution"`
 	SourceURL          string     `json:"source_url,omitempty"`
@@ -292,7 +295,7 @@ func addOperationMapVary(c *gin.Context, value string) {
 }
 
 var operationMapEventsQuery = `
-SELECT source, event_id, event_type, severity, place, event_time, url, latitude, longitude
+SELECT source, event_id, event_type, severity, magnitude, place, event_time, url, latitude, longitude
 FROM events
 WHERE ` + productionEventSQLPredicate("source", "event_id") + `
   AND event_time >= $1
@@ -478,9 +481,10 @@ func OperationMapEvents(db *sql.DB) gin.HandlerFunc {
 			var source, eventID, eventType string
 			var severity sql.NullString
 			var place, url sql.NullString
+			var magnitude sql.NullFloat64
 			var eventTime time.Time
 			var latitude, longitude float64
-			if err := rows.Scan(&source, &eventID, &eventType, &severity, &place, &eventTime, &url, &latitude, &longitude); err != nil {
+			if err := rows.Scan(&source, &eventID, &eventType, &severity, &magnitude, &place, &eventTime, &url, &latitude, &longitude); err != nil {
 				status = http.StatusInternalServerError
 				operationMapError(c, status, "row_scan_failed")
 				return
@@ -493,6 +497,8 @@ func OperationMapEvents(db *sql.DB) gin.HandlerFunc {
 				OperationMapFeatureProperties{
 					PerilType:          eventType,
 					Severity:           nullableOperationMapString(severity),
+					Magnitude:          operationMapFloat64Ptr(magnitude),
+					Place:              nullableOperationMapString(place),
 					Source:             source,
 					Attribution:        operationMapAttribution(source),
 					SourceURL:          nullableOperationMapString(url),
@@ -900,6 +906,14 @@ func nullableOperationMapTime(value sql.NullTime) *time.Time {
 func operationMapTimePtr(value time.Time) *time.Time {
 	utc := value.UTC()
 	return &utc
+}
+
+func operationMapFloat64Ptr(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Float64
+	return &result
 }
 
 func nullableOperationMapBool(value sql.NullBool) *bool {

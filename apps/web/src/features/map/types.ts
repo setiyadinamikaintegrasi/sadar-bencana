@@ -41,6 +41,10 @@ export interface OperationalMapFeatureProperties {
   verification_status: string
   /** Rank numerik severity 0–4 (dihitung client-side oleh layer events). */
   severity_rank?: number
+  /** Magnitude kejadian (gempa M, dsb.) — dari API map layer events. */
+  magnitude?: number
+  /** Tempat kejadian (ringkas, dari events.place). */
+  place?: string
   observed_at?: string
   effective_at?: string
   expires_at?: string
