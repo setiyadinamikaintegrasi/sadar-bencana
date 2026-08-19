@@ -4,12 +4,12 @@ import type { OperationalMapFeature, OperationalMapFeatureCollection } from '../
 /**
  * Layer lalu lintas udara — posisi pesawat live (OpenSky via worker).
  *
- * - Marker = segitiga ter-rotasi sesuai heading (icon-rotate dari property
- *   `magnitude` yang dipakai API sebagai heading derajat).
+ * - Marker = segitiga ter-rotasi sesuai heading (`icon-rotate` dari properti
+ *   `heading_deg` yang dikirim API).
  * - Warna marker mengikuti ketinggian (rendah terang, tinggi pucat-biru).
  * - Animasi dead-reckoning: `advanceAircraftPositions` digerakkan interval
  *   dari OperationalMap — menginterpolasi posisi dari velocity/heading sehingga
- *   pesawat bergerak mulus di antara refresh data (±60 detik).
+ *   pesawat bergerak mulus di antara snap berkala ke data worker (±60 detik).
  */
 
 export const AIRCRAFT_SOURCE_ID = 'operational-map-aircraft-source'
