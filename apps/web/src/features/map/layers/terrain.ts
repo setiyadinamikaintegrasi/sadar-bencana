@@ -5,9 +5,11 @@ import type { HillshadeLayerSpecification, Map, RasterDEMSourceSpecification } f
  * gratis tanpa API key, cakupan global
  * (https://registry.opendata.aws/terrain-tiles/).
  *
- * - raster-dem source (encoding 'terrarium') mengaktifkan terrain 3D via
- *   map.setTerrain (pitch/bearing kini menampilkan relief sungguhan).
- * - layer hillshade memberi kedalaman visual bahkan tanpa pitch.
+ * Optimasi render (pengukuran menunjukkan terrain paling berat di GPU lemah):
+ * - DEM maxzoom 11 (bukan 13): mesh terrain jauh lebih ringan; z11 (~76m/px)
+ *   sudah cukup untuk relief gunung konteks monitoring.
+ * - setPaused saat tab hidden: berhenti merender terrain di background tab.
+ * - Exaggeration 1.0 (dari 1.2): kurangi beban reshading saat drag.
  */
 
 export const TERRAIN_DEM_SOURCE_ID = 'operational-map-terrain-dem-source'
@@ -17,14 +19,18 @@ const TERRARIUM_TILES = [
   'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
 ]
 
+const DEM_MAXZOOM = 11
+
 const DEM_SOURCE: RasterDEMSourceSpecification = {
   type: 'raster-dem',
   tiles: TERRARIUM_TILES,
   encoding: 'terrarium',
   tileSize: 256,
-  maxzoom: 13,
+  maxzoom: DEM_MAXZOOM,
   attribution: 'Elevation: Terrain Tiles (AWS Open Data)',
 }
+
+export const TERRAIN_OPTIONS = { exaggeration: 1.0 } as const
 
 export const terrainLayer = {
   sourceId: TERRAIN_DEM_SOURCE_ID,
@@ -54,12 +60,27 @@ export const terrainLayer = {
   setVisible(map: Map, visible: boolean): void {
     if (typeof map.getLayer !== 'function' || typeof map.setTerrain !== 'function') return
     if (visible) {
-      map.setTerrain({ source: this.sourceId, exaggeration: 1.2 })
+      map.setTerrain({ source: this.sourceId, exaggeration: TERRAIN_OPTIONS.exaggeration })
     } else {
       map.setTerrain(null)
     }
     if (map.getLayer(TERRAIN_HILLSHADE_LAYER_ID)) {
       map.setLayoutProperty(TERRAIN_HILLSHADE_LAYER_ID, 'visibility', visible ? 'visible' : 'none')
+    }
+  },
+  /**
+   * Jeda render terrain (dipakai visibilitychange). Menghapus terrain aktif
+   * + menyembunyikan hillshade — pemulihan dilakukan caller via setVisible
+   * sesuai state toggle saat tab kembali aktif.
+   */
+  setPaused(map: Map, paused: boolean): void {
+    if (typeof map.setTerrain !== 'function' || typeof map.getTerrain !== 'function') return
+    if (!paused) return
+    if (map.getTerrain()) {
+      map.setTerrain(null)
+      if (map.getLayer && map.getLayer(TERRAIN_HILLSHADE_LAYER_ID)) {
+        map.setLayoutProperty(TERRAIN_HILLSHADE_LAYER_ID, 'visibility', 'none')
+      }
     }
   },
   remove(map: Map): void {

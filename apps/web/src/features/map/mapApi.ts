@@ -17,6 +17,7 @@ export const publicMapEndpoints = {
   'official-alerts': '/map/operations/alerts',
   'air-quality': '/map/operations/air-quality',
   evacuations: '/map/operations/evacuations',
+  aircraft: '/map/operations/aircraft',
 } as const satisfies Record<PublicOperationalMapLayer, string>
 
 export const privateMapEndpoints = {
@@ -29,6 +30,7 @@ const publicMapWireLayers: Record<PublicOperationalMapLayer, OperationalMapWireL
   'official-alerts': 'alerts',
   'air-quality': 'air-quality',
   evacuations: 'evacuations',
+  aircraft: 'aircraft',
 }
 
 const EVENT_PERILS = new Set(['earthquake', 'wildfire', 'flood', 'volcano'])
@@ -119,6 +121,8 @@ function requestPath(layer: PublicOperationalMapLayer, viewport: PublicMapViewpo
     }
     const perils = normalizedPerils(viewport.perils)
     if (perils.length > 0) params.set('perils', perils.join(','))
+  } else if (layer === 'aircraft') {
+    // Snapshot live: tanpa parameter waktu — selalu posisi termutakhir.
   } else if (mapTime) {
     params.set('at', mapTime)
   }

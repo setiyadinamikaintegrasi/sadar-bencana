@@ -26,7 +26,8 @@ export const DEFAULT_MAP_VIEW_STATE: MapViewState = {
   mapLng: 118,
   mapLat: -2.5,
   mapZoom: 5,
-  mapLayers: [...PUBLIC_OPERATIONAL_MAP_LAYERS],
+  // Lalu lintas udara default nonaktik (noise visual); aktif via legenda.
+  mapLayers: PUBLIC_OPERATIONAL_MAP_LAYERS.filter((layer) => layer !== 'aircraft'),
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

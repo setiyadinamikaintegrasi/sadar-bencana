@@ -3,6 +3,7 @@ export const PUBLIC_OPERATIONAL_MAP_LAYERS = [
   'official-alerts',
   'air-quality',
   'evacuations',
+  'aircraft',
 ] as const
 
 export const PRIVATE_OPERATIONAL_MAP_LAYERS = [
@@ -19,6 +20,7 @@ export const OPERATIONAL_MAP_WIRE_LAYERS = [
   'alerts',
   'air-quality',
   'evacuations',
+  'aircraft',
   'watch-zones',
   'personal-assets',
 ] as const
@@ -45,6 +47,12 @@ export interface OperationalMapFeatureProperties {
   magnitude?: number
   /** Tempat kejadian (ringkas, dari events.place). */
   place?: string
+  /** Arah gerak derajat (0=utara) — lalu lintas udara. */
+  heading_deg?: number
+  /** Kecepatan m/detik — animasi dead-reckoning. */
+  velocity_ms?: number
+  /** Ketinggian meter — pewarnaan marker lalu lintas udara. */
+  altitude_m?: number
   observed_at?: string
   effective_at?: string
   expires_at?: string

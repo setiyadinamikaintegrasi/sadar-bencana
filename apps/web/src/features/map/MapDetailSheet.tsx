@@ -42,6 +42,10 @@ function safeExternalUrl(source: string, value: string | undefined): string | un
   return undefined
 }
 
+const LAYER_LABELS: Record<string, string> = {
+  aircraft: 'Lalu lintas udara',
+}
+
 const PERIL_LABELS: Record<string, string> = {
   earthquake: 'Gempa bumi',
   wildfire: 'Karhutla',
@@ -56,7 +60,7 @@ function layerTypeLabel(properties: OperationalMapFeatureProperties): string {
   if (properties.layer === 'events' && properties.peril_type) {
     return PERIL_LABELS[properties.peril_type] ?? properties.peril_type
   }
-  return properties.layer
+  return LAYER_LABELS[properties.layer] ?? properties.layer
 }
 
 function formatTimestamp(value: string): string {
@@ -122,6 +126,20 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
         <DetailRow label="Verifikasi">{properties.verification_status}</DetailRow>
         {observation ? <DetailRow label="Pengamatan">{observation}</DetailRow> : null}
         {properties.category ? <DetailRow label="Kategori udara">{properties.category}</DetailRow> : null}
+        {properties.layer === 'aircraft' ? (
+          <>
+            {properties.altitude_m != null ? (
+              <DetailRow label="Ketinggian">{Math.round(properties.altitude_m).toLocaleString('id-ID')} m ({Math.round(properties.altitude_m * 3.28084).toLocaleString('id-ID')} ft)</DetailRow>
+            ) : null}
+            {properties.velocity_ms != null ? (
+              <DetailRow label="Kecepatan">{Math.round(properties.velocity_ms * 3.6).toLocaleString('id-ID')} km/j</DetailRow>
+            ) : null}
+            {properties.heading_deg != null ? (
+              <DetailRow label="Arah">{Math.round(properties.heading_deg)}°</DetailRow>
+            ) : null}
+            {properties.category ? <DetailRow label="Negara asal">{properties.category}</DetailRow> : null}
+          </>
+        ) : null}
         {properties.layer === 'evacuations' ? (
           <>
             {properties.location_type ? <DetailRow label="Jenis lokasi">{properties.location_type}</DetailRow> : null}

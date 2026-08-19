@@ -557,7 +557,8 @@ describe('OperationalMap', () => {
   it('loads enabled public layers in parallel and opens typed feature details from map clicks', async () => {
     const responseFor = (url: string) => {
       const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
-        ? 'air-quality' : url.includes('/evacuations') ? 'evacuations' : 'events'
+        ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
+        : url.includes('/aircraft') ? 'aircraft' : 'events'
       return new Response(JSON.stringify({
         type: 'FeatureCollection',
         layer: wireLayer,
@@ -588,7 +589,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
@@ -640,6 +641,112 @@ describe('OperationalMap', () => {
       })
     })
     expect(screen.getByRole('heading', { name: 'Peringatan Jakarta' })).toBeTruthy()
+  })
+
+  it('re-fetches live aircraft positions every refresh interval while the layer is enabled', async () => {
+    vi.useFakeTimers()
+    const responseFor = (url: string) => {
+      const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
+        ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
+        : url.includes('/aircraft') ? 'aircraft' : 'events'
+      return new Response(JSON.stringify({
+        type: 'FeatureCollection',
+        layer: wireLayer,
+        truncated: false,
+        features: wireLayer === 'aircraft' ? [{
+          type: 'Feature',
+          id: 'aircraft:1',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'aircraft:1',
+            layer: 'aircraft',
+            label: 'T7TUN',
+            source: 'opensky',
+            attribution: 'The OpenSky Network',
+            verification_status: 'source-reported',
+            heading_deg: 137.4,
+            velocity_ms: 146,
+            altitude_m: 2766,
+          },
+        }] : [],
+      }), { status: 200 })
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((url) => Promise.resolve(responseFor(String(url))))
+
+    render(<OperationalMap initialLayers={['events', 'aircraft']} />)
+    const map = maplibre.instances[0]
+    fetchMock.mockClear()
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    const aircraftFetches = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/aircraft')).length
+    expect(aircraftFetches()).toBe(1)
+
+    // Interval refresh ±60 detik: snap posisi pesawat ke data worker terbaru.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+    })
+    expect(aircraftFetches()).toBe(2)
+    expect(map.addSource).toHaveBeenCalledWith('operational-map-aircraft-source', expect.anything())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+    })
+    expect(aircraftFetches()).toBe(3)
+  })
+
+  it('pauses the live aircraft refresh while the document is hidden and resumes on visibility', async () => {
+    vi.useFakeTimers()
+    const responseFor = (url: string) => {
+      const wireLayer = url.includes('/aircraft') ? 'aircraft' : 'events'
+      return new Response(JSON.stringify({
+        type: 'FeatureCollection',
+        layer: wireLayer,
+        truncated: false,
+        features: wireLayer === 'aircraft' ? [{
+          type: 'Feature',
+          id: 'aircraft:1',
+          geometry: { type: 'Point', coordinates: [106.8, -6.2] },
+          properties: {
+            id: 'aircraft:1', layer: 'aircraft', label: 'T7TUN', source: 'opensky', attribution: 'The OpenSky Network', verification_status: 'source-reported',
+            heading_deg: 137.4, velocity_ms: 146, altitude_m: 2766,
+          },
+        }] : [],
+      }), { status: 200 })
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((url) => Promise.resolve(responseFor(String(url))))
+
+    render(<OperationalMap initialLayers={['aircraft']} />)
+    const map = maplibre.instances[0]
+    fetchMock.mockClear()
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    const aircraftFetches = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/aircraft')).length
+    expect(aircraftFetches()).toBe(1)
+
+    // Sembunyikan tab: refresh dihentikan (tidak ada fetch tambahan).
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+    })
+    expect(aircraftFetches()).toBe(1)
+
+    // Tab kembali terlihat: interval dimulai ulang, fetch berikutnya tiba.
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+    })
+    expect(aircraftFetches()).toBe(2)
+
+    // Pulihkan hidden agar test lain tidak terpengaruh.
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
   })
 
   it('uses a controlled public collection without fetching and replaces its rendered data', async () => {
@@ -962,7 +1069,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(requests).toHaveLength(4)
+    expect(requests).toHaveLength(5)
     act(() => map.trigger('moveend'))
     expect(requests.every((request) => request.signal?.aborted)).toBe(true)
 
@@ -1094,7 +1201,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(4)
+    expect(deferredFailures).toHaveLength(5)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()
@@ -1139,7 +1246,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(4)
+    expect(deferredFailures).toHaveLength(5)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()

@@ -14,6 +14,7 @@ function createMap() {
     setLayoutProperty: vi.fn(),
     setTerrain: vi.fn(),
     setProjection: vi.fn(),
+    getTerrain: vi.fn(() => null),
   }
 }
 
@@ -66,6 +67,28 @@ describe('terrainLayer adapter', () => {
     expect(map.setTerrain).toHaveBeenCalledWith(null)
     expect(map.removeSource).toHaveBeenCalledWith(terrainLayer.sourceId)
     expect(map.getSource(terrainLayer.sourceId)).toBeUndefined()
+  })
+})
+
+describe('terrainLayer.setPaused (hemat CPU di background tab)', () => {
+  it('paused menghapus terrain aktif + menyembunyikan hillshade', () => {
+    const map = createMap()
+    map.getTerrain.mockReturnValue({ source: 'x' } as never)
+    terrainLayer.apply(map as never)
+    terrainLayer.setPaused(map as never, true)
+    expect(map.setTerrain).toHaveBeenLastCalledWith(null)
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      'operational-map-terrain-hillshade',
+      'visibility',
+      'none',
+    )
+  })
+
+  it('paused tanpa effect bila terrain nonaktif', () => {
+    const map = createMap()
+    terrainLayer.apply(map as never)
+    terrainLayer.setPaused(map as never, true)
+    expect(map.setTerrain).not.toHaveBeenCalledWith(null)
   })
 })
 

@@ -34,6 +34,12 @@ type OperationMapFeatureProperties struct {
 	// Magnitude kejadian (gempa M, dsb.) + tempat agar popup peta informatif.
 	Magnitude          *float64   `json:"magnitude,omitempty"`
 	Place              string     `json:"place,omitempty"`
+	// Arah gerak (derajat, 0=utara) — dipakai rotasi marker lalu lintas udara.
+	HeadingDeg         *float64   `json:"heading_deg,omitempty"`
+	// Kecepatan meter/detik — dipakai animasi dead-reckoning marker.
+	VelocityMS         *float64   `json:"velocity_ms,omitempty"`
+	// Ketinggian meter — pewarnaan marker lalu lintas udara.
+	AltitudeM          *float64   `json:"altitude_m,omitempty"`
 	Source             string     `json:"source"`
 	Attribution        string     `json:"attribution"`
 	SourceURL          string     `json:"source_url,omitempty"`
