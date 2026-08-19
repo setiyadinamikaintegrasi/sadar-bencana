@@ -18,6 +18,9 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
 - Peta operasional: unduh cuplikan peta sebagai PNG dengan footer atribusi
   (brand, waktu, sumber data, © OpenStreetMap contributors) dari tombol
   "Unduh peta (PNG)" di panel legenda.
+- Peta operasional: overlay satelit inframerah (suhu puncak awan) dari NASA
+  GIBS Himawari Band 13 — gratis tanpa API key, granule ±10-15 menit,
+  tanggal vintage (UTC) ditampilkan di legenda.
 
 ### Security
 

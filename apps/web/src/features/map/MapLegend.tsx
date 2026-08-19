@@ -24,6 +24,10 @@ interface MapLegendProps {
   radarOn?: boolean
   radarVintage?: string | null
   onToggleRadar?: (next: boolean) => void
+  /** Overlay satelit inframerah — suhu puncak awan (NASA GIBS Himawari). */
+  irOn?: boolean
+  irVintage?: string | null
+  onToggleIR?: (next: boolean) => void
   /** Terrain 3D (AWS Terrarium) + hillshade. */
   terrainOn?: boolean
   onToggleTerrain?: (next: boolean) => void
@@ -62,7 +66,7 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
   }
 }
 
-export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme, onExportSnapshot }: MapLegendProps) {
+export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, irOn = false, irVintage = null, onToggleIR, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme, onExportSnapshot }: MapLegendProps) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
   // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
   // membukanya lewat summary. Desktop tetap terbuka.
@@ -126,6 +130,22 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
             {radarOn && radarVintage ? (
               <span className="operational-map__layer-health" title="Waktu observasi frame radar">
                 {radarVintage}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+        {onToggleIR ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Satelit inframerah"
+              checked={irOn}
+              onChange={() => onToggleIR(!irOn)}
+            />
+            <span>Satelit IR</span>
+            {irOn && irVintage ? (
+              <span className="operational-map__layer-health" title="Tanggal granule satelit (UTC)">
+                {irVintage}
               </span>
             ) : null}
           </label>
