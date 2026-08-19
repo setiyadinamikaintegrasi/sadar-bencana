@@ -12,6 +12,7 @@ import pytest
 import tifffile
 
 from importers.worldpop_grid import (
+    DEFAULT_TIF_URL,
     MAX_TIF_BYTES,
     GridCell,
     _vintage_from_path,
@@ -85,3 +86,35 @@ def test_size_limit_is_sane():
     # File aktual ±10 MB; batas 64 MB memberi ruang untuk tahun/dataset lain
     # tanpa membuka pintu unduhan tanpa batas.
     assert MAX_TIF_BYTES == 64 * 1024 * 1024
+
+
+def test_parse_worldpop_tif_infers_vintage_from_url_for_random_temp_name(tmp_path):
+    """Regresi prod: mode unduh otomatis menyimpan GeoTIFF ke tempfile acak
+    (worldpop_<random>.tif) — vintage harus jatuh ke fallback URL."""
+    raster = np.array([[5.0, -99999.0]], dtype=np.float32)
+    # Nama file acak tanpa tahun, meniru NamedTemporaryFile prefix worldpop_.
+    path = str(tmp_path / "worldpop_p_5ph6vr.tif")
+    _write_tif(path, raster)
+
+    vintage, cells, total = parse_worldpop_tif(path, fallback_url=DEFAULT_TIF_URL)
+    assert vintage == "2020"
+    assert [c.population for c in cells] == [5.0]
+    assert total == 5.0
+
+
+def test_parse_worldpop_tif_random_name_without_fallback_raises(tmp_path):
+    raster = np.array([[5.0]], dtype=np.float32)
+    path = str(tmp_path / "worldpop_zz9x.tif")
+    _write_tif(path, raster)
+
+    with pytest.raises(ValueError, match="cannot infer WorldPop vintage"):
+        parse_worldpop_tif(path)
+
+
+def test_parse_worldpop_tif_fallback_url_also_requires_year(tmp_path):
+    raster = np.array([[5.0]], dtype=np.float32)
+    path = str(tmp_path / "worldpop_random.tif")
+    _write_tif(path, raster)
+
+    with pytest.raises(ValueError, match="cannot infer WorldPop vintage"):
+        parse_worldpop_tif(path, fallback_url="https://example.com/files/latest.tif")
