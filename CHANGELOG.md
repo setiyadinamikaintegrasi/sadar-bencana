@@ -21,6 +21,9 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
 - Peta operasional: overlay satelit inframerah (suhu puncak awan) dari NASA
   GIBS Himawari Band 13 — gratis tanpa API key, granule ±10-15 menit,
   tanggal vintage (UTC) ditampilkan di legenda.
+- Peta operasional: badge komposisi klaster — deretan titik berwarna per
+  jenis bencana di bawah lingkaran klaster, dibangun dari klaster aktual
+  (getClusterLeaves) sehingga komposisi selalu akurat.
 
 ### Security
 
