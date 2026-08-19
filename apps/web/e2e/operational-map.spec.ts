@@ -96,6 +96,18 @@ function responseFor(pathname: string): unknown | undefined {
   if (pathname === '/api/v1/map/operations/events') return collection('events', [eventFeature])
   if (pathname === '/api/v1/map/operations/alerts') return collection('alerts', [], true)
   if (pathname === '/api/v1/map/operations/air-quality') return collection('air-quality', [])
+  if (pathname === '/api/v1/spatial/population-summary') {
+    return {
+      data: {
+        population: 1234,
+        cells: 4,
+        dataset: { dataset: 'worldpop_population', vintage: '2020', resolution_m: 1000, attribution: 'WorldPop (CC BY 4.0)', ingested_at: '2026-08-20T00:00:00Z', feature_count: 2270281 },
+      },
+    }
+  }
+  if (pathname === '/api/v1/spatial/critical-facilities') {
+    return { data: { origin: { latitude: 0, longitude: 0 }, radius_km: 30, counts: { rumah_sakit: 2 }, total: 2, truncated: false, facilities: [], attribution: 'OpenStreetMap contributors' } }
+  }
   if (pathname === '/api/v1/me/map/watch-zones') return collection('watch-zones', [privateFeature('watch-zones')])
   if (pathname === '/api/v1/me/map/personal-assets') return collection('personal-assets', [privateFeature('personal-assets')])
   return undefined
@@ -307,6 +319,23 @@ test('downloads the current map view as a PNG snapshot with attribution footer',
   const footerHeight = Math.round(44 * metrics!.width / metrics!.clientWidth)
   expect(width).toBe(metrics!.width)
   expect(height).toBe(metrics!.height + footerHeight)
+})
+
+test('shows an impact summary panel with population and facilities for a selected event', async ({ page }) => {
+  await openMap(page)
+
+  // Buka detail event pertama (event fixture di Jakarta).
+  await page.getByRole('button', { name: 'Fokuskan di peta' }).click()
+  const sheet = page.getByRole('dialog', { name: 'Detail peta' })
+  await expect(sheet).toBeVisible()
+
+  // Panel dampak S1+S2: populasi + fasilitas kritis radius 30 km.
+  const panel = page.locator('.operational-map__impact-panel')
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('Estimasi area 30 km')
+  await expect(panel).toContainText('1.234 jiwa')
+  await expect(panel).toContainText('Rumah sakit: 2')
+  await expect(panel).toContainText('WorldPop · OpenStreetMap contributors')
 })
 
 test('loads owner-only layers for a logged-in owner', async ({ page }) => {

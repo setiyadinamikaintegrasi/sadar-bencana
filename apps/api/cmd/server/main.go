@@ -201,6 +201,8 @@ func main() {
 	// Sprint 5 S1: statistik zonal populasi (WorldPop) untuk poligon bebas.
 	spatial := router.Group("/api/v1/spatial", publicCache)
 	spatial.GET("/population-summary", apihttp.SpatialPopulationSummary(dbPool))
+	// Sprint 5 S2: fasilitas kritis dalam radius titik (OSM + manual).
+	spatial.GET("/critical-facilities", apihttp.CriticalFacilitiesSummary(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),
