@@ -198,6 +198,9 @@ func main() {
 	publicMap.GET("/air-quality", apihttp.OperationMapAirQuality(dbPool))
 	publicMap.GET("/evacuations", apihttp.OperationMapEvacuations(dbPool))
 	publicMap.GET("/aircraft", apihttp.OperationMapAircraft(dbPool))
+	// Sprint 5 S1: statistik zonal populasi (WorldPop) untuk poligon bebas.
+	spatial := router.Group("/api/v1/spatial", publicCache)
+	spatial.GET("/population-summary", apihttp.SpatialPopulationSummary(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),

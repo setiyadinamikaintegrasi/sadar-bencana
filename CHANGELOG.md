@@ -24,6 +24,9 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
 - Peta operasional: badge komposisi klaster — deretan titik berwarna per
   jenis bencana di bawah lingkaran klaster, dibangun dari klaster aktual
   (getClusterLeaves) sehingga komposisi selalu akurat.
+- Sprint 5 S1: statistik zonal populasi WorldPop (grid 1km UNadj 2020,
+  CC BY 4.0) — endpoint /api/v1/spatial/population-summary untuk poligon
+  bebas dengan kuota vertex/luas, vintage & atribusi dataset terlihat.
 
 ### Security
 
