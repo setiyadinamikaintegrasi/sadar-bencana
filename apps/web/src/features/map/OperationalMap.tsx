@@ -4,6 +4,7 @@ import type { StyleSpecification } from 'maplibre-gl'
 import { MapDetailSheet } from './MapDetailSheet'
 import { MapLegend } from './MapLegend'
 import { fetchPrivateMapLayer, fetchPublicMapLayer, type PublicMapLayerViewState, type PublicMapViewport } from './mapApi'
+import { downloadMapSnapshot } from './mapSnapshot'
 import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, setEventsHeatmapVisible } from './layers/events'
@@ -234,6 +235,7 @@ export default function OperationalMap({
   const onViewportChangeRef = useRef(onViewportChange)
   const localOverlayRef = useRef(localOverlay)
   const loadLayersRef = useRef<(() => void) | null>(null)
+  const exportSnapshotRef = useRef<(() => void) | null>(null)
   const applyThemeRef = useRef<((next: OperationalMapTheme) => void) | null>(null)
   const synchronizeVisibleLayersRef = useRef<((layers: PublicOperationalMapLayer[]) => void) | null>(null)
   const synchronizeControlledCollectionsRef = useRef<((collections: Partial<Record<PublicOperationalMapLayer, OperationalMapFeatureCollection>>) => void) | null>(null)
@@ -782,6 +784,7 @@ export default function OperationalMap({
       refreshController?.abort()
       privateController?.abort()
       loadLayersRef.current = null
+      exportSnapshotRef.current = null
       applyThemeRef.current = null
       synchronizePrivateLayersRef.current = null
       synchronizeVisibleLayersRef.current = null
@@ -828,6 +831,9 @@ export default function OperationalMap({
         center: [viewState.mapLng, viewState.mapLat],
         zoom: viewState.mapZoom,
         maxZoom: 18,
+        // Wajib agar kanvas WebGL bisa dibaca untuk unduhan cuplikan PNG (P9);
+        // tanpa ini buffer gambar sudah terhapus saat toBlob dipanggil.
+        canvasContextAttributes: { preserveDrawingBuffer: true },
       })
     } catch {
       setFallback(true)
@@ -837,6 +843,17 @@ export default function OperationalMap({
     mapRef.current = map
     setMapInstance(map)
     loadLayersRef.current = loadPublicLayers
+    // P9: unduh cuplikan peta sebagai PNG (dengan footer atribusi) — dipicu
+    // tombol "Unduh peta (PNG)" di panel legenda.
+    exportSnapshotRef.current = () => {
+      if (!map || disposed) return
+      const attributions = [
+        ...new Set(Object.values(collectionsRef.current).flatMap((collection) => (
+          collection?.features.map((feature) => feature.properties.attribution).filter(Boolean) ?? []
+        ))),
+      ]
+      downloadMapSnapshot(map, { attributions })
+    }
     synchronizeVisibleLayersRef.current = synchronizeVisibleLayers
     synchronizeControlledCollectionsRef.current = (collections) => {
       controlledCollectionsRef.current = collections
@@ -966,6 +983,10 @@ export default function OperationalMap({
     applyThemeRef.current?.(next)
   }
 
+  const exportMapSnapshot = () => {
+    exportSnapshotRef.current?.()
+  }
+
   const toggleLayer = (layer: PublicOperationalMapLayer) => {
     const nextLayers = enabledLayersRef.current.includes(layer)
       ? enabledLayersRef.current.filter((current) => current !== layer)
@@ -1017,6 +1038,7 @@ export default function OperationalMap({
               onToggleGlobe={toggleGlobe}
               theme={theme}
               onToggleTheme={toggleTheme}
+              onExportSnapshot={exportMapSnapshot}
             />
           ) : null}
           {visibleStatus ? (

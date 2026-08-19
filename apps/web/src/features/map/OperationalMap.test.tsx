@@ -205,8 +205,12 @@ describe('OperationalMap', () => {
     expect(maplibre.Map).toHaveBeenCalledWith(expect.objectContaining({
       center: [106.8456, -6.2088],
       zoom: 9,
+      // Wajib agar cuplikan PNG (P9) bisa membaca kanvas WebGL.
+      canvasContextAttributes: { preserveDrawingBuffer: true },
     }))
     // Viewer menambahkan Navigation, Geolocate, Scale, dan Fullscreen control.
+    // (Tombol unduh PNG berada di panel legenda, bukan kontrol peta — lihat
+    // catatan di mapSnapshot.ts soal ruang pojok peta yang penuh di mobile.)
     expect(maplibre.instances[0].addControl).toHaveBeenCalledTimes(4)
 
     unmount()

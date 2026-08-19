@@ -33,6 +33,8 @@ interface MapLegendProps {
   /** Tema basemap terang/gelap. */
   theme?: 'light' | 'dark'
   onToggleTheme?: (next: 'light' | 'dark') => void
+  /** Unduh cuplikan peta sebagai PNG (P9). */
+  onExportSnapshot?: () => void
 }
 
 const healthLabel: Record<PublicMapLayerViewState['health'], string> = {
@@ -60,7 +62,7 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
   }
 }
 
-export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme }: MapLegendProps) {
+export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme, onExportSnapshot }: MapLegendProps) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
   // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
   // membukanya lewat summary. Desktop tetap terbuka.
@@ -189,6 +191,13 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
           </ul>
         </div>
       </details>
+      {/* Tombol unduh cuplikan (P9) di luar <details> agar tetap terlihat
+          saat legenda diringkas di layar kecil. */}
+      {onExportSnapshot ? (
+        <button type="button" className="operational-map__snapshot-button" onClick={onExportSnapshot}>
+          Unduh peta (PNG)
+        </button>
+      ) : null}
       {/* Nota status & atribusi tetap terlihat meski legenda diringkas. */}
       {enabledLayers.length === 0 ? <p className="operational-map__notice">Aktifkan setidaknya satu lapisan.</p> : null}
       {states.some((state) => state?.refreshing) ? <p className="operational-map__notice">Memperbarui data peta.</p> : null}

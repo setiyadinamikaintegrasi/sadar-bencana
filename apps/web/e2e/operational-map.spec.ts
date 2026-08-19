@@ -272,6 +272,43 @@ test('rejects private map feeds without the exact fixture bearer token', async (
   expectKnownApiRequests(fixtures)
 })
 
+test('downloads the current map view as a PNG snapshot with attribution footer', async ({ page }) => {
+  await openMap(page)
+
+  // Tombol unduh ada di panel legenda (di luar <details> agar tetap terlihat
+  // saat legenda diringkas di layar kecil).
+  const button = page.getByRole('button', { name: 'Unduh peta (PNG)' })
+  await expect(button).toBeVisible()
+
+  // Ukuran kanvas sebelum unduhan — untuk membuktikan footer ikut terbakar.
+  const metrics = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas.maplibregl-canvas') as HTMLCanvasElement | null
+    if (!canvas) return null
+    return { width: canvas.width, height: canvas.height, clientWidth: canvas.clientWidth }
+  })
+  expect(metrics).not.toBeNull()
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    button.click(),
+  ])
+
+  // Nama file: sadar-bencana-peta-YYYY-MM-DD-HHMM.png (jam lokal runner).
+  expect(download.suggestedFilename()).toMatch(/^sadar-bencana-peta-\d{4}-\d{2}-\d{2}-\d{4}\.png$/)
+
+  // File terunduh adalah PNG valid: magic byte + dimensi persis
+  // (kanvas peta + footer atribusi 44px CSS × rasio perangkat).
+  const { readFile } = await import('node:fs/promises')
+  const bytes = await readFile(await download.path()!)
+  expect(bytes.byteLength).toBeGreaterThan(1_000)
+  expect([...bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const width = bytes.readUInt32BE(16)
+  const height = bytes.readUInt32BE(20)
+  const footerHeight = Math.round(44 * metrics!.width / metrics!.clientWidth)
+  expect(width).toBe(metrics!.width)
+  expect(height).toBe(metrics!.height + footerHeight)
+})
+
 test('loads owner-only layers for a logged-in owner', async ({ page }) => {
   await page.addInitScript((session) => {
     window.localStorage.setItem('sb-fixture-auth-token', JSON.stringify(session))
