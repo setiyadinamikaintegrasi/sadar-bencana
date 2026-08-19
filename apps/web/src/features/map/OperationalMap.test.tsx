@@ -173,6 +173,16 @@ vi.mock('./layers/weatherRadar', async (importOriginal) => {
   }
 })
 
+// Satelit IR juga diuji terpisah (probe HEAD ke NASA GIBS di-dimock).
+const satelliteIRApi = vi.hoisted(() => ({ fetchLatestSatelliteIRFrame: vi.fn() }))
+vi.mock('./layers/satelliteIR', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./layers/satelliteIR')>()
+  return {
+    ...original,
+    fetchLatestSatelliteIRFrame: satelliteIRApi.fetchLatestSatelliteIRFrame,
+  }
+})
+
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', TestResizeObserver)
   privateApi.fetchPrivateMapLayer.mockReset()
@@ -181,6 +191,11 @@ beforeEach(() => {
     time: 1787000000,
     tiles: ['https://fixture.rainviewer.example/256/{z}/{x}/{y}/2/1_1.png'],
     nowcast: false,
+  })
+  satelliteIRApi.fetchLatestSatelliteIRFrame.mockReset()
+  satelliteIRApi.fetchLatestSatelliteIRFrame.mockResolvedValue({
+    date: '2026-08-19',
+    tiles: ['https://fixture.gibs.example/default/2026-08-19/{z}/{y}/{x}.png'],
   })
 })
 
@@ -1089,9 +1104,10 @@ describe('OperationalMap', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    // Radar cuaca & terrain memang dipasang saat load; layer data publik tidak boleh.
+    // Radar cuaca, satelit IR, & terrain memang dipasang saat load; layer data
+    // publik tidak boleh.
     const addSourceCalls = map.addSource.mock.calls.map((call) => String(call[0])).sort()
-    expect(addSourceCalls).toEqual(['operational-map-terrain-dem-source', 'operational-map-weather-radar-source'])
+    expect(addSourceCalls).toEqual(['operational-map-satellite-ir-source', 'operational-map-terrain-dem-source', 'operational-map-weather-radar-source'])
   })
 
   it('expands an event cluster while leaf points continue to open details', async () => {

@@ -11,6 +11,7 @@ import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, setEventsHe
 import { advanceAircraftPositions, aircraftLayer } from './layers/aircraft'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
+import { fetchLatestSatelliteIRFrame, satelliteIRFallbackFrame, satelliteIRLayer, type SatelliteIRFrame } from './layers/satelliteIR'
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
 import { patchDarkStyle } from './darkStyle'
 import { PitchControl } from './PitchControl'
@@ -41,6 +42,8 @@ const WEATHER_RADAR_REFRESH_MS = 5 * 60 * 1000
 // Refresh posisi pesawat berkala — sinkron dengan poll worker OpenSky (±60s)
 // agar marker tidak hanya dead-reckoning, tapi "snap" ke posisi termutakhir.
 const AIRCRAFT_REFRESH_MS = 60 * 1000
+// Granule satelit IR Himawari terbit ±10-15 menit; refresh tiap 15 menit.
+const SATELLITE_IR_REFRESH_MS = 15 * 60 * 1000
 
 // Denyut severity: kritis berkedip lebih cepat (siklus ~800ms) daripada
 // tinggi (~1600ms) agar hierarki urgensi langsung terbaca di peta.
@@ -258,6 +261,10 @@ export default function OperationalMap({
   const [radarOn, setRadarOn] = useState(false)
   const [radarVintage, setRadarVintage] = useState<string | null>(null)
   const radarVisibleRef = useRef(false)
+  // Overlay satelit inframerah (NASA GIBS Himawari) + tanggal vintage.
+  const [irOn, setIrOn] = useState(false)
+  const [irVintage, setIrVintage] = useState<string | null>(null)
+  const irVisibleRef = useRef(false)
   // Terrain 3D (DEM AWS Terrarium) + proyeksi globe.
   const [terrainOn, setTerrainOn] = useState(false)
   const [globeOn, setGlobeOn] = useState(false)
@@ -268,6 +275,7 @@ export default function OperationalMap({
   const themeRef = useRef<OperationalMapTheme>('light')
   // Frame radar terakhir agar bisa dipasang ulang setelah ganti style.
   const radarFrameRef = useRef<WeatherRadarFrame | null>(null)
+  const irFrameRef = useRef<SatelliteIRFrame | null>(null)
 
   perilsRef.current = perils
   onPickRef.current = onPick
@@ -295,6 +303,7 @@ export default function OperationalMap({
     let lastFocusedRequestKey: string | undefined
     let pulseTimer: number | undefined
     let radarTimer: number | undefined
+    let irTimer: number | undefined
     let aircraftTimer: number | undefined
     let aircraftRefreshTimer: number | undefined
     // Cache style gelap ter-patch (fetch sekali per sesi peta).
@@ -546,6 +555,7 @@ export default function OperationalMap({
       }
       terrainLayer.setVisible(map, terrainVisibleRef.current)
       if (radarVisibleRef.current) weatherRadarLayer.setVisible(map, true)
+      if (irVisibleRef.current) satelliteIRLayer.setVisible(map, true)
       startAircraftAnimation()
       startAircraftRefresh()
       startPulse()
@@ -619,6 +629,21 @@ export default function OperationalMap({
           void fetchLatestWeatherRadarFrame().then(applyRadar)
         }, WEATHER_RADAR_REFRESH_MS)
 
+        // Satelit IR (NASA GIBS Himawari, suhu puncak awan): dipasang sekali
+        // (tersembunyi), aktif via toggle legenda. Granule berganti ±15 menit.
+        const applyIR = (frame: SatelliteIRFrame | null) => {
+          if (!map || disposed) return
+          irFrameRef.current = frame
+          satelliteIRLayer.apply(map, frame ?? satelliteIRFallbackFrame())
+          satelliteIRLayer.setVisible(map, irVisibleRef.current)
+          setIrVintage(frame?.date ?? null)
+        }
+        void fetchLatestSatelliteIRFrame().then(applyIR)
+        irTimer = window.setInterval(() => {
+          if (disposed) return
+          void fetchLatestSatelliteIRFrame().then(applyIR)
+        }, SATELLITE_IR_REFRESH_MS)
+
         // Terrain 3D (AWS Terrarium) + hillshade: dipasang sekali (sembunyi),
         // diaktifkan lewat toggle legenda. Globe dipulihkan dari state toggle.
         terrainLayer.apply(map)
@@ -636,6 +661,8 @@ export default function OperationalMap({
       }
       weatherRadarLayer.apply(m, radarFrameRef.current ?? fallbackFrame())
       weatherRadarLayer.setVisible(m, radarVisibleRef.current)
+      satelliteIRLayer.apply(m, irFrameRef.current ?? satelliteIRFallbackFrame())
+      satelliteIRLayer.setVisible(m, irVisibleRef.current)
       terrainLayer.apply(m)
       terrainLayer.setVisible(m, terrainVisibleRef.current)
       if (globeRef.current) setGlobeProjection(m, true)
@@ -779,6 +806,7 @@ export default function OperationalMap({
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
       if (pulseTimer !== undefined) window.clearInterval(pulseTimer)
       if (radarTimer !== undefined) window.clearInterval(radarTimer)
+      if (irTimer !== undefined) window.clearInterval(irTimer)
       if (aircraftTimer !== undefined) window.clearInterval(aircraftTimer)
       if (aircraftRefreshTimer !== undefined) window.clearInterval(aircraftRefreshTimer)
       refreshController?.abort()
@@ -967,6 +995,12 @@ export default function OperationalMap({
     if (mapRef.current) weatherRadarLayer.setVisible(mapRef.current, next)
   }
 
+  const toggleSatelliteIR = (next: boolean) => {
+    setIrOn(next)
+    irVisibleRef.current = next
+    if (mapRef.current) satelliteIRLayer.setVisible(mapRef.current, next)
+  }
+
   const toggleTerrain = (next: boolean) => {
     setTerrainOn(next)
     terrainVisibleRef.current = next
@@ -1032,6 +1066,9 @@ export default function OperationalMap({
               radarOn={radarOn}
               radarVintage={radarVintage}
               onToggleRadar={toggleRadar}
+              irOn={irOn}
+              irVintage={irVintage}
+              onToggleIR={toggleSatelliteIR}
               terrainOn={terrainOn}
               onToggleTerrain={toggleTerrain}
               globeOn={globeOn}
