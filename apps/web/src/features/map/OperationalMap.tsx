@@ -524,6 +524,25 @@ export default function OperationalMap({
       }, MAP_REFRESH_DEBOUNCE_MS)
     }
 
+    // Hemat CPU/GPU di background tab: jeda terrain, animasi pesawat, dan
+    // denyut severity; pulihkan sesuai state toggle saat tab kembali aktif.
+    const handleVisibility = () => {
+      if (!map) return
+      if (document.hidden) {
+        terrainLayer.setPaused(map, true)
+        if (aircraftTimer !== undefined) window.clearInterval(aircraftTimer)
+        if (pulseTimer !== undefined) window.clearInterval(pulseTimer)
+        aircraftTimer = undefined
+        pulseTimer = undefined
+        return
+      }
+      terrainLayer.setVisible(map, terrainVisibleRef.current)
+      if (radarVisibleRef.current) weatherRadarLayer.setVisible(map, true)
+      startAircraftAnimation()
+      startPulse()
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
     // Animasi lalu lintas udara: interpolasi posisi (dead-reckoning) tiap
     // 2 detik dari velocity+heading sehingga pesawat bergerak mulus di antara
     // refresh data worker (±60 detik).
@@ -717,6 +736,7 @@ export default function OperationalMap({
     const teardown = () => {
       if (disposed) return
       disposed = true
+      document.removeEventListener('visibilitychange', handleVisibility)
       observer?.disconnect()
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
       if (pulseTimer !== undefined) window.clearInterval(pulseTimer)
@@ -818,7 +838,8 @@ export default function OperationalMap({
 
     // Denyut severity di peta: dilewati bila pengguna meminta reduced motion
     // atau lingkungan tanpa matchMedia (jsdom).
-    if (!prefersReducedMotion()) {
+    const startPulse = (): void => {
+      if (prefersReducedMotion()) return
       let pulseTick = 0
       pulseTimer = window.setInterval(() => {
         if (disposed || !map) return
@@ -832,6 +853,7 @@ export default function OperationalMap({
         setPulsePaint(map, EVENTS_PULSE_LAYERS.high, 'circle-opacity', highOn ? PULSE_OPACITY.highOn : PULSE_OPACITY.highOff)
       }, PULSE_INTERVAL_MS)
     }
+    startPulse()
 
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => {
