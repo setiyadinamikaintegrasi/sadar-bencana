@@ -86,6 +86,9 @@ describe('aircraftLayer adapter', () => {
     aircraftLayer.apply(map as never, aircraftCollection())
     const symbol = map.addLayer.mock.calls.map((c) => c[0]).find((l) => (l as { id?: string }).id === 'operational-map-aircraft-layer') as { layout: Record<string, unknown> } | undefined
     expect(symbol?.layout['icon-rotate']).toEqual(['get', 'heading_deg'])
+    // Nama ikon HARUS ada di sprite OpenFreeMap (ofm_f384): underscore, bukan dash.
+    // Salah nama = MapLibre merender bulatan hitam fallback.
+    expect(symbol?.layout['icon-image']).toBe('triangle_11')
   })
 
   it('setVisible & remove bersih', () => {

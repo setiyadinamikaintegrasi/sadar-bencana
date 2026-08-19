@@ -79,7 +79,7 @@ export const aircraftLayer = {
       type: 'symbol',
       source: this.sourceId,
       layout: {
-        'icon-image': 'triangle-11',
+        'icon-image': 'triangle_11',
         'icon-size': 0.9,
         'icon-rotate': ['get', 'heading_deg'],
         'icon-rotation-alignment': 'map',
