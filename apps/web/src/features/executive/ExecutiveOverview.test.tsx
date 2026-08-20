@@ -167,6 +167,15 @@ beforeEach(() => {
   dashboardState.weatherAlerts = [warning]
   dashboardState.mapEngine = 'leaflet'
   dashboardState.session = { user: { id: 'user-1' } }
+  const storage = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    get length() { return storage.size },
+    clear: () => storage.clear(),
+    getItem: (key: string) => storage.get(key) ?? null,
+    key: (index: number) => [...storage.keys()][index] ?? null,
+    removeItem: (key: string) => storage.delete(key),
+    setItem: (key: string, value: string) => storage.set(key, value),
+  })
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     disconnect() {}
@@ -300,6 +309,30 @@ describe('ExecutiveOverview official warning navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Gempa/ }))
     expect(screen.queryByText(/Peta menampilkan event/)).toBeNull()
+  })
+
+  it('collapses and expands the top situational awareness banner', async () => {
+    dashboardState.mapEngine = 'maplibre'
+    window.localStorage.clear()
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+    await screen.findByTestId('operational-map')
+
+    // Initially expanded
+    expect(screen.getByText('Situational Awareness Dashboard')).toBeTruthy()
+    const collapseButton = screen.getByRole('button', { name: /Ringkas/i })
+    expect(collapseButton.getAttribute('aria-expanded')).toBe('true')
+
+    // Click collapse
+    fireEvent.click(collapseButton)
+    expect(screen.getByRole('button', { name: /Tampilkan Ringkasan/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Tampilkan Ringkasan/i }).getAttribute('aria-expanded')).toBe('false')
+    expect(window.localStorage.getItem('sadar_executive_header_collapsed')).toBe('true')
+
+    // Click expand
+    fireEvent.click(screen.getByRole('button', { name: /Tampilkan Ringkasan/i }))
+    expect(screen.getByText('Situational Awareness Dashboard')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Ringkas/i }).getAttribute('aria-expanded')).toBe('true')
+    expect(window.localStorage.getItem('sadar_executive_header_collapsed')).toBe('false')
   })
 
   it('clears external focus on ordinary selection and honors a repeated focus nonce', async () => {
