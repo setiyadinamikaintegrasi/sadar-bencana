@@ -614,15 +614,15 @@ export default function ExecutiveOverview({
             <div className="flex shrink-0 items-center gap-2">
               <div className="hidden shrink-0 items-stretch gap-2 sm:flex">
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-500">Top Risk</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Top Risk</p>
                   <p className="text-lg font-bold leading-tight text-rose-300">{topRiskScore?.score ?? '—'}</p>
                 </div>
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-500">News</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">News</p>
                   <p className="text-lg font-bold leading-tight text-emerald-300">{news.length}</p>
                 </div>
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-500">Sources OK</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Sources OK</p>
                   <p className="text-lg font-bold leading-tight text-indigo-300">{connectorSummary.ok}</p>
                 </div>
               </div>
@@ -816,7 +816,7 @@ export default function ExecutiveOverview({
             className="rounded-2xl border border-slate-800 bg-slate-900/85 px-4 py-3 shadow-xl shadow-slate-950/30"
           >
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{item.label}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
               <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
             </div>
             <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
@@ -902,7 +902,7 @@ export default function ExecutiveOverview({
         <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-slate-50">Source Health Matrix</h3>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-400">
               OK {connectorSummary.ok} · Stale {connectorSummary.stale} · Error {connectorSummary.error}
             </span>
           </div>

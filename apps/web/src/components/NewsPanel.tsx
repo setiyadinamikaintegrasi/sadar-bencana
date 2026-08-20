@@ -149,9 +149,9 @@ export default function NewsPanel({
                     {perilLabel}
                   </span>
                   {item.place_name && (
-                    <span className="text-[10px] text-slate-500">{item.place_name}</span>
+                    <span className="text-[10px] text-slate-400">{item.place_name}</span>
                   )}
-                  <span className="ml-auto text-[10px] text-slate-600">
+                  <span className="ml-auto text-[10px] text-slate-400">
                     {formatRelativeTime(item.published_at)}
                   </span>
                 </div>

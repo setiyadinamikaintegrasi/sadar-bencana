@@ -126,7 +126,9 @@
 
 .operational-map__layer-health {
   margin-left: auto;
-  color: #94a3b8;
+  /* slate-200: >=6:1 di atas panel legenda kaca (bg gelap semi-transparan)
+   * di semua kondisi basemap — slate-400 hanya 2.9:1 di area peta terang. */
+  color: #e2e8f0;
   font-size: 0.625rem;
 }
 

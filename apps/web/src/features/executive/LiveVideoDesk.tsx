@@ -68,7 +68,7 @@ function LiveBadge({ validation }: { validation: SourceValidation }) {
   }
   if (validation === 'offline') {
     return (
-      <span className="rounded-full border border-slate-700 bg-slate-900/80 px-2 py-0.5 text-[10px] font-bold tracking-wide text-slate-500">
+      <span className="rounded-full border border-slate-700 bg-slate-900/80 px-2 py-0.5 text-[10px] font-bold tracking-wide text-slate-400">
         OFFLINE
       </span>
     )
@@ -221,7 +221,7 @@ export default function LiveVideoDesk() {
                 active
                   ? 'border-indigo-400/60 bg-indigo-500/10'
                   : offline
-                    ? 'border-slate-800/70 bg-slate-950/40 opacity-60 hover:opacity-100'
+                    ? 'border-slate-800/70 bg-slate-950/40'
                     : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-800/70'
               }`}
             >
@@ -235,7 +235,7 @@ export default function LiveVideoDesk() {
                 </div>
               </div>
               <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{source.description}</p>
-              <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                 {availabilityLabel(source)} · {source.category}
               </p>
             </button>
