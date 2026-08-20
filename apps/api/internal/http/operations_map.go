@@ -56,6 +56,11 @@ type OperationMapFeatureProperties struct {
 	LocationType       string     `json:"location_type,omitempty"`
 	Open               *bool      `json:"open,omitempty"`
 	Full               *bool      `json:"full,omitempty"`
+	// Shakemap MMI (S6): URL gambar + bbox georeferensi 4 sudut.
+	ShakemapURL  string   `json:"shakemap_url,omitempty"`
+	ShakemapBBox *[4]float64 `json:"shakemap_bbox,omitempty"`
+	FeltReports  string   `json:"felt_reports,omitempty"`
+	EventID      string   `json:"event_id,omitempty"`
 }
 
 const operationMapWatchZonesQuery = `

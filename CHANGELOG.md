@@ -43,6 +43,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   risk-v2) dengan exposure dari WorldPop, vulnerability dari medan+tutupan
   lahan, radius adaptif per peril/magnitude; endpoint
   /api/v1/spatial/impact-score dan badge skor di panel detail event.
+- Sprint 6 S6: overlay Shakemap MMI BMKG — gambar intensitas gempa
+  ter-georeferensi (bbox 5° berpusat episenter, diverifikasi pixel-level),
+  disinkron tiap 10 menit dari feed TEWS; endpoint
+  /api/v1/map/operations/shakemaps + toggle "Shakemap MMI" di legenda peta.
 
 ### Security
 
