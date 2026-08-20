@@ -143,6 +143,21 @@ function ImpactPanel({ latitude, longitude }: { latitude: number; longitude: num
               </dd>
             </div>
           ) : null}
+          {impact.summary.elevation !== null ? (
+            <div className="operational-map__impact-row">
+              <dt>Medan</dt>
+              <dd>
+                {Math.round(impact.summary.elevation.minM).toLocaleString('id-ID')}–
+                {Math.round(impact.summary.elevation.maxM).toLocaleString('id-ID')} m
+                {impact.summary.elevation.steepPercent >= 50
+                  ? ' · terjal'
+                  : impact.summary.elevation.roughnessM < 30
+                    ? ' · datar'
+                    : ''}
+                {impact.summary.elevation.waterPercent > 0 ? ` · laut ${Math.round(impact.summary.elevation.waterPercent)}%` : ''}
+              </dd>
+            </div>
+          ) : null}
           {impact.summary.landcover !== null ? (
             <div className="operational-map__impact-row">
               <dt>Tutupan lahan</dt>
@@ -159,7 +174,7 @@ function ImpactPanel({ latitude, longitude }: { latitude: number; longitude: num
           ) : null}
         </dl>
       ) : null}
-      <p className="operational-map__impact-attribution">WorldPop · OpenStreetMap · ESA WorldCover</p>
+      <p className="operational-map__impact-attribution">WorldPop · OSM · ESA WorldCover · SRTM</p>
     </section>
   )
 }

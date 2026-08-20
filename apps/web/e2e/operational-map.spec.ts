@@ -105,6 +105,9 @@ function responseFor(pathname: string): unknown | undefined {
       },
     }
   }
+  if (pathname === '/api/v1/spatial/elevation-summary') {
+    return { data: { min_m: 2, max_m: 45, mean_m: 12.5, roughness_m: 8, steep_percent: 0, water_percent: 0, samples: 100, land_samples: 100 } }
+  }
   if (pathname === '/api/v1/spatial/landcover-summary') {
     return { data: { total_samples: 10, classes: [{ class_code: 50, class: 'built_up', sample_count: 6, fraction: 0.6 }, { class_code: 10, class: 'tree_cover', sample_count: 4, fraction: 0.4 }] } }
   }
@@ -338,8 +341,10 @@ test('shows an impact summary panel with population and facilities for a selecte
   await expect(panel).toContainText('Estimasi area 30 km')
   await expect(panel).toContainText('1.234 jiwa')
   await expect(panel).toContainText('Rumah sakit: 2')
-  await expect(panel).toContainText('WorldPop · OpenStreetMap · ESA WorldCover')
   await expect(panel).toContainText('Kawasan terbangun: 60%')
+  await expect(panel).toContainText('Medan')
+  await expect(panel).toContainText('2–45 m · datar')
+  await expect(panel).toContainText('WorldPop · OSM · ESA WorldCover · SRTM')
 })
 
 test('loads owner-only layers for a logged-in owner', async ({ page }) => {

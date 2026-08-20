@@ -46,6 +46,7 @@ describe('fetchImpactSummary', () => {
       'population-summary': { data: { population: 1234.5, dataset: { vintage: '2020' } } },
       'critical-facilities': { data: { counts: { rumah_sakit: 3, damkar: 1 }, total: 4, truncated: false } },
       'landcover-summary': { data: { classes: [{ class_code: 50, fraction: 0.6 }, { class_code: 10, fraction: 0.4 }] } },
+      'elevation-summary': { data: { min_m: 2, max_m: 45, mean_m: 12.5, roughness_m: 8, steep_percent: 0, water_percent: 0 } },
     }))
     const summary = await fetchImpactSummary(-6.2, 106.8)
     expect(summary).toEqual({
@@ -58,6 +59,7 @@ describe('fetchImpactSummary', () => {
         { classCode: 50, label: 'Kawasan terbangun', fraction: 0.6 },
         { classCode: 10, label: 'Hutan', fraction: 0.4 },
       ],
+      elevation: { minM: 2, maxM: 45, meanM: 12.5, roughnessM: 8, steepPercent: 0, waterPercent: 0 },
     })
     vi.unstubAllGlobals()
   })
