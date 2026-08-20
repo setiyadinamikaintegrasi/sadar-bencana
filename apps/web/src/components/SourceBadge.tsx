@@ -70,7 +70,7 @@ export default function SourceBadge({ source, timestamp }: SourceBadgeProps) {
         {style.label}
       </span>
       {showUpdated && timestamp ? (
-        <span className="text-[11px] text-slate-500">{relativeLabel(timestamp)}</span>
+        <span className="text-[11px] text-slate-400">{relativeLabel(timestamp)}</span>
       ) : null}
     </div>
   )
