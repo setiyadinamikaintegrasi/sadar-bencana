@@ -31,6 +31,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   /api/v1/spatial/critical-facilities (agregat per jenis + daftar
   terdekat, sumber OSM + entri manual) dan panel "Estimasi area 30 km"
   di detail event peta (populasi WorldPop + fasilitas kritis).
+- Sprint 5 S3: distribusi tutupan lahan ESA WorldCover 10m 2020 v100 —
+  sampel kelas ~1km (4 juta titik) dengan endpoint
+  /api/v1/spatial/landcover-summary dan baris "Tutupan lahan" di panel
+  dampak (mis. kawasan terbangun 76% Jakarta, hutan 89% Kalimantan).
 
 ### Security
 

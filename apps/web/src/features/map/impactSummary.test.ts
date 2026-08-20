@@ -45,6 +45,7 @@ describe('fetchImpactSummary', () => {
     vi.stubGlobal('fetch', mockFetch({
       'population-summary': { data: { population: 1234.5, dataset: { vintage: '2020' } } },
       'critical-facilities': { data: { counts: { rumah_sakit: 3, damkar: 1 }, total: 4, truncated: false } },
+      'landcover-summary': { data: { classes: [{ class_code: 50, fraction: 0.6 }, { class_code: 10, fraction: 0.4 }] } },
     }))
     const summary = await fetchImpactSummary(-6.2, 106.8)
     expect(summary).toEqual({
@@ -53,6 +54,10 @@ describe('fetchImpactSummary', () => {
       facilities: { rumah_sakit: 3, damkar: 1 },
       facilitiesTotal: 4,
       truncated: false,
+      landcover: [
+        { classCode: 50, label: 'Kawasan terbangun', fraction: 0.6 },
+        { classCode: 10, label: 'Hutan', fraction: 0.4 },
+      ],
     })
     vi.unstubAllGlobals()
   })
