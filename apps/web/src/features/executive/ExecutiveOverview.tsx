@@ -595,7 +595,7 @@ export default function ExecutiveOverview({
         {loading ? (
           <div
             className="flex items-center justify-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 text-sm text-slate-400"
-            style={{ height: 'min(62vh, 560px)' }}
+            style={{ height: 'min(75vh, 680px)' }}
           >
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
             Loading map…
@@ -634,7 +634,7 @@ export default function ExecutiveOverview({
                     ))
                     if (selected) handleEventClick(selected)
                   }}
-                  className="h-[min(62vh,560px)]"
+                  className="h-[min(75vh,680px)]"
                 />
                 {/* Replay timeline: menyapu window 72 jam di atas peta. */}
                 <MapTimeline
@@ -655,7 +655,7 @@ export default function ExecutiveOverview({
                 overlayFocusNonce={officialAlertFocus?.nonce}
                 timelineHoursAgo={timelineHoursAgo}
                 visibleOverlayClasses={visibleOverlayClasses}
-                height="min(62vh, 560px)"
+                height="min(75vh, 680px)"
               />
             )}
           </>
