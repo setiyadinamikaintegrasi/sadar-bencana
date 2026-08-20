@@ -81,7 +81,7 @@ export function ExecutiveMapControls({
   })()
 
   return (
-    <div className="mb-2 space-y-2 md:mb-3">
+    <div className="mb-2 space-y-1.5 md:mb-3 md:space-y-2">
       {/* Toolbar Filter Peril: satu klaster segmented pill (satu keputusan:
           jenis bencana yang difokuskan). Toggle overlay dipisah ke baris
           "Lapisan" di bawah — dua keputusan berbeda tidak dicampur. */}
@@ -94,7 +94,7 @@ export function ExecutiveMapControls({
                 type="button"
                 aria-label={`${filter.label} (${counts[filter.key]})`}
                 onClick={() => onFilterChange(filter.key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
+                className={`inline-flex items-center gap-1.5 rounded-xl px-2 py-0.5 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:px-2.5 md:py-1 ${
                   isActive
                     ? 'bg-indigo-500/25 text-indigo-100 shadow-sm ring-1 ring-inset ring-indigo-400/50'
                     : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
@@ -129,7 +129,7 @@ export function ExecutiveMapControls({
 
       {/* Baris Lapisan Overlay — toggle apa yang ditumpuk di peta. */}
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Lapisan</span>
+        <span className="mr-0.5 hidden text-[10px] font-semibold uppercase tracking-wide text-slate-400 md:inline">Lapisan</span>
         {([
             ['official', 'Warning resmi'],
             ['static_risk', 'Kajian risiko'],
@@ -142,7 +142,7 @@ export function ExecutiveMapControls({
                 type="button"
                 aria-pressed={isPressed}
                 onClick={() => onOverlayClassToggle(key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
+                className={`inline-flex items-center gap-1.5 rounded-xl px-2 py-0.5 font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:px-2.5 md:py-1 ${
                   isPressed
                     ? 'border border-indigo-400/50 bg-indigo-500/15 text-indigo-100 shadow-sm'
                     : 'border border-slate-800/90 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
