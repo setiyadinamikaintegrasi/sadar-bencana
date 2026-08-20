@@ -16,12 +16,39 @@ import (
 
 const (
 	operationMapMaximumExtentDegrees = 20
+	// Jendela default peta operasional: 72 jam terakhir. Peril dengan
+	// aktivitas jarang (vulkanik, banjir) boleh meminta jendela lebih lebar
+	// agar event lama yang masih relevan tetap tampil saat difilter.
 	operationMapMaximumEventWindow   = 72 * time.Hour
+	operationMapMaximumVolcanoWindow = 90 * 24 * time.Hour
+	operationMapMaximumFloodWindow   = 365 * 24 * time.Hour
 	operationMapEventLimit           = 2000
 	operationMapAlertLimit           = 200
 	operationMapAirQualityLimit      = 500
 	operationMapEvacuationLimit      = 2000
 )
+
+// operationMapMaximumWindowForPerils returns the widest event window the API
+// accepts for the requested perils. Perils with sparse recent activity
+// (volcano, flood) may span a longer historical window; everything else keeps
+// the default 72-hour operational window. A combined filter uses the widest
+// requested allowance so the union of perils is never cut short.
+func operationMapMaximumWindowForPerils(perils []string) time.Duration {
+	maximum := operationMapMaximumEventWindow
+	for _, peril := range perils {
+		var allowance time.Duration
+		switch peril {
+		case "volcano":
+			allowance = operationMapMaximumVolcanoWindow
+		case "flood":
+			allowance = operationMapMaximumFloodWindow
+		}
+		if allowance > maximum {
+			maximum = allowance
+		}
+	}
+	return maximum
+}
 
 // OperationMapFeatureProperties is the public, presentation-safe metadata for
 // a GeoJSON feature served by an operational map endpoint.
@@ -157,7 +184,7 @@ func parseOperationMapQuery(c *gin.Context, options operationMapQueryOptions) (o
 
 	switch options.timeMode {
 	case operationMapEventTimeWindow:
-		from, to, err := parseOperationMapEventWindow(c.Query("from"), c.Query("to"), operationMapNow(options))
+		from, to, err := parseOperationMapEventWindow(c.Query("from"), c.Query("to"), operationMapNow(options), query.Perils)
 		if err != nil {
 			return operationMapQuery{}, err
 		}
@@ -233,11 +260,12 @@ func parseOperationMapPerils(raw string, permitted []string) ([]string, error) {
 	return perils, nil
 }
 
-func parseOperationMapEventWindow(rawFrom, rawTo string, now time.Time) (time.Time, time.Time, error) {
+func parseOperationMapEventWindow(rawFrom, rawTo string, now time.Time, perils []string) (time.Time, time.Time, error) {
+	maximumWindow := operationMapMaximumWindowForPerils(perils)
 	fromRaw, toRaw := strings.TrimSpace(rawFrom), strings.TrimSpace(rawTo)
 	if fromRaw == "" && toRaw == "" {
 		to := now.UTC()
-		return to.Add(-operationMapMaximumEventWindow), to, nil
+		return to.Add(-maximumWindow), to, nil
 	}
 	if fromRaw == "" || toRaw == "" {
 		return time.Time{}, time.Time{}, fmt.Errorf("from and to must be supplied together")
@@ -253,8 +281,8 @@ func parseOperationMapEventWindow(rawFrom, rawTo string, now time.Time) (time.Ti
 	if !from.Before(to) {
 		return time.Time{}, time.Time{}, fmt.Errorf("from must be before to")
 	}
-	if to.Sub(from) > operationMapMaximumEventWindow {
-		return time.Time{}, time.Time{}, fmt.Errorf("event time window must not exceed 72 hours")
+	if to.Sub(from) > maximumWindow {
+		return time.Time{}, time.Time{}, fmt.Errorf("event time window must not exceed %s", maximumWindow)
 	}
 	return from, to, nil
 }

@@ -24,6 +24,13 @@ const LAYER_FILTERS: Array<{ key: PerilFilter; label: string; icon: string; acce
 
 export type RiskOverlayClass = 'official' | 'static_risk' | 'watch_zone'
 
+// Jendela historis peta operasional per peril (harus sinkron dengan cap
+// server operationMapMaximum{Volcano,Flood}Window dan mapApi.EVENT_WINDOW_HOURS).
+const PERIL_MAP_WINDOWS: Partial<Record<PerilFilter, { days: number; label: string }>> = {
+  volcano: { days: 90, label: '90 hari' },
+  flood: { days: 365, label: '365 hari' },
+}
+
 export interface ExecutiveMapControlsProps {
   events: Event[]
   news: NewsItem[]
@@ -59,6 +66,20 @@ export function ExecutiveMapControls({
     news: news.filter((item) => item.lat != null && item.lon != null).length,
   }
 
+  const windowNotice = (() => {
+    const windowInfo = PERIL_MAP_WINDOWS[activePerilFilter]
+    if (!windowInfo) return null
+    const cutoff = Date.now() - windowInfo.days * 24 * 60 * 60 * 1000
+    const inWindow = events.filter((event) => (
+      eventMatchesFilter(event, activePerilFilter)
+      && new Date(event.event_time).getTime() >= cutoff
+    )).length
+    const total = counts[activePerilFilter]
+    const accent = LAYER_FILTERS.find((filter) => filter.key === activePerilFilter)?.accent ?? 'text-slate-400'
+    const icon = LAYER_FILTERS.find((filter) => filter.key === activePerilFilter)?.icon ?? ''
+    return { accent, icon, label: windowInfo.label, inWindow, total }
+  })()
+
   return (
     <div className="mb-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -82,6 +103,13 @@ export function ExecutiveMapControls({
           </button>
         ))}
       </div>
+      {windowNotice && (
+        <p className="text-[11px] leading-relaxed text-slate-500">
+          <span className={windowNotice.accent}>{windowNotice.icon}</span>{' '}
+          Peta menampilkan event {windowNotice.label} terakhir ({windowNotice.inWindow} dari{' '}
+          {windowNotice.total} tercatat). Event di luar jendela itu tidak ditampilkan di peta.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
         {([
           ['official', 'Warning resmi'],
