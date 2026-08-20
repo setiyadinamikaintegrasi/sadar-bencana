@@ -105,6 +105,9 @@ function responseFor(pathname: string): unknown | undefined {
       },
     }
   }
+  if (pathname === '/api/v1/spatial/impact-score') {
+    return { data: { event_id: 'x', peril_type: 'earthquake', magnitude: 5.6, radius_km: 30, score: 61.8, score_label: 'major', formula_version: 'risk-v2', components: { hazard_intensity: 0.52, exposure: 0.9 }, weights: {}, spatial: {}, fallbacks: {} } }
+  }
   if (pathname === '/api/v1/spatial/elevation-summary') {
     return { data: { min_m: 2, max_m: 45, mean_m: 12.5, roughness_m: 8, steep_percent: 0, water_percent: 0, samples: 100, land_samples: 100 } }
   }
@@ -338,7 +341,9 @@ test('shows an impact summary panel with population and facilities for a selecte
   // Panel dampak S1+S2: populasi + fasilitas kritis radius 30 km.
   const panel = page.locator('.operational-map__impact-panel')
   await expect(panel).toBeVisible()
-  await expect(panel).toContainText('Estimasi area 30 km')
+  await expect(panel).toContainText('Estimasi dampak · area 30 km')
+  await expect(panel).toContainText('62')
+  await expect(panel).toContainText('Skor dampak · Besar')
   await expect(panel).toContainText('1.234 jiwa')
   await expect(panel).toContainText('Rumah sakit: 2')
   await expect(panel).toContainText('Kawasan terbangun: 60%')

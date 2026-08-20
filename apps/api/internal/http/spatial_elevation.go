@@ -17,15 +17,30 @@ import (
 // peta). Sampler dibagikan antar-request (cache LRU di memori).
 
 var (
-	elevationSamplerOnce sync.Once
-	elevationSampler     *elevation.Sampler
+	elevationSamplerMu     sync.Mutex
+	elevationSampler       *elevation.Sampler
 )
 
 func getElevationSampler() *elevation.Sampler {
-	elevationSamplerOnce.Do(func() {
+	elevationSamplerMu.Lock()
+	defer elevationSamplerMu.Unlock()
+	if elevationSampler == nil {
 		elevationSampler = elevation.NewSampler(256)
-	})
+	}
 	return elevationSampler
+}
+
+// setElevationSamplerForTest mengganti sampler global (dipakai hanya test).
+func setElevationSamplerForTest(s *elevation.Sampler) func() {
+	elevationSamplerMu.Lock()
+	prev := elevationSampler
+	elevationSampler = s
+	elevationSamplerMu.Unlock()
+	return func() {
+		elevationSamplerMu.Lock()
+		elevationSampler = prev
+		elevationSamplerMu.Unlock()
+	}
 }
 
 // SpatialElevationSummary melayani ringkasan medan untuk bbox.

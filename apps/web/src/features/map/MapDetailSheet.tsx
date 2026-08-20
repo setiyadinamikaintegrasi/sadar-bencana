@@ -106,14 +106,30 @@ const FACILITY_TYPE_LABELS: Record<string, string> = {
   titik_kumpul: 'Titik kumpul',
 }
 
-/** Panel ringkasan dampak area (S1 populasi + S2 fasilitas) untuk event. */
-function ImpactPanel({ latitude, longitude }: { latitude: number; longitude: number }) {
-  const impact = useImpactSummary(latitude, longitude)
+const SCORE_LABELS: Record<string, string> = {
+  catastrophic: 'Katastrofik',
+  major: 'Besar',
+  moderate: 'Sedang',
+  minor: 'Kecil',
+  negligible: 'Sangat kecil',
+}
+
+/** Panel ringkasan dampak area + skor impact engine (S5) untuk event. */
+function ImpactPanel({ latitude, longitude, eventId }: { latitude: number; longitude: number; eventId?: string }) {
+  const impact = useImpactSummary(latitude, longitude, eventId)
   return (
     <section className="operational-map__impact-panel" aria-label="Estimasi dampak area">
       <p className="operational-map__impact-title">
-        Estimasi area {IMPACT_RADIUS_KM} km
+        Estimasi dampak{impact.status === 'ready' && impact.summary.score ? ` · area ${impact.summary.score.radiusKm} km` : ` · area ${IMPACT_RADIUS_KM} km`}
       </p>
+      {impact.status === 'ready' && impact.summary.score ? (
+        <div className="operational-map__impact-score" data-label={impact.summary.score.label}>
+          <span className="operational-map__impact-score-value">{impact.summary.score.score.toFixed(0)}</span>
+          <span className="operational-map__impact-score-label">
+            Skor dampak · {SCORE_LABELS[impact.summary.score.label] ?? impact.summary.score.label}
+          </span>
+        </div>
+      ) : null}
       {impact.status === 'loading' ? <p className="operational-map__impact-note">Menghitung dampak area…</p> : null}
       {impact.status === 'unavailable' ? (
         <p className="operational-map__impact-note">Data dampak area belum tersedia.</p>
@@ -248,7 +264,7 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
         <TimestampRow label="Data diperbarui" value={properties.data_vintage} />
       </dl>
       {properties.layer === 'events' && feature.geometry.type === 'Point' ? (
-        <ImpactPanel latitude={feature.geometry.coordinates[1]} longitude={feature.geometry.coordinates[0]} />
+        <ImpactPanel latitude={feature.geometry.coordinates[1]} longitude={feature.geometry.coordinates[0]} eventId={properties.id} />
       ) : null}
       {sourceUrl ? (
         <a className="operational-map__source-link" href={sourceUrl} target="_blank" rel="noreferrer noopener">

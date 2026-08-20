@@ -18,6 +18,14 @@ export interface LandcoverClass {
   fraction: number
 }
 
+export interface ImpactScore {
+  score: number
+  label: string
+  radiusKm: number
+  components: Partial<Record<string, number>>
+  formulaVersion: string
+}
+
 export interface ElevationSummary {
   minM: number
   maxM: number
@@ -28,6 +36,7 @@ export interface ElevationSummary {
 }
 
 export interface ImpactSummary {
+  score: ImpactScore | null
   population: number | null
   populationVintage: string | null
   facilities: Partial<Record<string, number>> | null
@@ -84,12 +93,13 @@ export function impactBoundingBoxPolygon(latitude: number, longitude: number, ra
   return `POLYGON((${minLon} ${minLat}, ${maxLon} ${minLat}, ${maxLon} ${maxLat}, ${minLon} ${maxLat}, ${minLon} ${minLat}))`
 }
 
-/** Ambil ringkasan dampak (populasi + fasilitas) untuk satu titik event. */
+/** Ambil ringkasan dampak (populasi + fasilitas + skor) untuk event. */
 export async function fetchImpactSummary(
   latitude: number,
   longitude: number,
   radiusKm: number = IMPACT_RADIUS_KM,
   signal?: AbortSignal,
+  eventId?: string | null,
 ): Promise<ImpactSummary | null> {
   const polygon = encodeURIComponent(impactBoundingBoxPolygon(latitude, longitude, radiusKm))
   // Bbox elevasi = bbox ring yang sama (min/max dari poligon dampak).
@@ -162,12 +172,35 @@ export async function fetchImpactSummary(
     }
   }
 
-  if (population === null && facilities === null && landcover === null && elevation === null) return null
-  return { population, populationVintage, facilities, facilitiesTotal, truncated, landcover, elevation }
+  let score: ImpactScore | null = null
+  if (eventId) {
+    try {
+      const scoreResponse = await fetch(`${API_BASE_URL}/spatial/impact-score?event_id=${encodeURIComponent(eventId)}`, { signal })
+      if (scoreResponse.ok) {
+        const body = (await scoreResponse.json()) as {
+          data?: { score?: number; score_label?: string; radius_km?: number; components?: Partial<Record<string, number>>; formula_version?: string }
+        }
+        if (typeof body.data?.score === 'number') {
+          score = {
+            score: body.data.score,
+            label: body.data.score_label ?? '',
+            radiusKm: body.data.radius_km ?? radiusKm,
+            components: body.data.components ?? {},
+            formulaVersion: body.data.formula_version ?? '',
+          }
+        }
+      }
+    } catch {
+      // Skor opsional — biarkan panel tetap tampil tanpa skor.
+    }
+  }
+
+  if (population === null && facilities === null && landcover === null && elevation === null && score === null) return null
+  return { score, population, populationVintage, facilities, facilitiesTotal, truncated, landcover, elevation }
 }
 
-/** Hook: muat ringkasan dampak untuk koordinat event (sekali per koordinat). */
-export function useImpactSummary(latitude: number | null, longitude: number | null): ImpactSummaryState {
+/** Hook: muat ringkasan dampak + skor impact engine untuk event. */
+export function useImpactSummary(latitude: number | null, longitude: number | null, eventId?: string | null): ImpactSummaryState {
   const [state, setState] = useState<ImpactSummaryState>({ status: 'idle' })
 
   useEffect(() => {
@@ -177,7 +210,7 @@ export function useImpactSummary(latitude: number | null, longitude: number | nu
     }
     const controller = new AbortController()
     setState({ status: 'loading' })
-    fetchImpactSummary(latitude, longitude, IMPACT_RADIUS_KM, controller.signal)
+    fetchImpactSummary(latitude, longitude, IMPACT_RADIUS_KM, controller.signal, eventId)
       .then((summary) => setState(summary ? { status: 'ready', summary } : { status: 'unavailable' }))
       .catch((error) => {
         if (controller.signal.aborted) return
