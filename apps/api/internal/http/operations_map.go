@@ -159,6 +159,10 @@ type operationMapQuery struct {
 	From   time.Time
 	To     time.Time
 	At     *time.Time
+	// WindowExplicit true saat klien mengirim from/to sendiri (mis. replay
+	// timeline 72 jam); false pada tampilan live sehingga jendela per-peril
+	// berlaku di SQL.
+	WindowExplicit bool
 }
 
 func parseOperationMapQuery(c *gin.Context, options operationMapQueryOptions) (operationMapQuery, error) {
@@ -184,7 +188,9 @@ func parseOperationMapQuery(c *gin.Context, options operationMapQueryOptions) (o
 
 	switch options.timeMode {
 	case operationMapEventTimeWindow:
-		from, to, err := parseOperationMapEventWindow(c.Query("from"), c.Query("to"), operationMapNow(options), query.Perils)
+		rawFrom, rawTo := c.Query("from"), c.Query("to")
+		query.WindowExplicit = strings.TrimSpace(rawFrom) != "" || strings.TrimSpace(rawTo) != ""
+		from, to, err := parseOperationMapEventWindow(rawFrom, rawTo, operationMapNow(options), query.Perils)
 		if err != nil {
 			return operationMapQuery{}, err
 		}
@@ -346,6 +352,27 @@ ORDER BY event_time DESC NULLS LAST, source ASC, event_id ASC
 LIMIT $8
 `
 
+// Tampilan live (tanpa from/to eksplisit): gempa/karhutla tetap pada jendela
+// operasional 72 jam, sementara peril beraktivitas jarang memakai jendela
+// lebih lebar (vulkanik, banjir) agar event lama yang masih relevan ikut
+// tampil — termasuk pada filter "Semua". Nilai interval mengikuti cap window
+// per-peril operationMapMaximum{Volcano,Flood}Window.
+var operationMapEventsQueryDefaultWindows = fmt.Sprintf(`
+SELECT source, event_id, event_type, severity, magnitude, place, event_time, url, latitude, longitude
+FROM events
+WHERE `+productionEventSQLPredicate("source", "event_id")+`
+  AND (
+    (event_time >= $1 AND event_time < $2)
+    OR (event_type = 'volcano' AND event_time >= $2 - interval '%d days' AND event_time < $2)
+    OR (event_type = 'flood' AND event_time >= $2 - interval '%d days' AND event_time < $2)
+  )
+  AND latitude BETWEEN $3 AND $4
+  AND longitude BETWEEN $5 AND $6
+  AND ($7::text[] IS NULL OR event_type = ANY($7::text[]))
+ORDER BY event_time DESC NULLS LAST, source ASC, event_id ASC
+LIMIT $8
+`, int(operationMapMaximumVolcanoWindow/(24*time.Hour)), int(operationMapMaximumFloodWindow/(24*time.Hour)))
+
 const operationMapAlertsQuery = `
 WITH active_alerts AS (
   SELECT source, source_alert_id, revision, headline, peril_type, severity,
@@ -505,7 +532,15 @@ func OperationMapEvents(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		rows, err := db.QueryContext(c.Request.Context(), operationMapEventsQuery,
+		eventsQuery := operationMapEventsQuery
+		if !query.WindowExplicit {
+			// Tampilan live: jendela per-peril (72 jam untuk gempa/karhutla,
+			// lebih lebar untuk vulkanik/banjir) agar semua jenis bencana
+			// dengan aktivitas terkini ikut tampil di peta.
+			eventsQuery = operationMapEventsQueryDefaultWindows
+		}
+
+		rows, err := db.QueryContext(c.Request.Context(), eventsQuery,
 			query.From, query.To, query.BBox.MinLatitude, query.BBox.MaxLatitude,
 			query.BBox.MinLongitude, query.BBox.MaxLongitude, nullableOperationMapPerils(query.Perils), operationMapEventLimit+1)
 		if err != nil {
