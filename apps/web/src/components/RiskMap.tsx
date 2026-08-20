@@ -94,7 +94,7 @@ export function ExecutiveMapControls({
                 type="button"
                 aria-label={`${filter.label} (${counts[filter.key]})`}
                 onClick={() => onFilterChange(filter.key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-semibold transition ${
+                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                   isActive
                     ? 'bg-indigo-500/25 text-indigo-100 shadow-sm ring-1 ring-inset ring-indigo-400/50'
                     : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
@@ -131,7 +131,7 @@ export function ExecutiveMapControls({
                 type="button"
                 aria-pressed={isPressed}
                 onClick={() => onOverlayClassToggle(key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 font-medium transition ${
+                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                   isPressed
                     ? 'border border-indigo-400/50 bg-indigo-500/15 text-indigo-100 shadow-sm'
                     : 'border border-slate-800/90 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
