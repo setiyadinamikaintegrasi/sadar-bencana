@@ -205,4 +205,46 @@ describe('fetchPublicMapLayer', () => {
 
     await expect(fetchPublicMapLayer('events', viewport)).resolves.toEqual({ layer: 'events', state: 'unavailable' })
   })
+
+  it.each([
+    ['volcano', 'volcano', '2026-05-04T12%3A00%3A00.000Z'],
+    ['flood', 'flood', '2025-08-02T12%3A00%3A00.000Z'],
+  ])('requests a wider historical window for %s events without a map time', async (_name, peril, fromEncoded) => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00.000Z')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(collection()), { status: 200 }))
+
+    await fetchPublicMapLayer('events', { bbox: viewport.bbox, zoom: 8, perils: [peril] })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/map/operations/events?bbox=106.7%2C-6.4%2C107.1%2C-6&zoom=8&from=${fromEncoded}&to=2026-08-02T12%3A00%3A00.000Z&perils=${peril}`,
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('keeps the default 72-hour window for active perils without a map time', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00.000Z')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(collection()), { status: 200 }))
+
+    await fetchPublicMapLayer('events', { bbox: viewport.bbox, zoom: 8, perils: ['earthquake'] })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/map/operations/events?bbox=106.7%2C-6.4%2C107.1%2C-6&zoom=8&perils=earthquake',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('requests the widest window when a combined filter includes flood', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-08-02T12:00:00.000Z')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(collection()), { status: 200 }))
+
+    await fetchPublicMapLayer('events', { bbox: viewport.bbox, zoom: 8, perils: ['flood', 'volcano'] })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/map/operations/events?bbox=106.7%2C-6.4%2C107.1%2C-6&zoom=8&from=2025-08-02T12%3A00%3A00.000Z&to=2026-08-02T12%3A00%3A00.000Z&perils=flood%2Cvolcano',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
 })

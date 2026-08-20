@@ -84,6 +84,8 @@ const localSourceId = 'operational-map-private-local-source'
 const localLayerIds = [
   'operational-map-private-local-fill',
   'operational-map-private-local-line',
+  'operational-map-private-local-clusters',
+  'operational-map-private-local-cluster-count',
   'operational-map-private-local-points',
 ] as const
 
@@ -93,7 +95,16 @@ export const localPrivateOverlayAdapter = {
   apply(map: Map, data: GeoJSON.FeatureCollection) {
     const source = map.getSource(localSourceId) as GeoJSONSource | undefined
     if (source) source.setData(data)
-    else map.addSource(localSourceId, { type: 'geojson', data })
+    else map.addSource(localSourceId, {
+      type: 'geojson',
+      data,
+      // Titik lokal (mis. berita) sering menumpuk di koordinat yang sama —
+      // klaster agar tumpukan jadi satu bubble berjumlah (poligon polos
+      // statis/garis rute tetap diteruskan apa adanya).
+      cluster: true,
+      clusterMaxZoom: 12,
+      clusterRadius: 48,
+    })
     if (!map.getLayer(localLayerIds[0])) map.addLayer({
       id: localLayerIds[0], type: 'fill', source: localSourceId,
       filter: ['==', ['geometry-type'], 'Polygon'],
@@ -106,7 +117,27 @@ export const localPrivateOverlayAdapter = {
     })
     if (!map.getLayer(localLayerIds[2])) map.addLayer({
       id: localLayerIds[2], type: 'circle', source: localSourceId,
-      filter: ['==', ['geometry-type'], 'Point'],
+      filter: ['has', 'point_count'],
+      paint: {
+        'circle-color': '#6366f1',
+        'circle-radius': ['step', ['get', 'point_count'], 16, 20, 20, 100, 24],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+      },
+    })
+    if (!map.getLayer(localLayerIds[3])) map.addLayer({
+      id: localLayerIds[3], type: 'symbol', source: localSourceId,
+      filter: ['has', 'point_count'],
+      layout: {
+        'text-field': '{point_count_abbreviated}',
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 12,
+      },
+      paint: { 'text-color': '#ffffff' },
+    })
+    if (!map.getLayer(localLayerIds[4])) map.addLayer({
+      id: localLayerIds[4], type: 'circle', source: localSourceId,
+      filter: ['all', ['==', ['geometry-type'], 'Point'], ['!', ['has', 'point_count']]],
       paint: {
         'circle-radius': 7, 'circle-color': '#6366f1',
         'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2,

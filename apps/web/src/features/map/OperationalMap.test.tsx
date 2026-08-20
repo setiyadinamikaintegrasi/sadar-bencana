@@ -1143,6 +1143,39 @@ describe('OperationalMap', () => {
     expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [106.8, -6.2], zoom: 12 }))
   })
 
+  it('expands a local overlay cluster (stacked news markers) on click', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      type: 'FeatureCollection', layer: 'events', truncated: false, features: [],
+    }), { status: 200 }))
+    const localOverlay: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        { type: 'Feature', geometry: { type: 'Point', coordinates: [121.079, -8.657] }, properties: { kind: 'news', label: 'a' } },
+        { type: 'Feature', geometry: { type: 'Point', coordinates: [121.079, -8.657] }, properties: { kind: 'news', label: 'b' } },
+      ],
+    }
+    render(<OperationalMap initialLayers={[]} localOverlay={localOverlay} />)
+    const map = maplibre.instances[0]
+
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+    await act(async () => {
+      map.trigger('click', {
+        features: [{
+          geometry: { type: 'Point', coordinates: [121.079, -8.657] },
+          properties: { cluster_id: 7, point_count: 2 },
+        }],
+      })
+      await Promise.resolve()
+    })
+
+    const localSource = (map.getSource as unknown as (id: string) => { getClusterExpansionZoom: ReturnType<typeof vi.fn> } | undefined)('operational-map-private-local-source')
+    expect(localSource?.getClusterExpansionZoom).toHaveBeenCalledWith(7)
+    expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [121.079, -8.657], zoom: 12 }))
+  })
+
   it('shows per-layer failure and a disabled-all state instead of treating them as an empty response', () => {
     render(
       <MapLegend

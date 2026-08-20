@@ -39,6 +39,24 @@ const publicMapWireLayers: Record<PublicOperationalMapLayer, OperationalMapWireL
 
 const EVENT_PERILS = new Set(['earthquake', 'wildfire', 'flood', 'volcano'])
 
+// Jendela waktu feed events per peril. Peta operasional default 72 jam;
+// peril dengan aktivitas jarang (vulkanik, banjir) memakai jendela lebih
+// lebar agar event lama yang masih relevan ikut tampil saat difilter.
+// Nilai harus konsisten dengan cap server operationMapMaximum{Volcano,Flood}Window.
+const EVENT_WINDOW_HOURS: Record<string, number> = {
+  volcano: 90 * 24,
+  flood: 365 * 24,
+}
+
+function eventWindowHoursFor(perils: readonly string[] | undefined): number {
+  let hours = 72
+  for (const peril of normalizedPerils(perils)) {
+    const wider = EVENT_WINDOW_HOURS[peril]
+    if (wider && wider > hours) hours = wider
+  }
+  return hours
+}
+
 export interface PublicMapViewport {
   bbox: readonly [number, number, number, number]
   zoom: number
@@ -118,12 +136,21 @@ function requestPath(layer: PublicOperationalMapLayer, viewport: PublicMapViewpo
   if (viewport.mapTime && !mapTime) return undefined
 
   if (layer === 'events') {
+    const perils = normalizedPerils(viewport.perils)
     if (mapTime) {
       const to = new Date(mapTime)
       params.set('from', new Date(to.getTime() - 72 * 60 * 60 * 1000).toISOString())
       params.set('to', mapTime)
+    } else {
+      // Tanpa mapTime (tampilan live) peril jarang memakai jendela historis
+      // lebih lebar; peril lain tetap memakai default 72 jam server.
+      const windowHours = eventWindowHoursFor(perils)
+      if (windowHours > 72) {
+        const to = new Date()
+        params.set('from', new Date(to.getTime() - windowHours * 60 * 60 * 1000).toISOString())
+        params.set('to', to.toISOString())
+      }
     }
-    const perils = normalizedPerils(viewport.perils)
     if (perils.length > 0) params.set('perils', perils.join(','))
   } else if (layer === 'aircraft') {
     // Snapshot live: tanpa parameter waktu — selalu posisi termutakhir.

@@ -279,6 +279,29 @@ describe('ExecutiveOverview official warning navigation', () => {
     expect(typeof operationalMapState.props.mapTime).toBe('string')
   })
 
+  it('shows the historical window notice only for sparse peril filters', async () => {
+    dashboardState.mapEngine = 'maplibre'
+    const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+    dashboardState.events = [
+      { ...event, event_type: 'volcano', event_time: daysAgo(5) },
+      { ...event, event_type: 'volcano', event_time: daysAgo(200) },
+      { ...event, event_type: 'flood', event_time: daysAgo(400) },
+    ]
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+    await screen.findByTestId('operational-map')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Vulkanik/ }))
+    expect(screen.getByText(/Peta menampilkan event 90 hari terakhir/)).toBeTruthy()
+    expect(screen.getByText(/1 dari 2 tercatat/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Banjir/ }))
+    expect(screen.getByText(/Peta menampilkan event 365 hari terakhir/)).toBeTruthy()
+    expect(screen.getByText(/0 dari 1 tercatat/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Gempa/ }))
+    expect(screen.queryByText(/Peta menampilkan event/)).toBeNull()
+  })
+
   it('clears external focus on ordinary selection and honors a repeated focus nonce', async () => {
     const onFocusCleared = vi.fn()
     const { rerender } = render(

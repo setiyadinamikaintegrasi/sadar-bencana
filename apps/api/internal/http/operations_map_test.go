@@ -91,6 +91,69 @@ func TestOperationMapQueryDefaultsEventWindowToMostRecent72Hours(t *testing.T) {
 	}
 }
 
+func TestOperationMapQueryDefaultsWiderWindowForSparsePerils(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		perils       string
+		wantDuration time.Duration
+	}{
+		"volcano defaults to 90 days": {perils: "volcano", wantDuration: 90 * 24 * time.Hour},
+		"flood defaults to 365 days":  {perils: "flood", wantDuration: 365 * 24 * time.Hour},
+		"mixed uses widest allowance": {perils: "flood,volcano", wantDuration: 365 * 24 * time.Hour},
+		"earthquake keeps 72 hours":   {perils: "earthquake", wantDuration: 72 * time.Hour},
+	} {
+		t.Run(name, func(t *testing.T) {
+			query, err := parseOperationMapTestQuery(t, "bbox=106.7,-6.4,107.1,-6.0&perils="+tc.perils, operationMapQueryOptions{
+				permittedPerils: operationMapEventPerils,
+				timeMode:        operationMapEventTimeWindow,
+				now:             func() time.Time { return now },
+			})
+			if err != nil {
+				t.Fatalf("parseOperationMapQuery() error = %v", err)
+			}
+			if got, want := query.From, now.UTC().Add(-tc.wantDuration); !got.Equal(want) {
+				t.Fatalf("from = %s, want %s (window %s)", got, want, tc.wantDuration)
+			}
+		})
+	}
+}
+
+func TestOperationMapQueryAppliesPerPerilWindowCap(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	options := operationMapQueryOptions{
+		permittedPerils: operationMapEventPerils,
+		timeMode:        operationMapEventTimeWindow,
+		now:             func() time.Time { return now },
+	}
+
+	accepted := map[string]string{
+		"volcano explicit 90 days":  "bbox=106.7,-6.4,107.1,-6.0&perils=volcano&from=2026-05-04T12:00:00Z&to=2026-08-02T12:00:00Z",
+		"flood explicit 365 days":   "bbox=106.7,-6.4,107.1,-6.0&perils=flood&from=2025-08-02T12:00:00Z&to=2026-08-02T12:00:00Z",
+		"mixed explicit 365 days":   "bbox=106.7,-6.4,107.1,-6.0&perils=flood,volcano&from=2025-08-02T12:00:00Z&to=2026-08-02T12:00:00Z",
+		"default window stays fine": "bbox=106.7,-6.4,107.1,-6.0&perils=volcano&from=2026-07-30T11:59:59Z&to=2026-08-02T12:00:00Z",
+	}
+	for name, rawQuery := range accepted {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseOperationMapTestQuery(t, rawQuery, options); err != nil {
+				t.Fatalf("parseOperationMapQuery() error = %v, want accepted", err)
+			}
+		})
+	}
+
+	rejected := map[string]string{
+		"volcano beyond 90 days": "bbox=106.7,-6.4,107.1,-6.0&perils=volcano&from=2026-05-03T12:00:00Z&to=2026-08-02T12:00:00Z",
+		"flood beyond 365 days":  "bbox=106.7,-6.4,107.1,-6.0&perils=flood&from=2025-08-01T12:00:00Z&to=2026-08-02T12:00:00Z",
+		"earthquake keeps 72h":   "bbox=106.7,-6.4,107.1,-6.0&perils=earthquake&from=2026-07-30T11:59:59Z&to=2026-08-02T12:00:00Z",
+	}
+	for name, rawQuery := range rejected {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseOperationMapTestQuery(t, rawQuery, options); err == nil {
+				t.Fatal("parseOperationMapQuery() error = nil, want validation error")
+			}
+		})
+	}
+}
+
 func TestOperationMapQueryAcceptsSingleAtForAlertsAndAirQuality(t *testing.T) {
 	for _, layer := range []string{"alerts", "air-quality"} {
 		t.Run(layer, func(t *testing.T) {

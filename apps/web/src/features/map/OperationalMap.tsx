@@ -801,6 +801,26 @@ export default function OperationalMap({
       if (map) map.getCanvas().style.cursor = ''
     }
 
+    const pickLocation = (event: { lngLat?: { lat: number; lng: number } }) => {
+      if (event.lngLat) onPickRef.current?.(event.lngLat.lat, event.lngLat.lng)
+    }
+
+    const expandClusterFor = (sourceId: string) => (event: { features?: Array<{ geometry?: GeoJSON.Geometry; properties?: Record<string, unknown> }> }) => {
+      const cluster = event.features?.[0]
+      const clusterID = cluster?.properties?.cluster_id
+      const geometry = cluster?.geometry
+      if (!map || typeof clusterID !== 'number' || !geometry || geometry.type !== 'Point') return
+      const center = geometry.coordinates as [number, number]
+      const source = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+      if (!source) return
+      void source.getClusterExpansionZoom(clusterID).then((zoom) => {
+        if (!disposed && map) map.easeTo({ center, zoom })
+      })
+    }
+    // Referensi handler stabil agar on/off klik klaster selalu berpasangan.
+    const expandEventCluster = expandClusterFor(eventsLayer.sourceId)
+    const expandLocalCluster = expandClusterFor(localPrivateOverlayAdapter.sourceId)
+
     // Registrasi interaksi layer (klik, klaster, hover). Dipakai saat
     // inisialisasi DAN setelah setStyle (tema basemap) yang menghapus layer.
     const registerLayerInteractions = (m: maplibregl.Map): void => {
@@ -808,28 +828,13 @@ export default function OperationalMap({
       for (const adapter of Object.values(layerAdapters)) {
         for (const layerId of adapter.layerIds) m.on('click', layerId, selectFeature)
       }
-      m.on('click', EVENTS_CLUSTERS_LAYER_ID, expandCluster)
+      m.on('click', EVENTS_CLUSTERS_LAYER_ID, expandEventCluster)
+      // Klaster overlay lokal (mis. tumpukan berita) ikut bisa diperbesar.
+      m.on('click', localPrivateOverlayAdapter.layerIds[2], expandLocalCluster)
       for (const layerId of HOVERABLE_LAYER_IDS) {
         m.on('mousemove', layerId, hoverFeatureFromEvent)
         m.on('mouseleave', layerId, clearHover)
       }
-    }
-
-    const pickLocation = (event: { lngLat?: { lat: number; lng: number } }) => {
-      if (event.lngLat) onPickRef.current?.(event.lngLat.lat, event.lngLat.lng)
-    }
-
-    const expandCluster = (event: { features?: Array<{ geometry?: GeoJSON.Geometry; properties?: Record<string, unknown> }> }) => {
-      const cluster = event.features?.[0]
-      const clusterID = cluster?.properties?.cluster_id
-      const geometry = cluster?.geometry
-      if (!map || typeof clusterID !== 'number' || !geometry || geometry.type !== 'Point') return
-      const center = geometry.coordinates as [number, number]
-      const source = map.getSource(eventsLayer.sourceId) as maplibregl.GeoJSONSource | undefined
-      if (!source) return
-      void source.getClusterExpansionZoom(clusterID).then((zoom) => {
-        if (!disposed && map) map.easeTo({ center, zoom })
-      })
     }
 
     const teardown = () => {
@@ -863,7 +868,8 @@ export default function OperationalMap({
       currentMap.off('moveend', synchronizeView)
       currentMap.off('webglcontextlost', showFallback)
       currentMap.off('click', pickLocation)
-      currentMap.off('click', EVENTS_CLUSTERS_LAYER_ID, expandCluster)
+      currentMap.off('click', EVENTS_CLUSTERS_LAYER_ID, expandEventCluster)
+      currentMap.off('click', localPrivateOverlayAdapter.layerIds[2], expandLocalCluster)
       for (const layerId of HOVERABLE_LAYER_IDS) {
         currentMap.off('mousemove', layerId, hoverFeatureFromEvent)
         currentMap.off('mouseleave', layerId, clearHover)

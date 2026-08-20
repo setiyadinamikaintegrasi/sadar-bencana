@@ -368,7 +368,9 @@ export default function ExecutiveOverview({
     }
     news
       .filter((item) => item.lat != null && item.lon != null)
-      .slice(0, activePerilFilter === 'news' ? 60 : 20)
+      // Filter News menampilkan seluruh item berkoordinat (klaster di peta
+      // menangani tumpukan koordinat); tampilan lain cukup 20 penanda dekoratif.
+      .slice(0, activePerilFilter === 'news' ? news.length : 20)
       .forEach((item) => features.push({
         type: 'Feature', id: `news-${item.id}`, geometry: { type: 'Point', coordinates: [item.lon!, item.lat!] }, properties: { kind: 'news', label: item.title },
       }))
