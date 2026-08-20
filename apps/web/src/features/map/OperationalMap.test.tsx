@@ -504,6 +504,58 @@ describe('OperationalMap', () => {
     expect(window.location.search).toBe('?section=dashboard&mapLayers=events&mapLng=106.812345&mapLat=-6.212345&mapZoom=16')
   })
 
+  it('keeps shakemaps strictly opt-in: no background probe and no auto-enable on fresh data', async () => {
+    window.history.replaceState({}, '', '/?section=dashboard&mapLayers=events')
+    const requestedUrls: string[] = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      requestedUrls.push(String(url))
+      const layer = String(url).includes('/alerts') ? 'alerts' : String(url).includes('/air-quality')
+        ? 'air-quality' : String(url).includes('/evacuations') ? 'evacuations'
+        : String(url).includes('/shakemaps') ? 'shakemaps' : 'events'
+      return Promise.resolve(new Response(JSON.stringify({
+        type: 'FeatureCollection',
+        layer,
+        truncated: false,
+        features: layer === 'shakemaps' ? [{
+          type: 'Feature',
+          id: 'bmkg:shakemap-fresh',
+          geometry: { type: 'Polygon', coordinates: [[[106.7, -6.3], [106.9, -6.3], [106.9, -6.1], [106.7, -6.3]]] },
+          properties: {
+            id: 'bmkg:shakemap-fresh',
+            layer: 'shakemaps',
+            label: 'Shakemap segar',
+            source: 'bmkg',
+            attribution: 'BMKG',
+            verification_status: 'official',
+            observed_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          },
+        }] : [],
+      }), { status: 200 }))
+    })
+
+    render(<OperationalMap />)
+    const map = maplibre.instances[0]
+    await act(async () => {
+      map.trigger('load')
+      await Promise.resolve()
+    })
+
+    // Layer OFF -> tidak ada request /shakemaps sama sekali (tidak di-probe).
+    expect(requestedUrls.some((url) => url.includes('/map/operations/shakemaps'))).toBe(false)
+    // Auto-enable tidak terjadi meski data segar tersedia di fixture.
+    expect(window.location.search).toBe('?section=dashboard&mapLayers=events')
+    expect(map.addSource.mock.calls.some(([id]) => String(id).startsWith('operational-map-shakemap-src-'))).toBe(false)
+
+    // Aktifkan manual via legenda -> shakemaps di-fetch dan dirender.
+    fetchMock.mockClear()
+    requestedUrls.length = 0
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Shakemap MMI' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(requestedUrls.some((url) => url.includes('/map/operations/shakemaps'))).toBe(true)
+  })
+
   it('aborts a geolocation-superseded request, keeps coordinates out of the URL, and schedules the replacement viewport load', async () => {
     vi.useFakeTimers()
     window.history.replaceState({}, '', '/?section=dashboard&mapLayers=events')
@@ -517,8 +569,8 @@ describe('OperationalMap', () => {
       map.trigger('load')
       await Promise.resolve()
     })
-    // S6: events + probe shakemaps (selalu diambil untuk deteksi auto-aktif).
-    expect(requests).toHaveLength(2)
+    // Shakemap kini opt-in murni — hanya layer aktif yang diambil.
+    expect(requests).toHaveLength(1)
 
     map.getCenter = vi.fn(() => ({ lng: 106.812345, lat: -6.212345 }))
     map.getZoom = vi.fn(() => 16)
@@ -529,7 +581,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(requests).toHaveLength(4)
+    expect(requests).toHaveLength(2)
   })
 
   it('shows an accessible fallback when MapLibre cannot construct a map', () => {
