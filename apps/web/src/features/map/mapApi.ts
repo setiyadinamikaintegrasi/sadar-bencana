@@ -19,6 +19,7 @@ export const publicMapEndpoints = {
   evacuations: '/map/operations/evacuations',
   aircraft: '/map/operations/aircraft',
   shakemaps: '/map/operations/shakemaps',
+  'flood-areas': '/map/operations/flood-areas',
 } as const satisfies Record<PublicOperationalMapLayer, string>
 
 export const privateMapEndpoints = {
@@ -33,6 +34,7 @@ const publicMapWireLayers: Record<PublicOperationalMapLayer, OperationalMapWireL
   evacuations: 'evacuations',
   aircraft: 'aircraft',
   shakemaps: 'shakemaps',
+  'flood-areas': 'flood-areas',
 }
 
 const EVENT_PERILS = new Set(['earthquake', 'wildfire', 'flood', 'volcano'])
@@ -125,8 +127,8 @@ function requestPath(layer: PublicOperationalMapLayer, viewport: PublicMapViewpo
     if (perils.length > 0) params.set('perils', perils.join(','))
   } else if (layer === 'aircraft') {
     // Snapshot live: tanpa parameter waktu — selalu posisi termutakhir.
-  } else if (layer === 'shakemaps') {
-    // Snapshot overlay MMI per event — tanpa parameter waktu.
+  } else if (layer === 'shakemaps' || layer === 'flood-areas') {
+    // Snapshot live: tanpa parameter waktu.
   } else if (mapTime) {
     params.set('at', mapTime)
   }

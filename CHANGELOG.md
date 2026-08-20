@@ -47,6 +47,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   ter-georeferensi (bbox 5° berpusat episenter, diverifikasi pixel-level),
   disinkron tiap 10 menit dari feed TEWS; endpoint
   /api/v1/map/operations/shakemaps + toggle "Shakemap MMI" di legenda peta.
+- Sprint 6 S7: status genangan banjir real-time per area RW/RT dari
+  PetaBencana.id/BPBD — poligon berwarna per kedalaman (state 1-4),
+  sinkron 10 menit (replace-set: area surut otomatis hilang); endpoint
+  /api/v1/map/operations/flood-areas + toggle "Genangan banjir".
 
 ### Security
 

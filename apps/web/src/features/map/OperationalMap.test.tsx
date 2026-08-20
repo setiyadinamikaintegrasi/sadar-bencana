@@ -579,7 +579,8 @@ describe('OperationalMap', () => {
       const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
         ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
         : url.includes('/aircraft') ? 'aircraft'
-        : url.includes('/shakemaps') ? 'shakemaps' : 'events'
+        : url.includes('/shakemaps') ? 'shakemaps'
+        : url.includes('/flood-areas') ? 'flood-areas' : 'events'
       return new Response(JSON.stringify({
         type: 'FeatureCollection',
         layer: wireLayer,
@@ -610,7 +611,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(6)
+    expect(fetchMock).toHaveBeenCalledTimes(7)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
@@ -670,7 +671,8 @@ describe('OperationalMap', () => {
       const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
         ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
         : url.includes('/aircraft') ? 'aircraft'
-        : url.includes('/shakemaps') ? 'shakemaps' : 'events'
+        : url.includes('/shakemaps') ? 'shakemaps'
+        : url.includes('/flood-areas') ? 'flood-areas' : 'events'
       return new Response(JSON.stringify({
         type: 'FeatureCollection',
         layer: wireLayer,
@@ -1091,7 +1093,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(requests).toHaveLength(6)
+    expect(requests).toHaveLength(7)
     act(() => map.trigger('moveend'))
     expect(requests.every((request) => request.signal?.aborted)).toBe(true)
 
@@ -1224,7 +1226,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(6)
+    expect(deferredFailures).toHaveLength(7)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()
@@ -1269,7 +1271,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(6)
+    expect(deferredFailures).toHaveLength(7)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()

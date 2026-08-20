@@ -26,9 +26,11 @@ export const DEFAULT_MAP_VIEW_STATE: MapViewState = {
   mapLng: 118,
   mapLat: -2.5,
   mapZoom: 5,
-  // Lalu lintas udara & shakemap MMI default nonaktif (noise visual);
-  // aktif via legenda.
-  mapLayers: PUBLIC_OPERATIONAL_MAP_LAYERS.filter((layer) => layer !== 'aircraft' && layer !== 'shakemaps'),
+  // Lalu lintas udara, shakemap MMI, & genangan banjir default nonaktif
+  // (noise visual); aktif via legenda.
+  mapLayers: PUBLIC_OPERATIONAL_MAP_LAYERS.filter(
+    (layer) => layer !== 'aircraft' && layer !== 'shakemaps' && layer !== 'flood-areas',
+  ),
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

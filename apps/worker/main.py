@@ -81,6 +81,7 @@ from connectors.official_feeds import (
 from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
 from connectors.bmkg_shakemap import sync_shakemap_overlays
+from connectors.petabencana_flood_areas import sync_flood_areas
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1112,6 +1113,19 @@ async def _shakemap_sync_once() -> dict[str, int]:
         return {"fetched": 0, "verified": 0, "inserted": 0}
 
 
+async def _flood_areas_sync_once() -> dict[str, int]:
+    """Sync status genangan per area (PetaBencana /floods) — S7."""
+    pool = get_pool()
+    try:
+        stats = await sync_flood_areas(pool)
+        if stats["active"]:
+            logger.info("Flood areas: %(active)s aktif, %(removed)s surut/dihapus", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("Flood areas sync failed: %s", exc)
+        return {"active": 0, "removed": 0}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1297,6 +1311,10 @@ async def startup_event() -> None:
     # Shakemap MMI overlay sync (S6) — tiap 10 menit, volume kecil.
     _shakemap_scheduler = NewsScheduler(poll_fn=_shakemap_sync_once, interval_seconds=600)
     _shakemap_scheduler.start()
+
+    # Flood-areas status sync (S7) — tiap 10 menit; replace-set (surut dihapus).
+    _flood_areas_scheduler = NewsScheduler(poll_fn=_flood_areas_sync_once, interval_seconds=600)
+    _flood_areas_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
