@@ -1,5 +1,6 @@
 // apps/web/src/features/executive/ExecutiveOverview.tsx
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import SourceBadge from '../../components/SourceBadge'
 import MagnitudeFilter from '../../components/MagnitudeFilter'
 import RiskMap, {
@@ -160,6 +161,8 @@ function overlayGeometry(overlay: MapOverlay): GeoJSON.Geometry | undefined {
   return undefined
 }
 
+const HEADER_COLLAPSED_KEY = 'sadar_executive_header_collapsed'
+
 export default function ExecutiveOverview({
   initialOfficialAlertFocus = null,
   onOfficialAlertFocusCleared,
@@ -169,6 +172,28 @@ export default function ExecutiveOverview({
 }) {
   const { session } = useAuth()
   const mapEngine = getOperationalMapEngine()
+
+  const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return window.localStorage.getItem(HEADER_COLLAPSED_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleHeaderCollapse = useCallback(() => {
+    setHeaderCollapsed((prev) => {
+      const next = !prev
+      try {
+        window.localStorage.setItem(HEADER_COLLAPSED_KEY, String(next))
+      } catch {
+        // localStorage may be unavailable
+      }
+      return next
+    })
+  }, [])
+
   const [events, setEvents] = useState<Event[]>([])
   // Total aktivitas nyata 72 jam (dari meta API) vs feed terkurasi.
   const [eventsWindowTotal, setEventsWindowTotal] = useState<number | null>(null)
@@ -530,54 +555,107 @@ export default function ExecutiveOverview({
   }, [events, meta, unacknowledgedAlerts])
 
   return (
-    <div className="space-y-5">
-      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(79,70,229,0.25),_transparent_40%),linear-gradient(135deg,_rgba(15,23,42,0.98),_rgba(2,6,23,0.98))] px-4 py-3 shadow-xl shadow-slate-950/40 md:px-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live Risk Intelligence
+    <div className="space-y-4 md:space-y-5">
+      {/* Banner Situational Awareness — Mendukung Mode Ringkas / Tampil */}
+      {headerCollapsed ? (
+        <section
+          id="executive-situational-banner"
+          className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/70 px-4 py-2 text-xs text-slate-400 shadow-md transition-all duration-200"
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-indigo-200">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live
+            </span>
+            <span className="font-semibold text-slate-200">Situational Awareness</span>
+            {topRiskScore?.place && (
+              <span className="hidden text-slate-400 md:inline">
+                · Top risk: <strong className="font-medium text-rose-300">{topRiskScore.place} (M{topRiskScore.magnitude ?? '—'})</strong>
               </span>
-              <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 md:text-xl">
-                Situational Awareness Dashboard
-              </h1>
-            </div>
-            <p className="mt-1 truncate text-xs text-slate-400">
-              {topRiskScore?.place
-                ? `Top risk: ${topRiskScore.place} · M${topRiskScore.magnitude ?? '—'} · ${topRiskScore.source?.toUpperCase() ?? 'SOURCE'}`
-                : 'Events · RSS · Alerts · Source Health'}
-            </p>
+            )}
+            <span className="hidden rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400 sm:inline">
+              {events.length} events · {news.length} news · {connectorSummary.ok} OK
+            </span>
           </div>
+          <button
+            type="button"
+            onClick={toggleHeaderCollapse}
+            aria-expanded="false"
+            aria-controls="executive-situational-banner"
+            title="Tampilkan ringkasan Situational Awareness lengkap"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-700/80 bg-slate-900/90 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition hover:border-indigo-400/50 hover:bg-slate-800 hover:text-indigo-200"
+          >
+            <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Tampilkan Ringkasan</span>
+            <span className="sm:hidden">Buka</span>
+          </button>
+        </section>
+      ) : (
+        <section
+          id="executive-situational-banner"
+          className="overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(79,70,229,0.25),_transparent_40%),linear-gradient(135deg,_rgba(15,23,42,0.98),_rgba(2,6,23,0.98))] px-4 py-3 shadow-xl shadow-slate-950/40 transition-all duration-200 md:px-5"
+        >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live Risk Intelligence
+                </span>
+                <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 md:text-xl">
+                  Situational Awareness Dashboard
+                </h1>
+              </div>
+              <p className="mt-1 truncate text-xs text-slate-400">
+                {topRiskScore?.place
+                  ? `Top risk: ${topRiskScore.place} · M${topRiskScore.magnitude ?? '—'} · ${topRiskScore.source?.toUpperCase() ?? 'SOURCE'}`
+                  : 'Events · RSS · Alerts · Source Health'}
+              </p>
+            </div>
 
-          <div className="hidden shrink-0 items-stretch gap-2 sm:flex">
-            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-              <p className="text-[9px] uppercase tracking-wide text-slate-500">Top Risk</p>
-              <p className="text-lg font-bold leading-tight text-rose-300">{topRiskScore?.score ?? '—'}</p>
-            </div>
-            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-              <p className="text-[9px] uppercase tracking-wide text-slate-500">News</p>
-              <p className="text-lg font-bold leading-tight text-emerald-300">{news.length}</p>
-            </div>
-            <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-              <p className="text-[9px] uppercase tracking-wide text-slate-500">Sources OK</p>
-              <p className="text-lg font-bold leading-tight text-indigo-300">{connectorSummary.ok}</p>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="hidden shrink-0 items-stretch gap-2 sm:flex">
+                <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
+                  <p className="text-[9px] uppercase tracking-wide text-slate-500">Top Risk</p>
+                  <p className="text-lg font-bold leading-tight text-rose-300">{topRiskScore?.score ?? '—'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
+                  <p className="text-[9px] uppercase tracking-wide text-slate-500">News</p>
+                  <p className="text-lg font-bold leading-tight text-emerald-300">{news.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
+                  <p className="text-[9px] uppercase tracking-wide text-slate-500">Sources OK</p>
+                  <p className="text-lg font-bold leading-tight text-indigo-300">{connectorSummary.ok}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={toggleHeaderCollapse}
+                aria-expanded="true"
+                aria-controls="executive-situational-banner"
+                title="Sembunyikan ringkasan atas agar peta lebih tinggi"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-700/80 bg-slate-950/60 px-2.5 py-1.5 text-xs font-medium text-slate-400 transition hover:border-indigo-400/50 hover:bg-slate-800 hover:text-slate-200"
+              >
+                <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden md:inline">Ringkas</span>
+              </button>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-4 shadow-2xl shadow-slate-950/50 md:p-5">
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
+        <div className="mb-3 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-xl font-semibold text-slate-50">Executive Risk Map</h3>
-              <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-200">
+              <h3 className="text-lg font-semibold text-slate-50 md:text-xl">Executive Risk Map</h3>
+              <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
                 Interactive command map
               </span>
             </div>
-            <p className="mt-1 hidden text-xs leading-5 text-slate-500 lg:block">
-              Peta interaktif real-time: sebaran event bencana & titik berita geolocated, dengan filter layer per kategori dan zoom/pan.
-            </p>
+            {!headerCollapsed && (
+              <p className="mt-1 hidden text-xs leading-relaxed text-slate-400 lg:block">
+                Peta interaktif real-time: sebaran event bencana & titik berita geolocated, dengan filter layer per kategori dan zoom/pan.
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
             {events.length > 0 && (
@@ -595,7 +673,7 @@ export default function ExecutiveOverview({
         {loading ? (
           <div
             className="flex items-center justify-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 text-sm text-slate-400"
-            style={{ height: 'min(62vh, 560px)' }}
+            style={{ height: 'min(75vh, 680px)' }}
           >
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
             Loading map…
@@ -634,7 +712,7 @@ export default function ExecutiveOverview({
                     ))
                     if (selected) handleEventClick(selected)
                   }}
-                  className="h-[min(62vh,560px)]"
+                  className="h-[min(75vh,680px)]"
                 />
                 {/* Replay timeline: menyapu window 72 jam di atas peta. */}
                 <MapTimeline
@@ -655,7 +733,7 @@ export default function ExecutiveOverview({
                 overlayFocusNonce={officialAlertFocus?.nonce}
                 timelineHoursAgo={timelineHoursAgo}
                 visibleOverlayClasses={visibleOverlayClasses}
-                height="min(62vh, 560px)"
+                height="min(75vh, 680px)"
               />
             )}
           </>

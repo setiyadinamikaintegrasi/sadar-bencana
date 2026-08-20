@@ -23,6 +23,14 @@ describe('operational map URL state', () => {
     })
   })
 
+  it('falls back to the default map view state when parameters are absent', () => {
+    expect(readMapViewState('')).toMatchObject({
+      mapLng: 118,
+      mapLat: -2.5,
+      mapZoom: 4.3,
+    })
+  })
+
   it('clamps the camera to the supported world and zoom bounds', () => {
     expect(readMapViewState('?mapLng=250&mapLat=-100&mapZoom=99')).toMatchObject({
       mapLng: 180,
