@@ -517,7 +517,8 @@ describe('OperationalMap', () => {
       map.trigger('load')
       await Promise.resolve()
     })
-    expect(requests).toHaveLength(1)
+    // S6: events + probe shakemaps (selalu diambil untuk deteksi auto-aktif).
+    expect(requests).toHaveLength(2)
 
     map.getCenter = vi.fn(() => ({ lng: 106.812345, lat: -6.212345 }))
     map.getZoom = vi.fn(() => 16)
@@ -528,7 +529,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(requests).toHaveLength(2)
+    expect(requests).toHaveLength(4)
   })
 
   it('shows an accessible fallback when MapLibre cannot construct a map', () => {
@@ -577,7 +578,8 @@ describe('OperationalMap', () => {
     const responseFor = (url: string) => {
       const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
         ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
-        : url.includes('/aircraft') ? 'aircraft' : 'events'
+        : url.includes('/aircraft') ? 'aircraft'
+        : url.includes('/shakemaps') ? 'shakemaps' : 'events'
       return new Response(JSON.stringify({
         type: 'FeatureCollection',
         layer: wireLayer,
@@ -608,7 +610,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    expect(fetchMock).toHaveBeenCalledTimes(6)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
@@ -667,7 +669,8 @@ describe('OperationalMap', () => {
     const responseFor = (url: string) => {
       const wireLayer = url.includes('/alerts') ? 'alerts' : url.includes('/air-quality')
         ? 'air-quality' : url.includes('/evacuations') ? 'evacuations'
-        : url.includes('/aircraft') ? 'aircraft' : 'events'
+        : url.includes('/aircraft') ? 'aircraft'
+        : url.includes('/shakemaps') ? 'shakemaps' : 'events'
       return new Response(JSON.stringify({
         type: 'FeatureCollection',
         layer: wireLayer,
@@ -1088,7 +1091,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(requests).toHaveLength(5)
+    expect(requests).toHaveLength(6)
     act(() => map.trigger('moveend'))
     expect(requests.every((request) => request.signal?.aborted)).toBe(true)
 
@@ -1221,7 +1224,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(5)
+    expect(deferredFailures).toHaveLength(6)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()
@@ -1266,7 +1269,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(deferredFailures).toHaveLength(5)
+    expect(deferredFailures).toHaveLength(6)
     for (const resolve of deferredFailures) resolve(new Response('{"error":"unavailable"}', { status: 503 }))
     await act(async () => {
       await Promise.resolve()

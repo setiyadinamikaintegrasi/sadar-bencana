@@ -9,6 +9,7 @@ import { airQualityLayer } from './layers/airQuality'
 import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, rebuildClusterBadges, setEventsHeatmapVisible } from './layers/events'
 import { advanceAircraftPositions, aircraftLayer } from './layers/aircraft'
+import { shakemapLayer } from './layers/shakemap'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { fetchLatestSatelliteIRFrame, satelliteIRFallbackFrame, satelliteIRLayer, type SatelliteIRFrame } from './layers/satelliteIR'
@@ -72,6 +73,7 @@ const layerAdapters = {
   'air-quality': airQualityLayer,
   evacuations: evacuationsLayer,
   aircraft: aircraftLayer,
+  shakemaps: shakemapLayer,
 } as const
 
 // Interval animasi pesawat (dead-reckoning antar refresh data).
@@ -238,6 +240,8 @@ export default function OperationalMap({
   const onViewportChangeRef = useRef(onViewportChange)
   const localOverlayRef = useRef(localOverlay)
   const loadLayersRef = useRef<(() => void) | null>(null)
+  // S6: pengguna mematikan shakemap manual -> jangan auto-aktifkan lagi.
+  const shakemapManuallyHiddenRef = useRef(false)
   const exportSnapshotRef = useRef<(() => void) | null>(null)
   const applyThemeRef = useRef<((next: OperationalMapTheme) => void) | null>(null)
   const synchronizeVisibleLayersRef = useRef<((layers: PublicOperationalMapLayer[]) => void) | null>(null)
@@ -388,17 +392,45 @@ export default function OperationalMap({
       }
 
       const viewport = { ...publicViewport(map, viewStateRef.current), perils: perilsRef.current }
-      void Promise.all(layers.map((layer) => fetchPublicMapLayer(layer, viewport, controller.signal))).then((nextResults) => {
+      // S6: shakemaps selalu di-probe (metadata ringan) meski layer OFF,
+      // agar auto-aktif saat ada gempa dirasakan baru bisa mendeteksinya.
+      const fetchLayers = [...layers]
+      if (!fetchLayers.includes('shakemaps')) fetchLayers.push('shakemaps')
+      void Promise.all(fetchLayers.map((layer) => fetchPublicMapLayer(layer, viewport, controller.signal))).then((nextResults) => {
         if (disposed || revision !== refreshRevision || controller.signal.aborted || !map) return
         for (const result of nextResults) {
-          if (result.collection) {
+          if (!result.collection) continue
+          // Hasil probe shakemaps saat layer OFF tidak dirender langsung —
+          // ditangani blok auto-aktif di bawah.
+          if (result.layer === 'shakemaps' && !enabledLayersRef.current.includes('shakemaps')) continue
+          if (enabledLayersRef.current.includes(result.layer)) {
             layerAdapters[result.layer].apply(map, result.collection)
             collectionsRef.current[result.layer] = result.collection
           }
         }
+        // S6: shakemap MMI adalah informasi darurat — auto-AKTIF bila ada
+        // gempa dirasakan baru (observed <24 jam) dan pengguna belum pernah
+        // mematikan layer-nya secara manual sesi ini.
+        const shakemapResult = nextResults.find((result) => result.layer === 'shakemaps')
+        const freshShakemaps = shakemapResult?.collection?.features.some((feature) => {
+          const observed = (feature.properties as { observed_at?: string }).observed_at
+          return observed ? Date.now() - Date.parse(observed) < 24 * 60 * 60 * 1000 : false
+        }) ?? false
+        if (freshShakemaps && !enabledLayersRef.current.includes('shakemaps') && !shakemapManuallyHiddenRef.current) {
+          const nextLayers = [...enabledLayersRef.current, 'shakemaps' as const]
+          enabledLayersRef.current = nextLayers
+          setEnabledLayers(nextLayers)
+          const nextState = { ...viewStateRef.current, mapLayers: nextLayers }
+          viewStateRef.current = nextState
+          const search = writeMapViewState(nextState)
+          window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
+          void shakemapLayer.apply(map, shakemapResult!.collection!)
+          collectionsRef.current.shakemaps = shakemapResult!.collection!
+        }
         setLayerStates((current) => {
           const next = { ...current }
           for (const result of nextResults) {
+            if (result.layer === 'shakemaps' && !enabledLayersRef.current.includes('shakemaps')) continue
             const previous = current[result.layer]
             if (result.collection) {
               next[result.layer] = {
@@ -1046,6 +1078,9 @@ export default function OperationalMap({
     const search = writeMapViewState(nextState)
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
 
+    if (layer === 'shakemaps' && !nextLayers.includes(layer)) {
+      shakemapManuallyHiddenRef.current = true
+    }
     if (!nextLayers.includes(layer) && mapRef.current) {
       layerAdapters[layer].remove(mapRef.current)
       setLayerStates((current) => {

@@ -96,6 +96,7 @@ function responseFor(pathname: string): unknown | undefined {
   if (pathname === '/api/v1/map/operations/events') return collection('events', [eventFeature])
   if (pathname === '/api/v1/map/operations/alerts') return collection('alerts', [], true)
   if (pathname === '/api/v1/map/operations/air-quality') return collection('air-quality', [])
+  if (pathname === '/api/v1/map/operations/shakemaps') return collection('shakemaps', [])
   if (pathname === '/api/v1/spatial/population-summary') {
     return {
       data: {

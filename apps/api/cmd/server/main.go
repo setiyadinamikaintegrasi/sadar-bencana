@@ -209,6 +209,8 @@ func main() {
 	spatial.GET("/elevation-summary", apihttp.SpatialElevationSummary())
 	// Sprint 6 S5: impact engine — skor dampak event on-demand (S1-S4 + event).
 	spatial.GET("/impact-score", apihttp.SpatialImpactScore(dbPool))
+	// Sprint 6 S6: overlay Shakemap MMI BMKG (georeferensi bbox 5°).
+	publicMap.GET("/shakemaps", apihttp.OperationMapShakemaps(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),

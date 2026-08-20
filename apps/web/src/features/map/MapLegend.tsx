@@ -10,6 +10,7 @@ const LAYER_LABELS: Record<PublicOperationalMapLayer, string> = {
   'air-quality': 'Kualitas udara',
   evacuations: 'Lokasi evakuasi',
   aircraft: 'Lalu lintas udara',
+  shakemaps: 'Shakemap MMI',
 }
 
 interface MapLegendProps {

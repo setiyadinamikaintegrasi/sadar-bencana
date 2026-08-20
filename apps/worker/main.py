@@ -80,6 +80,7 @@ from connectors.official_feeds import (
 )
 from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
+from connectors.bmkg_shakemap import sync_shakemap_overlays
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1094,6 +1095,23 @@ async def _generate_briefing_once() -> dict[str, Any]:
     return await _briefing_cycle(pool)
 
 
+async def _shakemap_sync_once() -> dict[str, int]:
+    """Sync Shakemap MMI overlays dari feed BMKG (S6).
+
+    Dijadwalkan tiap 10 menit — feed autogempa/gempadirasakan hanya
+    membawa shakemap untuk gempa yang dirasakan, jadi volume sangat kecil.
+    """
+    pool = get_pool()
+    try:
+        stats = await sync_shakemap_overlays(pool)
+        if stats["inserted"]:
+            logger.info("Shakemap sync: %(fetched)s fetched, %(verified)s verified, %(inserted)s new", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("Shakemap sync failed: %s", exc)
+        return {"fetched": 0, "verified": 0, "inserted": 0}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1275,6 +1293,10 @@ async def startup_event() -> None:
     # Start RSS news polling (every 15 minutes).
     _news_scheduler = NewsScheduler(poll_fn=_news_poll_cycle)
     _news_scheduler.start()
+
+    # Shakemap MMI overlay sync (S6) — tiap 10 menit, volume kecil.
+    _shakemap_scheduler = NewsScheduler(poll_fn=_shakemap_sync_once, interval_seconds=600)
+    _shakemap_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
