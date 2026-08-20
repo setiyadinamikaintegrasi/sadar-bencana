@@ -45,14 +45,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .severity-blink,
-  .severity-blink--critical,
-  .severity-blink--high {
-    animation: none;
-  }
-}
-
 @keyframes risk-marquee {
   0% {
     transform: translateX(0);
@@ -86,4 +78,23 @@
 
 .risk-news-ticker:hover .risk-news-ticker__track {
   animation-play-state: paused;
+}
+
+/* --- Reduced motion: ditaruh TERAKHIR agar menang atas aturan biasa
+ *     dengan specificity sama (cascade order). --- */
+@media (prefers-reduced-motion: reduce) {
+  .severity-blink,
+  .severity-blink--critical,
+  .severity-blink--high {
+    animation: none;
+  }
+  /* Ticker: hentikan marquee; konten tetap terbaca via scroll horizontal
+   *  dan daftar sr-only (alternatif mempertahankan informasi, bukan
+   *  sekadar mematikan gerakan). */
+  .risk-news-ticker__track {
+    animation: none;
+  }
+  .risk-news-ticker {
+    overflow-x: auto;
+  }
 }

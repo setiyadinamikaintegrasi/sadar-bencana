@@ -843,7 +843,9 @@ export default function ExecutiveOverview({
             </span>
           </div>
           <div className="risk-news-ticker border-b border-slate-800 bg-slate-950/70 px-4 py-2 text-xs text-slate-300">
-            <div className="risk-news-ticker__track">
+            {/* Track marquee digandakan utk animasi tak berputar; salinan ke-2
+             *  disembunyikan dari screen reader agar berita tidak dibaca 2x. */}
+            <div className="risk-news-ticker__track" aria-hidden={news.length > 0}>
               {[...news.slice(0, 6), ...news.slice(0, 6)].map((item, index) => (
                 <span key={`${item.id}-${index}`} className="mr-8 inline-flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
@@ -852,6 +854,12 @@ export default function ExecutiveOverview({
               ))}
               {news.length === 0 && <span>Menunggu RSS/news feed dari backend…</span>}
             </div>
+            {/* Versi statis utk screen reader & reduced-motion: daftar rapi tanpa duplikasi. */}
+            <ul className="sr-only">
+              {news.slice(0, 6).map((item) => (
+                <li key={item.id}>{item.source.toUpperCase()}: {item.title}</li>
+              ))}
+            </ul>
           </div>
           <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4 md:grid-cols-2 xl:grid-cols-3">
             {loading || newsLoading ? (
@@ -1031,10 +1039,20 @@ export default function ExecutiveOverview({
                       return (
                         <tr
                           key={row.id}
-                          className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 ${
+                          tabIndex={0}
+                          role="button"
+                          aria-pressed={isSelected}
+                          aria-label={`${row.place}, severity ${severity}, sumber ${row.source}`}
+                          className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 focus-visible:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                             isSelected ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-400/20' : ''
                           }`}
                           onClick={() => handleEventClick(row)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              handleEventClick(row)
+                            }
+                          }}
                         >
                           <td className="py-4 pr-6">{row.place}</td>
                           <td className="py-4 pr-6">
@@ -1064,10 +1082,20 @@ export default function ExecutiveOverview({
                   return (
                     <article
                       key={row.id}
-                      className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition ${
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={isSelected}
+                      aria-label={`${row.place}, severity ${severity}, sumber ${row.source}`}
+                      className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                         isSelected ? 'ring-1 ring-indigo-400/40' : ''
                       }`}
                       onClick={() => handleEventClick(row)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleEventClick(row)
+                        }
+                      }}
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <span
