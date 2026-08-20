@@ -81,7 +81,7 @@ export function ExecutiveMapControls({
   })()
 
   return (
-    <div className="mb-3 space-y-2">
+    <div className="mb-2 space-y-2 md:mb-3">
       {/* Toolbar Filter Peril: satu klaster segmented pill (satu keputusan:
           jenis bencana yang difokuskan). Toggle overlay dipisah ke baris
           "Lapisan" di bawah — dua keputusan berbeda tidak dicampur. */}
