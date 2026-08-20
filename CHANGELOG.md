@@ -39,6 +39,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   /api/v1/spatial/elevation-summary (min/max/mean, kekasaran, % terjal,
   % perairan; statistik hanya atas daratan) dan baris "Medan" di panel
   dampak (mis. Ruteng 0-1.288 m terjal; Jakarta datar).
+- Sprint 6 S5: impact engine — skor dampak 0-100 per event (port formula
+  risk-v2) dengan exposure dari WorldPop, vulnerability dari medan+tutupan
+  lahan, radius adaptif per peril/magnitude; endpoint
+  /api/v1/spatial/impact-score dan badge skor di panel detail event.
 
 ### Security
 

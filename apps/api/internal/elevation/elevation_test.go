@@ -36,7 +36,7 @@ func TestDecodeTerrariumRoundTrip(t *testing.T) {
 // fakeSampler menguji ElevationGrid tanpa jaringan.
 func newFakeSampler(values map[[2]float64]float64) *Sampler {
 	s := NewSampler(4)
-	s.fetchTile = func(ctx context.Context, z, x, y int) (*tileImage, error) {
+	s.FetchTile = func(ctx context.Context, z, x, y int) (*TileImage, error) {
 		img := image.NewRGBA(image.Rect(0, 0, 256, 256))
 		// Satu warna untuk seluruh tile: elevasi dari koordinat tile.
 		base := 32768.0
@@ -52,7 +52,7 @@ func newFakeSampler(values map[[2]float64]float64) *Sampler {
 				img.SetRGBA(xx, yy, color.RGBA{R: r, G: g, B: 0, A: 255})
 			}
 		}
-		return &tileImage{img: img, w: 256, h: 256}, nil
+		return &TileImage{img: img, w: 256, h: 256}, nil
 	}
 	return s
 }

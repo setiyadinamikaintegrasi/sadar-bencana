@@ -31,13 +31,16 @@ type Sampler struct {
 	cache   map[tileKey]*tileImage
 	order   []tileKey // LRU: paling tua di depan.
 	maxTile int
-	// fetchTile adalah field agar test dapat menyuntik sumber palsu.
-	fetchTile func(ctx context.Context, z, x, y int) (*tileImage, error)
+	// FetchTile adalah field agar test dapat menyuntik sumber palsu.
+	FetchTile func(ctx context.Context, z, x, y int) (*TileImage, error)
 }
 
 type tileKey struct {
 	z, x, y int
 }
+
+// TileImage diekspor agar test handler dapat menyuntik sumber palsu.
+type TileImage = tileImage
 
 type tileImage struct {
 	pix []uint8 // RGB planar? tidak — pakai image.RGBA via decode.
@@ -56,7 +59,7 @@ func NewSampler(maxCachedTile int) *Sampler {
 		cache:   make(map[tileKey]*tileImage),
 		maxTile: maxCachedTile,
 	}
-	sampler.fetchTile = sampler.httpFetchTile
+	sampler.FetchTile = sampler.httpFetchTile
 	return sampler
 }
 
@@ -132,7 +135,7 @@ func (s *Sampler) httpFetchTile(ctx context.Context, z, x, y int) (*tileImage, e
 func (s *Sampler) ElevationAt(ctx context.Context, lng, lat float64) (float64, error) {
 	z := MaxTileZoom
 	x, y, fx, fy := lngLatToTile(lng, lat, z)
-	tile, err := s.fetchTile(ctx, z, x, y)
+	tile, err := s.FetchTile(ctx, z, x, y)
 	if err != nil {
 		return 0, err
 	}

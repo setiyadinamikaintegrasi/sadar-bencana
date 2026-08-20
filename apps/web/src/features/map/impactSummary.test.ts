@@ -50,6 +50,7 @@ describe('fetchImpactSummary', () => {
     }))
     const summary = await fetchImpactSummary(-6.2, 106.8)
     expect(summary).toEqual({
+      score: null,
       population: 1234.5,
       populationVintage: '2020',
       facilities: { rumah_sakit: 3, damkar: 1 },

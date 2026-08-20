@@ -207,6 +207,8 @@ func main() {
 	spatial.GET("/landcover-summary", apihttp.SpatialLandcoverSummary(dbPool))
 	// Sprint 5 S4: ringkasan medan (elevasi) untuk bbox — AWS terrain tiles.
 	spatial.GET("/elevation-summary", apihttp.SpatialElevationSummary())
+	// Sprint 6 S5: impact engine — skor dampak event on-demand (S1-S4 + event).
+	spatial.GET("/impact-score", apihttp.SpatialImpactScore(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),
