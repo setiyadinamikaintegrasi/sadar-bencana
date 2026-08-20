@@ -643,30 +643,27 @@ export default function ExecutiveOverview({
       )}
 
       <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-4 shadow-2xl shadow-slate-950/50 md:p-5">
-        <div className="mb-3 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-lg font-semibold text-slate-50 md:text-xl">Executive Risk Map</h3>
-              <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
-                Interactive command map
-              </span>
-            </div>
-            {!headerCollapsed && (
-              <p className="mt-1 hidden text-xs leading-relaxed text-slate-400 lg:block">
-                Peta interaktif real-time: sebaran event bencana & titik berita geolocated, dengan filter layer per kategori dan zoom/pan.
-              </p>
-            )}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h3 className="text-lg font-semibold tracking-tight text-slate-50">Executive Risk Map</h3>
+            <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
+              Interactive command map
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-slate-400">
             {events.length > 0 && (
               <span
-                className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1"
+                className="rounded-full border border-slate-800 bg-slate-950/80 px-2.5 py-0.5"
                 title={`Total kejadian nyata 72 jam terakhir: ${eventsWindowTotal ?? events.length} · feed peta terkurasi: ${events.length}`}
               >
+                <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle" aria-hidden="true" />
                 {eventsWindowTotal != null ? `${eventsWindowTotal} event 72 jam` : `${events.length} events`}
               </span>
             )}
-            <span className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1">{news.length} news</span>
+            <span className="rounded-full border border-slate-800 bg-slate-950/80 px-2.5 py-0.5">
+              <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" aria-hidden="true" />
+              {news.length} news
+            </span>
           </div>
         </div>
 
