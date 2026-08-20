@@ -616,15 +616,15 @@ export default function ExecutiveOverview({
             <div className="flex shrink-0 items-center gap-2">
               <div className="hidden shrink-0 items-stretch gap-2 sm:flex">
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-500">Top Risk</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Top Risk</p>
                   <p className="text-lg font-bold leading-tight text-rose-300">{topRiskScore?.score ?? '—'}</p>
                 </div>
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-500">News</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">News</p>
                   <p className="text-lg font-bold leading-tight text-emerald-300">{news.length}</p>
                 </div>
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-500">Sources OK</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Sources OK</p>
                   <p className="text-lg font-bold leading-tight text-indigo-300">{connectorSummary.ok}</p>
                 </div>
               </div>
@@ -824,7 +824,7 @@ export default function ExecutiveOverview({
             className="rounded-2xl border border-slate-800 bg-slate-900/85 px-4 py-3 shadow-xl shadow-slate-950/30"
           >
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{item.label}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
               <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
             </div>
             <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
@@ -851,7 +851,9 @@ export default function ExecutiveOverview({
             </span>
           </div>
           <div className="risk-news-ticker border-b border-slate-800 bg-slate-950/70 px-4 py-2 text-xs text-slate-300">
-            <div className="risk-news-ticker__track">
+            {/* Track marquee digandakan utk animasi tak berputar; salinan ke-2
+             *  disembunyikan dari screen reader agar berita tidak dibaca 2x. */}
+            <div className="risk-news-ticker__track" aria-hidden={news.length > 0}>
               {[...news.slice(0, 6), ...news.slice(0, 6)].map((item, index) => (
                 <span key={`${item.id}-${index}`} className="mr-8 inline-flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
@@ -860,6 +862,12 @@ export default function ExecutiveOverview({
               ))}
               {news.length === 0 && <span>Menunggu RSS/news feed dari backend…</span>}
             </div>
+            {/* Versi statis utk screen reader & reduced-motion: daftar rapi tanpa duplikasi. */}
+            <ul className="sr-only">
+              {news.slice(0, 6).map((item) => (
+                <li key={item.id}>{item.source.toUpperCase()}: {item.title}</li>
+              ))}
+            </ul>
           </div>
           <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4 md:grid-cols-2 xl:grid-cols-3">
             {loading || newsLoading ? (
@@ -910,7 +918,7 @@ export default function ExecutiveOverview({
         <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-slate-50">Source Health Matrix</h3>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-400">
               OK {connectorSummary.ok} · Stale {connectorSummary.stale} · Error {connectorSummary.error}
             </span>
           </div>
@@ -1039,10 +1047,20 @@ export default function ExecutiveOverview({
                       return (
                         <tr
                           key={row.id}
-                          className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 ${
+                          tabIndex={0}
+                          role="button"
+                          aria-pressed={isSelected}
+                          aria-label={`${row.place}, severity ${severity}, sumber ${row.source}`}
+                          className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 focus-visible:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                             isSelected ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-400/20' : ''
                           }`}
                           onClick={() => handleEventClick(row)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              handleEventClick(row)
+                            }
+                          }}
                         >
                           <td className="py-4 pr-6">{row.place}</td>
                           <td className="py-4 pr-6">
@@ -1072,10 +1090,20 @@ export default function ExecutiveOverview({
                   return (
                     <article
                       key={row.id}
-                      className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition ${
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={isSelected}
+                      aria-label={`${row.place}, severity ${severity}, sumber ${row.source}`}
+                      className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                         isSelected ? 'ring-1 ring-indigo-400/40' : ''
                       }`}
                       onClick={() => handleEventClick(row)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleEventClick(row)
+                        }
+                      }}
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <span
