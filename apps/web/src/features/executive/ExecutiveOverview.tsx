@@ -530,14 +530,16 @@ export default function ExecutiveOverview({
     const topSource = events.length > 0 ? events[0].source.toUpperCase() : '—'
     return [
       {
-        label: 'Active Events',
-        value: events.length.toString(),
-        caption: 'Catastrophe events currently ingested into the monitor.',
+        label: 'Event Aktif',
+        value: eventsWindowTotal != null ? eventsWindowTotal.toString() : events.length.toString(),
+        caption: eventsWindowTotal != null
+          ? `Kejadian nyata 72 jam terakhir · ${events.length} ditampilkan di peta & watchlist (kurasi per jenis).`
+          : 'Kejadian bencana yang saat ini dimuat monitor.',
       },
       {
         label: 'Max Magnitude',
         value: maxMagnitude,
-        caption: 'Strongest event magnitude across the active set.',
+        caption: 'Magnitudo terkuat pada himpunan event aktif.',
       },
       {
         label: 'Open Alerts',
@@ -552,7 +554,7 @@ export default function ExecutiveOverview({
           : 'Backend unreachable. Check that the API service is running.',
       },
     ]
-  }, [events, meta, unacknowledgedAlerts])
+  }, [events, eventsWindowTotal, meta, unacknowledgedAlerts])
 
   return (
     <div className="space-y-4 md:space-y-5">
@@ -573,7 +575,7 @@ export default function ExecutiveOverview({
               </span>
             )}
             <span className="hidden rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400 sm:inline">
-              {events.length} events · {news.length} news · {connectorSummary.ok} OK
+              {(eventsWindowTotal ?? events.length)} event 72 jam · {news.length} news · {connectorSummary.ok} OK
             </span>
           </div>
           <button
@@ -651,13 +653,19 @@ export default function ExecutiveOverview({
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-slate-400">
-            {events.length > 0 && (
+            {events.length > 0 && eventsWindowTotal != null && (
               <span
                 className="rounded-full border border-slate-800 bg-slate-950/80 px-2.5 py-0.5"
-                title={`Total kejadian nyata 72 jam terakhir: ${eventsWindowTotal ?? events.length} · feed peta terkurasi: ${events.length}`}
+                title={`Total kejadian nyata 72 jam terakhir: ${eventsWindowTotal}. Feed peta & watchlist menampilkan ${events.length} event terpilih (kurasi per jenis bencana).`}
               >
                 <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle" aria-hidden="true" />
-                {eventsWindowTotal != null ? `${eventsWindowTotal} event 72 jam` : `${events.length} events`}
+                {eventsWindowTotal} event 72 jam · {events.length} di peta
+              </span>
+            )}
+            {events.length > 0 && eventsWindowTotal == null && (
+              <span className="rounded-full border border-slate-800 bg-slate-950/80 px-2.5 py-0.5">
+                <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 align-middle" aria-hidden="true" />
+                {events.length} events
               </span>
             )}
             <span className="rounded-full border border-slate-800 bg-slate-950/80 px-2.5 py-0.5">
