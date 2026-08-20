@@ -82,68 +82,103 @@ export function ExecutiveMapControls({
 
   return (
     <div className="mb-3 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {LAYER_FILTERS.map((filter) => (
-          <button
-            key={filter.key}
-            type="button"
-            aria-label={`${filter.label} (${counts[filter.key]})`}
-            onClick={() => onFilterChange(filter.key)}
-            className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-[11px] font-semibold transition ${
-              activePerilFilter === filter.key
-                ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40'
-                : 'bg-slate-950/70 text-slate-400 hover:bg-slate-800 hover:text-slate-100'
-            }`}
-          >
-            <span className={filter.accent}>{filter.icon}</span>
-            {filter.label}
-            <span className="rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-500">
-              {counts[filter.key]}
-            </span>
-          </button>
-        ))}
+      {/* Unified Toolbar: Segmented Peril Filters + Overlay Layer Toggles */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-800/90 bg-slate-950/80 p-1.5 shadow-inner">
+        {/* Kelompok Filter Peril */}
+        <div className="flex flex-wrap items-center gap-1">
+          {LAYER_FILTERS.map((filter) => {
+            const isActive = activePerilFilter === filter.key
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                aria-label={`${filter.label} (${counts[filter.key]})`}
+                onClick={() => onFilterChange(filter.key)}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-semibold transition ${
+                  isActive
+                    ? 'bg-indigo-500/25 text-indigo-100 shadow-sm ring-1 ring-inset ring-indigo-400/50'
+                    : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+                }`}
+              >
+                <span className={filter.accent}>{filter.icon}</span>
+                <span>{filter.label}</span>
+                <span
+                  className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                    isActive ? 'bg-indigo-900/70 text-indigo-200' : 'bg-slate-900/90 text-slate-400'
+                  }`}
+                >
+                  {counts[filter.key]}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Pemisah visual pada desktop */}
+        <div className="hidden h-5 w-px bg-slate-800/90 lg:block" aria-hidden="true" />
+
+        {/* Kelompok Toggle Layer Overlay */}
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          {([
+            ['official', 'Warning resmi'],
+            ['static_risk', 'Kajian risiko'],
+            ['watch_zone', 'Watch zone'],
+          ] as const).map(([key, label]) => {
+            const isPressed = visibleOverlayClasses.has(key)
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={isPressed}
+                onClick={() => onOverlayClassToggle(key)}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 font-medium transition ${
+                  isPressed
+                    ? 'border border-indigo-400/50 bg-indigo-500/15 text-indigo-100 shadow-sm'
+                    : 'border border-slate-800/90 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    isPressed
+                      ? key === 'official'
+                        ? 'bg-rose-400 shadow-sm shadow-rose-400/50'
+                        : key === 'static_risk'
+                          ? 'bg-purple-400 shadow-sm shadow-purple-400/50'
+                          : 'bg-indigo-400 shadow-sm shadow-indigo-400/50'
+                      : 'bg-slate-600'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span>{label}</span>
+              </button>
+            )
+          })}
+
+          {hideTimeSlider ? null : (
+            <label className="ml-auto flex items-center gap-2 pl-2 text-slate-400">
+              <span>Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}</span>
+              <input
+                aria-label="Waktu lifecycle peta"
+                type="range"
+                min="0"
+                max="72"
+                value={timelineHoursAgo}
+                onChange={(event) => onTimelineChange(Number(event.target.value))}
+              />
+            </label>
+          )}
+        </div>
       </div>
+
+      {/* Banner informasi jika jendela waktu per-peril aktif */}
       {windowNotice && (
-        <p className="text-[11px] leading-relaxed text-slate-500">
-          <span className={windowNotice.accent}>{windowNotice.icon}</span>{' '}
-          Peta menampilkan event {windowNotice.label} terakhir ({windowNotice.inWindow} dari{' '}
-          {windowNotice.total} tercatat). Event di luar jendela itu tidak ditampilkan di peta.
-        </p>
+        <div className="flex items-center gap-2 rounded-xl border border-slate-800/80 bg-slate-950/60 px-3 py-1.5 text-[11px] text-slate-400">
+          <span className={windowNotice.accent}>{windowNotice.icon}</span>
+          <p className="leading-snug">
+            Peta menampilkan event {windowNotice.label} terakhir ({windowNotice.inWindow} dari {windowNotice.total} tercatat). Event di luar jendela itu tidak ditampilkan di peta.
+          </p>
+        </div>
       )}
-      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-        {([
-          ['official', 'Warning resmi'],
-          ['static_risk', 'Kajian risiko'],
-          ['watch_zone', 'Watch zone'],
-        ] as const).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            aria-pressed={visibleOverlayClasses.has(key)}
-            onClick={() => onOverlayClassToggle(key)}
-            className={`rounded-lg border px-2 py-1 ${
-              visibleOverlayClasses.has(key)
-                ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
-                : 'border-slate-700 text-slate-500'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-        {hideTimeSlider ? null : (
-          <label className="ml-auto flex items-center gap-2">
-            Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}
-            <input
-              aria-label="Waktu lifecycle peta"
-              type="range"
-              min="0"
-              max="72"
-              value={timelineHoursAgo}
-              onChange={(event) => onTimelineChange(Number(event.target.value))}
-            />
-          </label>
-        )}
-      </div>
     </div>
   )
 }
