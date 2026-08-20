@@ -5,6 +5,7 @@ export const PUBLIC_OPERATIONAL_MAP_LAYERS = [
   'evacuations',
   'aircraft',
   'shakemaps',
+  'flood-areas',
 ] as const
 
 export const PRIVATE_OPERATIONAL_MAP_LAYERS = [
@@ -23,6 +24,7 @@ export const OPERATIONAL_MAP_WIRE_LAYERS = [
   'evacuations',
   'aircraft',
   'shakemaps',
+  'flood-areas',
   'watch-zones',
   'personal-assets',
 ] as const

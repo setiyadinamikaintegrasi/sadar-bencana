@@ -10,6 +10,7 @@ import { evacuationsLayer } from './layers/evacuations'
 import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, rebuildClusterBadges, setEventsHeatmapVisible } from './layers/events'
 import { advanceAircraftPositions, aircraftLayer } from './layers/aircraft'
 import { shakemapLayer } from './layers/shakemap'
+import { floodAreasLayer } from './layers/floodAreas'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { fetchLatestSatelliteIRFrame, satelliteIRFallbackFrame, satelliteIRLayer, type SatelliteIRFrame } from './layers/satelliteIR'
@@ -74,6 +75,7 @@ const layerAdapters = {
   evacuations: evacuationsLayer,
   aircraft: aircraftLayer,
   shakemaps: shakemapLayer,
+  'flood-areas': floodAreasLayer,
 } as const
 
 // Interval animasi pesawat (dead-reckoning antar refresh data).
@@ -1003,9 +1005,18 @@ export default function OperationalMap({
   }, [perilKey])
 
   const visibleLayerKey = visibleLayers?.join(',')
+  // Layer opsional yang ditambahkan pengguna lewat legenda saat daftar layer
+  // dikontrol parent (dashboard): toggle hanya mengelola layer yang TIDAK
+  // dikelola parent — kontrol dasar tetap milik parent.
+  const [controlledExtras, setControlledExtras] = useState<PublicOperationalMapLayer[]>([])
+  const controlledBaseRef = useRef<PublicOperationalMapLayer[] | null>(null)
+  const extrasKey = controlledExtras.join(',')
   useEffect(() => {
-    if (visibleLayers) synchronizeVisibleLayersRef.current?.([...visibleLayers])
-  }, [visibleLayerKey])
+    if (!visibleLayers) return
+    controlledBaseRef.current = [...visibleLayers]
+    const extras = controlledExtras.filter((layer) => !visibleLayers.includes(layer))
+    synchronizeVisibleLayersRef.current?.([...visibleLayers, ...extras])
+  }, [visibleLayerKey, extrasKey])
 
   useEffect(() => {
     synchronizeControlledCollectionsRef.current?.(controlledCollections)
@@ -1066,6 +1077,15 @@ export default function OperationalMap({
   }
 
   const toggleLayer = (layer: PublicOperationalMapLayer) => {
+    // Mode controlled (dashboard): layer di luar daftar parent dikelola lokal.
+    if (controlledBaseRef.current && !controlledBaseRef.current.includes(layer)) {
+      setControlledExtras((current) => (
+        current.includes(layer)
+          ? current.filter((item) => item !== layer)
+          : [...current, layer]
+      ))
+      return
+    }
     const nextLayers = enabledLayersRef.current.includes(layer)
       ? enabledLayersRef.current.filter((current) => current !== layer)
       : [...enabledLayersRef.current, layer]

@@ -13,7 +13,7 @@ import RiskMap, {
 } from '../../components/RiskMap'
 import OperationalMap, { type OperationalMapFocusRequest } from '../map/OperationalMap'
 import { MapTimeline } from '../map/MapTimeline'
-import { sourceQualifiedOperationalMapID } from '../map/types'
+import { sourceQualifiedOperationalMapID, type PublicOperationalMapLayer } from '../map/types'
 import { getOperationalMapEngine } from '../../config/mapEngine'
 import { useAuth } from '../../lib/auth/AuthProvider'
 import NewsPanel from '../../components/NewsPanel'
@@ -195,6 +195,10 @@ export default function ExecutiveOverview({
   const [visibleOverlayClasses, setVisibleOverlayClasses] = useState<Set<RiskOverlayClass>>(
     () => new Set(['official', 'static_risk', 'watch_zone']),
   )
+  // Layer opsional yang ditambahkan pengguna via legenda peta (S6 shakemap,
+  // S7 genangan, P7 pesawat) — melengkapi layer dasar dashboard, bukan
+  // menggantikan kontrol kelas overlay.
+  const [extraMapLayers, setExtraMapLayers] = useState<PublicOperationalMapLayer[]>([])
   const [monitoringDeskHeight, setMonitoringDeskHeight] = useState<number | null>(null)
   const monitoringDeskRef = useRef<HTMLDivElement>(null)
 
@@ -337,12 +341,15 @@ export default function ExecutiveOverview({
     [timelineHoursAgo],
   )
   const visibleOperationalLayers = useMemo(() => {
-    const layers: Array<'events' | 'official-alerts' | 'air-quality'> = []
+    const layers: PublicOperationalMapLayer[] = []
     if (activePerilFilter !== 'news') layers.push('events')
     if (visibleOverlayClasses.has('official')) layers.push('official-alerts')
     layers.push('air-quality')
+    for (const extra of extraMapLayers) {
+      if (!layers.includes(extra)) layers.push(extra)
+    }
     return layers
-  }, [activePerilFilter, visibleOverlayClasses])
+  }, [activePerilFilter, visibleOverlayClasses, extraMapLayers])
   const operationalPrivateLayers = useMemo(() => {
     if (!session) return []
     return visibleOverlayClasses.has('watch_zone')

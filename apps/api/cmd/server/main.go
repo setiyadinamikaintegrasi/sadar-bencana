@@ -211,6 +211,8 @@ func main() {
 	spatial.GET("/impact-score", apihttp.SpatialImpactScore(dbPool))
 	// Sprint 6 S6: overlay Shakemap MMI BMKG (georeferensi bbox 5°).
 	publicMap.GET("/shakemaps", apihttp.OperationMapShakemaps(dbPool))
+	// Sprint 6 S7: status genangan banjir per area (PetaBencana/BPBD).
+	publicMap.GET("/flood-areas", apihttp.OperationMapFloodAreas(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),
