@@ -8,6 +8,10 @@ export type LiveVideoSource = {
   availability: 'forecast' | 'continuous' | 'scheduled'
   contentType: 'weather-map' | 'video'
   embedUrl?: string
+  /** URL yang dicek via YouTube oEmbed untuk menentukan kanal benar-benar
+   *  bisa diputar (200) atau sedang tidak live (404). Tanpa field ini sumber
+   *  dianggap selalu valid (mis. peta cuaca). */
+  validateUrl?: string
 }
 
 export const liveVideoSources: LiveVideoSource[] = [
@@ -33,6 +37,7 @@ export const liveVideoSources: LiveVideoSource[] = [
     availability: 'continuous',
     contentType: 'video',
     embedUrl: 'https://www.youtube-nocookie.com/embed/vz1RLz9A5ZU?rel=0&playsinline=1',
+    validateUrl: 'https://www.youtube.com/watch?v=vz1RLz9A5ZU',
   },
   {
     id: 'info-bmkg',
@@ -45,6 +50,7 @@ export const liveVideoSources: LiveVideoSource[] = [
     contentType: 'video',
     embedUrl:
       'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8Do0tOnpnz1ydOZV0XKS3g&rel=0&playsinline=1',
+    validateUrl: 'https://www.youtube.com/embed/live_stream?channel=UC8Do0tOnpnz1ydOZV0XKS3g',
   },
   {
     id: 'bnpb-indonesia',
@@ -57,6 +63,7 @@ export const liveVideoSources: LiveVideoSource[] = [
     contentType: 'video',
     embedUrl:
       'https://www.youtube-nocookie.com/embed/live_stream?channel=UCcz9b2brFsk86Z_xruJMDoA&rel=0&playsinline=1',
+    validateUrl: 'https://www.youtube.com/embed/live_stream?channel=UCcz9b2brFsk86Z_xruJMDoA',
   },
   {
     id: 'kompas-tv',
@@ -69,6 +76,7 @@ export const liveVideoSources: LiveVideoSource[] = [
     contentType: 'video',
     embedUrl:
       'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5BMIWZe9isJXLZZWPWvBlg&rel=0&playsinline=1',
+    validateUrl: 'https://www.youtube.com/embed/live_stream?channel=UC5BMIWZe9isJXLZZWPWvBlg',
   },
   {
     id: 'metro-tv',
@@ -81,5 +89,6 @@ export const liveVideoSources: LiveVideoSource[] = [
     contentType: 'video',
     embedUrl:
       'https://www.youtube-nocookie.com/embed/live_stream?channel=UCkbPntO_8G2BF2HmLcrsZXA&rel=0&playsinline=1',
+    validateUrl: 'https://www.youtube.com/embed/live_stream?channel=UCkbPntO_8G2BF2HmLcrsZXA',
   },
 ]
