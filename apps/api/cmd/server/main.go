@@ -203,6 +203,8 @@ func main() {
 	spatial.GET("/population-summary", apihttp.SpatialPopulationSummary(dbPool))
 	// Sprint 5 S2: fasilitas kritis dalam radius titik (OSM + manual).
 	spatial.GET("/critical-facilities", apihttp.CriticalFacilitiesSummary(dbPool))
+	// Sprint 5 S3: distribusi tutupan lahan (ESA WorldCover) untuk poligon.
+	spatial.GET("/landcover-summary", apihttp.SpatialLandcoverSummary(dbPool))
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),

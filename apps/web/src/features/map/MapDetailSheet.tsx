@@ -143,9 +143,23 @@ function ImpactPanel({ latitude, longitude }: { latitude: number; longitude: num
               </dd>
             </div>
           ) : null}
+          {impact.summary.landcover !== null ? (
+            <div className="operational-map__impact-row">
+              <dt>Tutupan lahan</dt>
+              <dd>
+                <ul>
+                  {impact.summary.landcover.slice(0, 4).map((entry) => (
+                    <li key={entry.classCode}>
+                      {entry.label}: <strong>{Math.round(entry.fraction * 100).toLocaleString('id-ID')}%</strong>
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </div>
+          ) : null}
         </dl>
       ) : null}
-      <p className="operational-map__impact-attribution">WorldPop · OpenStreetMap contributors</p>
+      <p className="operational-map__impact-attribution">WorldPop · OpenStreetMap · ESA WorldCover</p>
     </section>
   )
 }

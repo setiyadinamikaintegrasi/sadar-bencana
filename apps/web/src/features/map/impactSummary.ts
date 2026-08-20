@@ -12,12 +12,33 @@ import { useEffect, useState } from 'react'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
 export const IMPACT_RADIUS_KM = 30
 
+export interface LandcoverClass {
+  classCode: number
+  label: string
+  fraction: number
+}
+
 export interface ImpactSummary {
   population: number | null
   populationVintage: string | null
   facilities: Partial<Record<string, number>> | null
   facilitiesTotal: number | null
   truncated: boolean
+  landcover: LandcoverClass[] | null
+}
+
+export const LANDCOVER_LABELS: Record<number, string> = {
+  10: 'Hutan',
+  20: 'Semak',
+  30: 'Padang rumput',
+  40: 'Lahan pertanian',
+  50: 'Kawasan terbangun',
+  60: 'Lahan terbuka',
+  70: 'Salju/es',
+  80: 'Perairan',
+  90: 'Lahan basah',
+  95: 'Mangrove',
+  100: 'Lumut',
 }
 
 export type ImpactSummaryState =
@@ -52,9 +73,10 @@ export async function fetchImpactSummary(
   signal?: AbortSignal,
 ): Promise<ImpactSummary | null> {
   const polygon = encodeURIComponent(impactBoundingBoxPolygon(latitude, longitude, radiusKm))
-  const [populationResponse, facilitiesResponse] = await Promise.allSettled([
+  const [populationResponse, facilitiesResponse, landcoverResponse] = await Promise.allSettled([
     fetch(`${API_BASE_URL}/spatial/population-summary?polygon=${polygon}`, { signal }),
     fetch(`${API_BASE_URL}/spatial/critical-facilities?lat=${latitude}&lon=${longitude}&radius_km=${radiusKm}`, { signal }),
+    fetch(`${API_BASE_URL}/spatial/landcover-summary?polygon=${polygon}`, { signal }),
   ])
 
   let population: number | null = null
@@ -83,8 +105,25 @@ export async function fetchImpactSummary(
     }
   }
 
-  if (population === null && facilities === null) return null
-  return { population, populationVintage, facilities, facilitiesTotal, truncated }
+  let landcover: LandcoverClass[] | null = null
+  if (landcoverResponse.status === 'fulfilled' && landcoverResponse.value.ok) {
+    const body = (await landcoverResponse.value.json()) as {
+      data?: { classes?: Array<{ class_code?: number; fraction?: number }> }
+    }
+    if (Array.isArray(body.data?.classes) && body.data.classes.length > 0) {
+      landcover = body.data.classes
+        .filter((entry) => typeof entry.class_code === 'number' && typeof entry.fraction === 'number')
+        .map((entry) => ({
+          classCode: entry.class_code as number,
+          label: LANDCOVER_LABELS[entry.class_code as number] ?? `Kelas ${entry.class_code}`,
+          fraction: entry.fraction as number,
+        }))
+        .sort((a, b) => b.fraction - a.fraction)
+    }
+  }
+
+  if (population === null && facilities === null && landcover === null) return null
+  return { population, populationVintage, facilities, facilitiesTotal, truncated, landcover }
 }
 
 /** Hook: muat ringkasan dampak untuk koordinat event (sekali per koordinat). */
