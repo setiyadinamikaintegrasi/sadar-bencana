@@ -267,10 +267,70 @@ export default function ExecutiveOverview({
     }
   }, [])
 
+  // Harden (critique P2 "Live tanpa liveness"): auto-refresh 60 detik agar
+  // badge Live jujur; berhenti saat tab tersembunyi & saat replay timeline.
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null)
+  const timelineHoursAgoRef = useRef(timelineHoursAgo)
+  timelineHoursAgoRef.current = timelineHoursAgo
+  const [nowTick, setNowTick] = useState(() => Date.now())
+
+  const markInitialRefreshed = useCallback(() => setLastRefreshedAt(Date.now()), [])
+
   useEffect(() => {
-    void load('initial')
+    const timer = window.setInterval(() => {
+      // Jangan refresh otomatis saat tab tersembunyi (hemat backend) atau
+      // saat pengguna sedang replay timeline (mapTime aktif).
+      if (document.visibilityState !== 'visible') return
+      if (timelineHoursAgoRef.current !== 0) return
+      void load('refresh').catch(() => undefined)
+      void loadNews().catch(() => undefined)
+      void reloadBmkg().catch(() => undefined)
+      setLastRefreshedAt(Date.now())
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [load, loadNews, reloadBmkg])
+
+  // Tick 30 detik agar label relatif "X menit lalu" ikut memperbarui.
+  useEffect(() => {
+    const tick = window.setInterval(() => setNowTick(Date.now()), 30_000)
+    return () => window.clearInterval(tick)
+  }, [])
+
+  const lastRefreshLabel = useMemo(() => {
+    if (lastRefreshedAt == null) return null
+    const diffMs = Math.max(0, nowTick - lastRefreshedAt)
+    const minutes = Math.floor(diffMs / 60_000)
+    if (minutes < 1) return 'baru saja'
+    if (minutes === 1) return '1 menit lalu'
+    if (minutes < 60) return `${minutes} menit lalu`
+    const hours = Math.floor(minutes / 60)
+    return hours === 1 ? '1 jam lalu' : `${hours} jam lalu`
+  }, [lastRefreshedAt, nowTick])
+
+  // Umumkan perubahan jumlah ke screen reader setelah auto-refresh/manual
+  // refresh — "Live" kini terdengar, bukan hanya terlihat.
+  const [liveAnnouncement, setLiveAnnouncement] = useState('')
+  const prevCountsRef = useRef<{ events: number; news: number } | null>(null)
+  useEffect(() => {
+    const current = { events: eventsWindowTotal ?? events.length, news: news.length }
+    const previous = prevCountsRef.current
+    prevCountsRef.current = current
+    if (previous == null) return
+    if (current.events === previous.events && current.news === previous.news) return
+    const parts: string[] = []
+    if (current.events !== previous.events) {
+      parts.push(`event aktif ${current.events} (sebelumnya ${previous.events})`)
+    }
+    if (current.news !== previous.news) {
+      parts.push(`berita ${current.news} (sebelumnya ${previous.news})`)
+    }
+    if (parts.length > 0) setLiveAnnouncement(`Data diperbarui: ${parts.join(', ')}.`)
+  }, [eventsWindowTotal, events.length, news.length])
+
+  useEffect(() => {
+    void load('initial').then(markInitialRefreshed).catch(markInitialRefreshed)
     void loadNews()
-  }, [load, loadNews])
+  }, [load, loadNews, markInitialRefreshed])
 
   useEffect(() => {
     if (!initialOfficialAlertFocus) return
@@ -300,6 +360,7 @@ export default function ExecutiveOverview({
     void load('refresh')
     void loadNews()
     void reloadBmkg()
+    setLastRefreshedAt(Date.now())
   }, [load, loadNews, reloadBmkg])
 
   const handleEventClick = useCallback((event: Event) => {
@@ -558,6 +619,9 @@ export default function ExecutiveOverview({
 
   return (
     <div className="space-y-4 md:space-y-5">
+      {/* Pengumuman perubahan jumlah pasca auto-refresh bagi screen reader. */}
+      <p className="sr-only" role="status" aria-live="polite">{liveAnnouncement}</p>
+
       {/* Banner Situational Awareness — Mendukung Mode Ringkas / Tampil */}
       {headerCollapsed ? (
         <section
@@ -600,11 +664,19 @@ export default function ExecutiveOverview({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live Risk Intelligence
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live
                 </span>
                 <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 md:text-xl">
                   Situational Awareness Dashboard
                 </h1>
+                {lastRefreshLabel && (
+                  <span
+                    className="rounded-full border border-slate-700/80 bg-slate-950/60 px-2 py-0.5 text-[10px] font-medium text-slate-400"
+                    title={`Data diperbarui otomatis tiap 60 detik. Terakhir: ${lastRefreshLabel}.`}
+                  >
+                    diperbarui {lastRefreshLabel}
+                  </span>
+                )}
               </div>
               <p className="mt-1 truncate text-xs text-slate-400">
                 {topRiskScore?.place
@@ -644,8 +716,8 @@ export default function ExecutiveOverview({
         </section>
       )}
 
-      <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-4 shadow-2xl shadow-slate-950/50 md:p-5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-3 shadow-2xl shadow-slate-950/50 md:p-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 md:mb-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h3 className="text-lg font-semibold tracking-tight text-slate-50">Executive Risk Map</h3>
             <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
@@ -678,7 +750,7 @@ export default function ExecutiveOverview({
         {loading ? (
           <div
             className="flex items-center justify-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 text-sm text-slate-400"
-            style={{ height: 'min(75vh, 680px)' }}
+            style={{ height: 'min(58vh, 680px)' }}
           >
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
             Loading map…
@@ -717,7 +789,7 @@ export default function ExecutiveOverview({
                     ))
                     if (selected) handleEventClick(selected)
                   }}
-                  className="h-[min(75vh,680px)]"
+                  className="h-[min(58vh,680px)] md:h-[min(75vh,680px)]"
                 />
                 {/* Replay timeline: menyapu window 72 jam di atas peta. */}
                 <MapTimeline
@@ -738,7 +810,7 @@ export default function ExecutiveOverview({
                 overlayFocusNonce={officialAlertFocus?.nonce}
                 timelineHoursAgo={timelineHoursAgo}
                 visibleOverlayClasses={visibleOverlayClasses}
-                height="min(75vh, 680px)"
+                height="min(58vh, 680px)"
               />
             )}
           </>
