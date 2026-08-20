@@ -154,6 +154,31 @@ func TestOperationMapQueryAppliesPerPerilWindowCap(t *testing.T) {
 	}
 }
 
+func TestOperationMapQueryTracksExplicitEventWindow(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	options := operationMapQueryOptions{
+		permittedPerils: operationMapEventPerils,
+		timeMode:        operationMapEventTimeWindow,
+		now:             func() time.Time { return now },
+	}
+
+	query, err := parseOperationMapTestQuery(t, "bbox=106.7,-6.4,107.1,-6.0", options)
+	if err != nil {
+		t.Fatalf("parseOperationMapQuery() error = %v", err)
+	}
+	if query.WindowExplicit {
+		t.Fatal("WindowExplicit = true without from/to, want false")
+	}
+
+	query, err = parseOperationMapTestQuery(t, "bbox=106.7,-6.4,107.1,-6.0&from=2026-08-02T00:00:00Z&to=2026-08-02T12:00:00Z", options)
+	if err != nil {
+		t.Fatalf("parseOperationMapQuery() error = %v", err)
+	}
+	if !query.WindowExplicit {
+		t.Fatal("WindowExplicit = false with from/to, want true")
+	}
+}
+
 func TestOperationMapQueryAcceptsSingleAtForAlertsAndAirQuality(t *testing.T) {
 	for _, layer := range []string{"alerts", "air-quality"} {
 		t.Run(layer, func(t *testing.T) {

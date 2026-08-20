@@ -224,3 +224,64 @@ func openOperationMapPostGIS(t *testing.T) *sql.DB {
 	})
 	return db
 }
+
+func TestOperationMapEventsPostGISUsesPerPerilDefaultWindows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := openOperationMapPostGIS(t)
+	if _, err := db.Exec(`
+CREATE TABLE events (
+    id UUID PRIMARY KEY,
+    event_id VARCHAR(255) NOT NULL,
+    source VARCHAR(64) NOT NULL,
+    event_type VARCHAR(64) NOT NULL,
+    magnitude FLOAT,
+    latitude FLOAT,
+    longitude FLOAT,
+    place TEXT,
+    event_time TIMESTAMPTZ,
+    url TEXT,
+    severity VARCHAR(32),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`); err != nil {
+		t.Fatalf("create events table: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO events (id, source, event_id, event_type, magnitude, latitude, longitude, place, event_time, severity) VALUES
+    ('00000000-0000-0000-0000-000000000101', 'bmkg', 'eq-recent', 'earthquake', 4.5, -6.2, 106.8, 'Jakarta', now() - interval '1 hour', 'High'),
+    ('00000000-0000-0000-0000-000000000102', 'gvp', 'volcano-30d', 'volcano', NULL, -6.2, 106.8, 'Semeru', now() - interval '30 days', 'High'),
+    ('00000000-0000-0000-0000-000000000103', 'gvp', 'volcano-200d', 'volcano', NULL, -6.2, 106.8, 'Semeru', now() - interval '200 days', 'High'),
+    ('00000000-0000-0000-0000-000000000104', 'petabencana', 'flood-200d', 'flood', NULL, -6.2, 106.8, 'Jakarta', now() - interval '200 days', 'High'),
+    ('00000000-0000-0000-0000-000000000105', 'petabencana', 'flood-400d', 'flood', NULL, -6.2, 106.8, 'Jakarta', now() - interval '400 days', 'High')
+`); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	// Tampilan live (tanpa from/to): gempa 72 jam, vulkanik 90 hari,
+	// banjir 365 hari — jadi peril beraktivitas jarang ikut tampil.
+	body := requestOperationMap(t, OperationMapEvents(db), "/api/v1/map/operations/events?bbox=105,-9,124,5&zoom=8")
+	features := operationMapFeaturesByID(t, body)
+	for _, id := range []string{"bmkg:eq-recent", "gvp:volcano-30d", "petabencana:flood-200d"} {
+		if _, exists := features[id]; !exists {
+			t.Fatalf("default window missing %q: %#v", id, features)
+		}
+	}
+	for _, id := range []string{"gvp:volcano-200d", "petabencana:flood-400d"} {
+		if _, exists := features[id]; exists {
+			t.Fatalf("default window included out-of-window %q: %#v", id, features)
+		}
+	}
+
+	// Window eksplisit (replay timeline): satu jendela 72 jam untuk semua peril.
+	from := url.QueryEscape(time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339))
+	to := url.QueryEscape(time.Now().UTC().Format(time.RFC3339))
+	body = requestOperationMap(t, OperationMapEvents(db), "/api/v1/map/operations/events?bbox=105,-9,124,5&zoom=8&from="+from+"&to="+to)
+	features = operationMapFeaturesByID(t, body)
+	if _, exists := features["bmkg:eq-recent"]; !exists {
+		t.Fatalf("explicit window missing recent event: %#v", features)
+	}
+	for _, id := range []string{"gvp:volcano-30d", "petabencana:flood-200d"} {
+		if _, exists := features[id]; exists {
+			t.Fatalf("explicit 72h window included %q: %#v", id, features)
+		}
+	}
+}
