@@ -82,11 +82,11 @@ export function ExecutiveMapControls({
 
   return (
     <div className="mb-3 space-y-2">
-      {/* Unified Toolbar: Segmented Peril Filters + Overlay Layer Toggles */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-800/90 bg-slate-950/80 p-1.5 shadow-inner">
-        {/* Kelompok Filter Peril */}
-        <div className="flex flex-wrap items-center gap-1">
-          {LAYER_FILTERS.map((filter) => {
+      {/* Toolbar Filter Peril: satu klaster segmented pill (satu keputusan:
+          jenis bencana yang difokuskan). Toggle overlay dipisah ke baris
+          "Lapisan" di bawah — dua keputusan berbeda tidak dicampur. */}
+      <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-slate-800/90 bg-slate-950/80 p-1.5 shadow-inner">
+        {LAYER_FILTERS.map((filter) => {
             const isActive = activePerilFilter === filter.key
             return (
               <button
@@ -112,14 +112,25 @@ export function ExecutiveMapControls({
               </button>
             )
           })}
-        </div>
+        {hideTimeSlider ? null : (
+          <label className="ml-auto flex items-center gap-2 pl-2 text-slate-400">
+            <span>Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}</span>
+            <input
+              aria-label="Waktu lifecycle peta"
+              type="range"
+              min="0"
+              max="72"
+              value={timelineHoursAgo}
+              onChange={(event) => onTimelineChange(Number(event.target.value))}
+            />
+          </label>
+        )}
+      </div>
 
-        {/* Pemisah visual pada desktop */}
-        <div className="hidden h-5 w-px bg-slate-800/90 lg:block" aria-hidden="true" />
-
-        {/* Kelompok Toggle Layer Overlay */}
-        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-          {([
+      {/* Baris Lapisan Overlay — toggle apa yang ditumpuk di peta. */}
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Lapisan</span>
+        {([
             ['official', 'Warning resmi'],
             ['static_risk', 'Kajian risiko'],
             ['watch_zone', 'Watch zone'],
@@ -153,21 +164,6 @@ export function ExecutiveMapControls({
               </button>
             )
           })}
-
-          {hideTimeSlider ? null : (
-            <label className="ml-auto flex items-center gap-2 pl-2 text-slate-400">
-              <span>Waktu: {timelineHoursAgo === 0 ? 'sekarang' : `${timelineHoursAgo} jam lalu`}</span>
-              <input
-                aria-label="Waktu lifecycle peta"
-                type="range"
-                min="0"
-                max="72"
-                value={timelineHoursAgo}
-                onChange={(event) => onTimelineChange(Number(event.target.value))}
-              />
-            </label>
-          )}
-        </div>
       </div>
 
       {/* Banner informasi jika jendela waktu per-peril aktif */}
