@@ -18,6 +18,15 @@ export interface LandcoverClass {
   fraction: number
 }
 
+export interface ElevationSummary {
+  minM: number
+  maxM: number
+  meanM: number
+  roughnessM: number
+  steepPercent: number
+  waterPercent: number
+}
+
 export interface ImpactSummary {
   population: number | null
   populationVintage: string | null
@@ -25,6 +34,7 @@ export interface ImpactSummary {
   facilitiesTotal: number | null
   truncated: boolean
   landcover: LandcoverClass[] | null
+  elevation: ElevationSummary | null
 }
 
 export const LANDCOVER_LABELS: Record<number, string> = {
@@ -51,17 +61,26 @@ function toDegrees(value: number): string {
   return value.toFixed(4)
 }
 
-/** Poligon kotak ring-km di sekitar titik (cukup untuk estimasi zonal cepat). */
-export function impactBoundingBoxPolygon(latitude: number, longitude: number, radiusKm: number): string {
+/** Bbox (derajat) ring-km di sekitar titik. */
+export function impactBoundingBox(latitude: number, longitude: number, radiusKm: number): {
+  minLon: string; minLat: string; maxLon: string; maxLat: string
+} {
   const dLat = radiusKm / 111.32
   // Floor cosine diterapkan SEBELUM pembagian agar benar-benar membatasi
   // span bujur di lintang tinggi (cos(80°) ≈ 0.17 < floor 0.2).
   const cosLat = Math.max(0.2, Math.cos((latitude * Math.PI) / 180))
   const dLon = radiusKm / (111.32 * cosLat)
-  const minLon = toDegrees(longitude - dLon)
-  const maxLon = toDegrees(longitude + dLon)
-  const minLat = toDegrees(latitude - dLat)
-  const maxLat = toDegrees(latitude + dLat)
+  return {
+    minLon: toDegrees(longitude - dLon),
+    maxLon: toDegrees(longitude + dLon),
+    minLat: toDegrees(latitude - dLat),
+    maxLat: toDegrees(latitude + dLat),
+  }
+}
+
+/** Poligon kotak ring-km di sekitar titik (cukup untuk estimasi zonal cepat). */
+export function impactBoundingBoxPolygon(latitude: number, longitude: number, radiusKm: number): string {
+  const { minLon, minLat, maxLon, maxLat } = impactBoundingBox(latitude, longitude, radiusKm)
   return `POLYGON((${minLon} ${minLat}, ${maxLon} ${minLat}, ${maxLon} ${maxLat}, ${minLon} ${maxLat}, ${minLon} ${minLat}))`
 }
 
@@ -73,10 +92,14 @@ export async function fetchImpactSummary(
   signal?: AbortSignal,
 ): Promise<ImpactSummary | null> {
   const polygon = encodeURIComponent(impactBoundingBoxPolygon(latitude, longitude, radiusKm))
-  const [populationResponse, facilitiesResponse, landcoverResponse] = await Promise.allSettled([
+  // Bbox elevasi = bbox ring yang sama (min/max dari poligon dampak).
+  const { minLon, minLat, maxLon, maxLat } = impactBoundingBox(latitude, longitude, radiusKm)
+  const elevationQuery = `min_lng=${minLon}&min_lat=${minLat}&max_lng=${maxLon}&max_lat=${maxLat}`
+  const [populationResponse, facilitiesResponse, landcoverResponse, elevationResponse] = await Promise.allSettled([
     fetch(`${API_BASE_URL}/spatial/population-summary?polygon=${polygon}`, { signal }),
     fetch(`${API_BASE_URL}/spatial/critical-facilities?lat=${latitude}&lon=${longitude}&radius_km=${radiusKm}`, { signal }),
     fetch(`${API_BASE_URL}/spatial/landcover-summary?polygon=${polygon}`, { signal }),
+    fetch(`${API_BASE_URL}/spatial/elevation-summary?${elevationQuery}`, { signal }),
   ])
 
   let population: number | null = null
@@ -122,8 +145,25 @@ export async function fetchImpactSummary(
     }
   }
 
-  if (population === null && facilities === null && landcover === null) return null
-  return { population, populationVintage, facilities, facilitiesTotal, truncated, landcover }
+  let elevation: ElevationSummary | null = null
+  if (elevationResponse.status === 'fulfilled' && elevationResponse.value.ok) {
+    const body = (await elevationResponse.value.json()) as {
+      data?: Partial<Record<'min_m' | 'max_m' | 'mean_m' | 'roughness_m' | 'steep_percent' | 'water_percent', number>>
+    }
+    if (typeof body.data?.min_m === 'number' && typeof body.data?.max_m === 'number') {
+      elevation = {
+        minM: body.data.min_m,
+        maxM: body.data.max_m,
+        meanM: body.data.mean_m ?? 0,
+        roughnessM: body.data.roughness_m ?? 0,
+        steepPercent: body.data.steep_percent ?? 0,
+        waterPercent: body.data.water_percent ?? 0,
+      }
+    }
+  }
+
+  if (population === null && facilities === null && landcover === null && elevation === null) return null
+  return { population, populationVintage, facilities, facilitiesTotal, truncated, landcover, elevation }
 }
 
 /** Hook: muat ringkasan dampak untuk koordinat event (sekali per koordinat). */

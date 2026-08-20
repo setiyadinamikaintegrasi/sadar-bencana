@@ -205,6 +205,8 @@ func main() {
 	spatial.GET("/critical-facilities", apihttp.CriticalFacilitiesSummary(dbPool))
 	// Sprint 5 S3: distribusi tutupan lahan (ESA WorldCover) untuk poligon.
 	spatial.GET("/landcover-summary", apihttp.SpatialLandcoverSummary(dbPool))
+	// Sprint 5 S4: ringkasan medan (elevasi) untuk bbox — AWS terrain tiles.
+	spatial.GET("/elevation-summary", apihttp.SpatialElevationSummary())
 	meMap := router.Group(
 		"/api/v1/me/map",
 		apihttp.OperationMapPrivateNoStore(),

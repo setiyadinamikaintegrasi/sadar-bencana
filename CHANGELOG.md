@@ -35,6 +35,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/).
   sampel kelas ~1km (4 juta titik) dengan endpoint
   /api/v1/spatial/landcover-summary dan baris "Tutupan lahan" di panel
   dampak (mis. kawasan terbangun 76% Jakarta, hutan 89% Kalimantan).
+- Sprint 5 S4: ringkasan medan dari AWS Terrain Tiles (SRTM) — endpoint
+  /api/v1/spatial/elevation-summary (min/max/mean, kekasaran, % terjal,
+  % perairan; statistik hanya atas daratan) dan baris "Medan" di panel
+  dampak (mis. Ruteng 0-1.288 m terjal; Jakarta datar).
 
 ### Security
 
