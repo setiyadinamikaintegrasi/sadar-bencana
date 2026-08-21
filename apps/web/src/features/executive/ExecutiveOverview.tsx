@@ -209,6 +209,9 @@ export default function ExecutiveOverview({
   const [newsLoading, setNewsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [minMagnitude, setMinMagnitude] = useState(0)
+  // Pencarian watchlist: filter tempat/sumber real-time (kritik user:
+  // 'gempa Peru sulit dicari' — harus pindah halaman utk menemukannya).
+  const [watchlistQuery, setWatchlistQuery] = useState('')
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [eventFocusRequest, setEventFocusRequest] = useState<OperationalMapFocusRequest | null>(null)
   const [activePerilFilter, setActivePerilFilter] = useState<PerilFilter>('all')
@@ -375,9 +378,15 @@ export default function ExecutiveOverview({
     setEventFocusRequest(null)
   }, [])
 
+  const normalizedQuery = watchlistQuery.trim().toLowerCase()
   const filteredEvents = useMemo(
-    () => events.filter((e) => e.magnitude >= minMagnitude),
-    [events, minMagnitude],
+    () => events.filter((e) => (
+      e.magnitude >= minMagnitude
+      && (normalizedQuery === ''
+        || (e.place ?? '').toLowerCase().includes(normalizedQuery)
+        || e.source.toLowerCase().includes(normalizedQuery))
+    )),
+    [events, minMagnitude, normalizedQuery],
   )
 
   // Export CSV watchlist (seluruh event terfilter, bukan hanya halaman aktif)
@@ -420,7 +429,7 @@ export default function ExecutiveOverview({
     () => filteredEvents.slice(safeWatchlistPage * WATCHLIST_PAGE_SIZE, (safeWatchlistPage + 1) * WATCHLIST_PAGE_SIZE),
     [filteredEvents, safeWatchlistPage],
   )
-  useEffect(() => { setWatchlistPage(0) }, [minMagnitude])
+  useEffect(() => { setWatchlistPage(0) }, [minMagnitude, normalizedQuery])
 
   const latestBmkgEarthquake = useMemo(() => {
     return events
@@ -1076,6 +1085,26 @@ export default function ExecutiveOverview({
               >
                 CSV ⭳
               </button>
+              <div className="relative">
+                <input
+                  type="search"
+                  value={watchlistQuery}
+                  onChange={(event) => setWatchlistQuery(event.target.value)}
+                  placeholder="Cari tempat / sumber… (mis. Peru, BMKG)"
+                  aria-label="Cari event di watchlist"
+                  className="w-48 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition placeholder:text-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400 md:w-60"
+                />
+                {watchlistQuery !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistQuery('')}
+                    aria-label="Hapus pencarian"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-1.5 text-xs text-slate-400 transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
               <button
                 type="button"
@@ -1114,10 +1143,27 @@ export default function ExecutiveOverview({
             </div>
           ) : filteredEvents.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-700 bg-slate-800/50 p-8 text-center">
-              <p className="text-sm font-medium text-slate-200">No events match this magnitude filter</p>
-              <p className="mt-2 text-sm text-slate-400">
-                Lower the minimum magnitude to show more watchlist events.
-              </p>
+              {normalizedQuery !== '' ? (
+                <>
+                  <p className="text-sm font-medium text-slate-200">
+                    Tidak ada event yang cocok dengan pencarian "{watchlistQuery}"
+                  </p>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Coba kata kunci lain (nama tempat atau sumber, mis. "Peru", "BMKG") atau{' '}
+                    <button type="button" onClick={() => setWatchlistQuery('')} className="text-indigo-300 underline-offset-2 hover:underline">
+                      hapus pencarian
+                    </button>
+                    .
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-slate-200">Tidak ada event yang cocok dengan filter magnitudo ini</p>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Turunkan magnitudo minimum untuk menampilkan lebih banyak event.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <>
