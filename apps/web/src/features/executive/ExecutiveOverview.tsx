@@ -416,7 +416,7 @@ export default function ExecutiveOverview({
 
   // Harden (critique P3): pagination watchlist — 40 baris/halaman, seluruh
   // event kini terjangkau; export CSV utk serah terima analisis.
-  const WATCHLIST_PAGE_SIZE = 40
+  const WATCHLIST_PAGE_SIZE = 10
   const [watchlistPage, setWatchlistPage] = useState(0)
   const watchlistPageCount = Math.max(1, Math.ceil(filteredEvents.length / WATCHLIST_PAGE_SIZE))
   const safeWatchlistPage = Math.min(watchlistPage, watchlistPageCount - 1)
