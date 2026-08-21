@@ -61,3 +61,27 @@ berfungsi nyata (sejak compose auth default `GOTRUE_MAILER_AUTOCONFIRM=false`).
   verifikasi via supabase-js).
 - Jangan menaruh SMTP_PASSWORD di repo — hanya di `.env` server.
 - Rate limit resend bawaan GoTrue aktif (mencegah spam email).
+
+## Template Email Ber-Brand
+
+Template HTML ber-brand tersedia di `infra/production/templates/email/`:
+`confirmation.html`, `invite.html`, `recovery.html`, `magiclink.html`.
+
+Aktifkan dengan mengisi env berikut (file lokal via mount, atau URL https):
+
+```env
+# Opsi A: file lokal (compose sudah mount ./templates/email -> /templates/email)
+GOTRUE_MAILER_TEMPLATES_CONFIRMATION=/templates/email/confirmation.html
+GOTRUE_MAILER_TEMPLATES_INVITE=/templates/email/invite.html
+GOTRUE_MAILER_TEMPLATES_RECOVERY=/templates/email/recovery.html
+GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=/templates/email/magiclink.html
+
+# Opsi B: URL publik (mis. host di web)
+# GOTRUE_MAILER_TEMPLATES_CONFIRMATION=https://sadarbencana.id/email-templates/confirmation.html
+```
+
+Lalu `docker compose -f docker-compose.auth.yml up -d --force-recreate gotrue`.
+
+Variabel GoTrue yang tersedia dalam template: `{{ .ConfirmationURL }}`, `{{ .Email }}`, `{{ .Token }}`, `{{ .SiteURL }}`.
+
+Subject email sudah di-set di compose: "Konfirmasi pendaftaran akun SadarBencana Anda", dll.

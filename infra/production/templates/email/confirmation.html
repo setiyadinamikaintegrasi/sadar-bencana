@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Konfirmasi Pendaftaran — SadarBencana</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+    <center>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;padding:24px 12px;">
+        <tr>
+          <td align="center">
+
+            <!-- Kartu utama -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(15,23,42,0.08);">
+
+              <!-- Header brand -->
+              <tr>
+                <td style="background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 60%,#312e81 100%);background-color:#0f172a;padding:32px 40px 28px;text-align:center;">
+                  <!-- Logo fallback teks bila gambar diblokir -->
+                  <div style="font-size:22px;font-weight:800;letter-spacing:0.02em;color:#ffffff;">
+                    Sadar<span style="color:#818cf8;">Bencana</span>
+                  </div>
+                  <div style="margin-top:6px;font-size:11px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;color:#94a3b8;">
+                    Pantau &middot; Pahami &middot; Siaga
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Body -->
+              <tr>
+                <td style="padding:36px 40px 8px;">
+                  <h1 style="margin:0 0 16px;font-size:20px;line-height:1.4;color:#0f172a;">
+                    Konfirmasi pendaftaran Anda
+                  </h1>
+                  <p style="margin:0 0 12px;font-size:14px;line-height:1.65;color:#334155;">
+                    Terima kasih telah mendaftar. Satu langkah lagi &mdash; konfirmasi alamat email Anda
+                    untuk mengaktifkan akun dan mulai memantau risiko bencana di Indonesia.
+                  </p>
+                  <p style="margin:0 0 28px;font-size:13px;line-height:1.6;color:#64748b;">
+                    Email ini ditujukan untuk <strong style="color:#334155;">{{ .Email }}</strong>.
+                    Bukan Anda? Abaikan email ini dengan aman.
+                  </p>
+
+                  <!-- CTA -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td align="center">
+                        <a href="{{ .ConfirmationURL }}"
+                           style="display:inline-block;background-color:#4f46e5;background-image:linear-gradient(135deg,#4f46e5,#6366f1);color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:14px 40px;border-radius:12px;box-shadow:0 2px 8px rgba(79,70,229,0.35);">
+                          Konfirmasi Email Saya
+                        </a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding-top:20px;">
+                        <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
+                          Tombol tidak berfungsi? Salin dan buka tautan ini di browser Anda:
+                          <br />
+                          <a href="{{ .ConfirmationURL }}" style="color:#6366f1;word-break:break-all;text-decoration:none;">{{ .ConfirmationURL }}</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+
+              <!-- Divider + info -->
+              <tr>
+                <td style="padding:28px 40px 8px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+                    <tr>
+                      <td style="padding:16px 20px;">
+                        <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6366f1;">
+                          Setelah akun aktif, Anda dapat:
+                        </p>
+                        <p style="margin:0;font-size:12.5px;line-height:1.7;color:#475569;">
+                          &#9679;&nbsp; Mengelola watch zone &amp; notifikasi Early Warning<br />
+                          &#9679;&nbsp; Menyimpan aset pribadi di peta risiko<br />
+                          &#9679;&nbsp; Mengakses Executive Briefing &amp; Analyst Copilot
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+
+              <!-- Footer -->
+              <tr>
+                <td style="padding:24px 40px 32px;">
+                  <p style="margin:0 0 8px;font-size:11.5px;line-height:1.6;color:#94a3b8;">
+                    Tautan ini berlaku terbatas dan hanya dapat digunakan sekali.
+                    Jika tautan kedaluwarsa, minta yang baru melalui halaman masuk
+                    (&quot;Tidak menerima email konfirmasi? Kirim ulang&quot;).
+                  </p>
+                  <p style="margin:0 0 16px;font-size:11.5px;line-height:1.6;color:#94a3b8;">
+                    Keputusan keselamatan harus mengacu pada
+                    <a href="https://www.bmkg.go.id/" style="color:#6366f1;text-decoration:none;">BMKG</a>,
+                    <a href="https://www.bnpb.go.id/" style="color:#6366f1;text-decoration:none;">BNPB</a>,
+                    PVMBG/Badan Geologi, dan pemerintah daerah.
+                  </p>
+                  <div style="border-top:1px solid #e2e8f0;padding-top:16px;text-align:center;">
+                    <p style="margin:0;font-size:11px;color:#cbd5e1;">
+                      &copy; 2026 SadarBencana &middot;
+                      <a href="https://sadarbencana.id" style="color:#94a3b8;text-decoration:none;">sadarbencana.id</a> &middot;
+                      <a href="https://github.com/setiyadinamikaintegrasi/sadar-bencana" style="color:#94a3b8;text-decoration:none;">GitHub</a>
+                    </p>
+                  </div>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Catatan di luar kartu -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
+              <tr>
+                <td style="padding-top:20px;text-align:center;">
+                  <p style="margin:0;font-size:10.5px;line-height:1.5;color:#94a3b8;">
+                    Email otomatis dari layanan SadarBencana &mdash; mohon tidak membalas email ini.
+                  </p>
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+      </table>
+    </center>
+  </body>
+</html>
