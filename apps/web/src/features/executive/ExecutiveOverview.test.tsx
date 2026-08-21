@@ -318,7 +318,7 @@ describe('ExecutiveOverview official warning navigation', () => {
     await screen.findByTestId('operational-map')
 
     // Initially expanded
-    expect(screen.getByText('Situational Awareness Dashboard')).toBeTruthy()
+    expect(screen.getByText('Dasbor Situasional')).toBeTruthy()
     const collapseButton = screen.getByRole('button', { name: /Ringkas/i })
     expect(collapseButton.getAttribute('aria-expanded')).toBe('true')
 
@@ -330,7 +330,7 @@ describe('ExecutiveOverview official warning navigation', () => {
 
     // Click expand
     fireEvent.click(screen.getByRole('button', { name: /Tampilkan Ringkasan/i }))
-    expect(screen.getByText('Situational Awareness Dashboard')).toBeTruthy()
+    expect(screen.getByText('Dasbor Situasional')).toBeTruthy()
     expect(screen.getByRole('button', { name: /Ringkas/i }).getAttribute('aria-expanded')).toBe('true')
     expect(window.localStorage.getItem('sadar_executive_header_collapsed')).toBe('false')
   })

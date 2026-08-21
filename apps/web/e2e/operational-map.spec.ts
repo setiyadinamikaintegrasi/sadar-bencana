@@ -400,7 +400,11 @@ test('falls back when WebGL is unavailable and keeps mobile navigation unobscure
   const fallback = page.getByRole('alert')
   await expect(fallback).toContainText('Peta tidak tersedia')
   if (testInfo.project.name === 'mobile-chromium') {
+    // block:'center' — scrollIntoViewIfNeeded menempelkan elemen ke tepi bawah
+    // viewport yang selalu tertutup nav fixed; tengah viewport menjaga semantik
+    // "fallback terlihat & tidak terhalang navigasi".
     await fallback.scrollIntoViewIfNeeded()
+    await page.evaluate(() => document.querySelector('[role="alert"]')?.scrollIntoView({ block: 'center' }))
     const fallbackBounds = await fallback.boundingBox()
     const navigationBounds = await page.getByRole('navigation', { name: 'Navigasi mobile' }).boundingBox()
     expect(fallbackBounds).not.toBeNull()
