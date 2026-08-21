@@ -17,6 +17,7 @@ import { MapTimeline } from '../map/MapTimeline'
 import { sourceQualifiedOperationalMapID, type PublicOperationalMapLayer } from '../map/types'
 import { getOperationalMapEngine } from '../../config/mapEngine'
 import { useAuth } from '../../lib/auth/AuthProvider'
+import { GITHUB_REPOSITORY_URL } from '../../navigation'
 import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
 import BmkgWarningsPanel from './BmkgWarningsPanel'
@@ -1273,6 +1274,58 @@ export default function ExecutiveOverview({
           onClearSelection={handleClearSelection}
         />
       </section>
+
+      {/* Footnote: atribusi sumber, disclaimer, dan tautan — penutup yang
+       * jujur sesuai rekomendasi critique (peak-end: halaman tak berakhir
+       * pada tabel mentah tanpa konteks). */}
+      <footer className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4 text-[11px] leading-relaxed text-slate-400 md:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 max-w-2xl space-y-1.5">
+            <p>
+              <span className="font-semibold text-slate-300">Sumber data resmi:</span>{' '}
+              <a href="https://www.bmkg.go.id/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">BMKG</a>
+              {' · '}
+              <a href="https://www.bnpb.go.id/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">BNPB</a>
+              {' · '}
+              <a href="https://magma.esdm.go.id/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">PVMBG / Badan Geologi</a>
+              {' · '}
+              <a href="https://petabencana.id/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">PetaBencana.id</a>
+              {' · '}
+              <a href="https://earthquake.usgs.gov/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">USGS</a>
+              {' · '}
+              <a href="https://globalvolcanism.org/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">Smithsonian GVP</a>
+              {' · '}
+              <a href="https://www.gdacs.org/" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline-offset-2 hover:text-indigo-200 hover:underline">GDACS</a>
+              .
+            </p>
+            <p className="text-slate-500">
+              Jendela data 72 jam (vulkanik 90 hari, banjir 365 hari) · feed peta terkurasi per jenis bencana ·
+              pembaruan otomatis tiap 60 detik. Windy merupakan visualisasi prakiraan pihak ketiga, bukan peringatan resmi.
+            </p>
+            <p className="text-slate-500">
+              Keputusan keselamatan harus mengacu pada BMKG, BNPB, PVMBG/Badan Geologi, dan pemerintah daerah.
+              SadarBencana adalah alat pemantauan, bukan lembaga peringatan dini.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col gap-1.5 lg:items-end">
+            <a
+              href={GITHUB_REPOSITORY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-slate-400 underline-offset-2 transition hover:text-slate-200 hover:underline"
+            >
+              Kode sumber terbuka (GitHub) ↗
+            </a>
+            <button
+              type="button"
+              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              className="rounded-lg border border-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-400 transition hover:border-indigo-400/50 hover:text-indigo-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+            >
+              ↑ Kembali ke atas
+            </button>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }
