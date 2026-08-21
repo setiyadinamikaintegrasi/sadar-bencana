@@ -44,6 +44,7 @@ type Config struct {
 	TrustedProxies            []string
 	SupabaseURL               string
 	SupabaseServiceRoleKey    string
+	AdminEmails               string
 }
 
 func Load() Config {
@@ -83,6 +84,7 @@ func Load() Config {
 		TrustedProxies:            getEnvList("TRUSTED_PROXIES"),
 		SupabaseURL:               getEnv("SUPABASE_URL", ""),
 		SupabaseServiceRoleKey:    getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		AdminEmails:               getEnv("ADMIN_EMAILS", ""),
 	}
 }
 
