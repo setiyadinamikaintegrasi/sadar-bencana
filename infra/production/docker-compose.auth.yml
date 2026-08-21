@@ -31,7 +31,11 @@ services:
       GOTRUE_JWT_AUD: authenticated
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
-      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-true}
+      # Konfirmasi email AKTIF secara default (akun harus dikonfirmasi via
+      # tautan email sebelum bisa masuk). Wajib mengisi SMTP_HOST dsb. di env
+      # server; bila SMTP belum siap, set GOTRUE_MAILER_AUTOCONFIRM=true
+      # sementara (akun langsung aktif — copy UI akan mengikuti otomatis).
+      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-false}
       GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
       GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
       GOTRUE_SMTP_USER: ${SMTP_USER:-}
