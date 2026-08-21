@@ -16,7 +16,10 @@
 .operational-map__fallback,
 .operational-map__legend,
 .operational-map__detail-sheet {
-  background: rgba(15, 23, 42, 0.55);
+  /* 0.72: opasitas kaca yang lebih pekat — kontras teks 10px di atas panel
+   * tetap >=4.5:1 bahkan di atas basemap paling terang (ukur pixel: 0.55
+   * hanya memberi 4.18:1 terburuk). Vibrancy tetap terasa via blur+saturate. */
+  background: rgba(15, 23, 42, 0.72);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -126,9 +129,10 @@
 
 .operational-map__layer-health {
   margin-left: auto;
-  /* slate-200: >=6:1 di atas panel legenda kaca (bg gelap semi-transparan)
-   * di semua kondisi basemap — slate-400 hanya 2.9:1 di area peta terang. */
-  color: #e2e8f0;
+  /* slate-100: pengukuran pixel menunjukkan slate-200 bisa turun ke 4.18:1
+   * saat panel kaca menumpuk basemap paling terang; slate-100 + panel yang
+   * lebih pekat (0.72) menjaga >=4.5:1 di semua kondisi basemap. */
+  color: #f1f5f9;
   font-size: 0.625rem;
 }
 
@@ -514,7 +518,10 @@
 
 /* --- Kontrol MapLibre senada (glass) --- */
 .operational-map .maplibregl-ctrl-group {
-  background: rgba(15, 23, 42, 0.55);
+  /* 0.72: opasitas kaca yang lebih pekat — kontras teks 10px di atas panel
+   * tetap >=4.5:1 bahkan di atas basemap paling terang (ukur pixel: 0.55
+   * hanya memberi 4.18:1 terburuk). Vibrancy tetap terasa via blur+saturate. */
+  background: rgba(15, 23, 42, 0.72);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.12);
