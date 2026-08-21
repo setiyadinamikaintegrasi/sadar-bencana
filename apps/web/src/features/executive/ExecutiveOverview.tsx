@@ -629,6 +629,7 @@ export default function ExecutiveOverview({
     return [
       {
         label: 'Event Aktif',
+        targetId: 'section-watchlist',
         value: eventsWindowTotal != null ? eventsWindowTotal.toString() : events.length.toString(),
         caption: eventsWindowTotal != null
           ? `Kejadian nyata 72 jam terakhir · ${events.length} ditampilkan di peta & watchlist (kurasi per jenis).`
@@ -636,11 +637,13 @@ export default function ExecutiveOverview({
       },
       {
         label: 'Magnitudo Maks',
+        targetId: 'section-watchlist',
         value: maxMagnitude,
         caption: 'Magnitudo terkuat pada himpunan event aktif.',
       },
       {
         label: 'Alert Terbuka',
+        targetId: 'section-bmkg-warnings',
         value: unacknowledgedAlerts.toString(),
         caption: 'Alert operasional belum diketahui yang menunggu tinjauan.',
       },
@@ -913,7 +916,8 @@ export default function ExecutiveOverview({
         </div>
       </section>
 
-      <BmkgWarningsPanel
+      <div id="section-bmkg-warnings">
+        <BmkgWarningsPanel
         weatherAlerts={bmkg.weatherAlerts}
         airQualityAlerts={bmkg.airQualityAlerts}
         observations={bmkg.observations}
@@ -924,21 +928,44 @@ export default function ExecutiveOverview({
         now={bmkg.now}
         onFocusAlert={handleFocusOfficialAlert}
         onRetry={reloadBmkg}
-      />
+        />
+      </div>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((item) => (
-          <article
-            key={item.label}
-            className="rounded-2xl border border-slate-800 bg-slate-900/85 px-4 py-3 shadow-xl shadow-slate-950/30"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
-              <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
-            </div>
-            <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
-          </article>
-        ))}
+        {kpis.map((item) => {
+          const interactive = Boolean(item.targetId)
+          return (
+            <article
+              key={item.label}
+              className={`rounded-2xl border border-slate-800 bg-slate-900/85 px-4 py-3 shadow-xl shadow-slate-950/30 ${
+                interactive ? 'cursor-pointer transition hover:border-indigo-400/50 hover:bg-slate-800/85' : ''
+              }`}
+            >
+              {interactive ? (
+                <button
+                  type="button"
+                  onClick={() => document.getElementById(item.targetId!)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded-2xl"
+                  aria-label={`Lihat detail ${item.label}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
+                  </div>
+                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
+                </button>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
+                  </div>
+                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
+                </>
+              )}
+            </article>
+          )
+        })}
       </section>
 
       <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -1087,7 +1114,7 @@ export default function ExecutiveOverview({
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h3 className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
+            <h3 id="section-watchlist" className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               {filteredEvents.length > WATCHLIST_PAGE_SIZE && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-400" role="group" aria-label="Navigasi halaman watchlist">
