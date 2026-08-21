@@ -384,10 +384,47 @@ export default function ExecutiveOverview({
     [events, minMagnitude],
   )
 
+  // Export CSV watchlist (seluruh event terfilter, bukan hanya halaman aktif)
+  // — RFC 4180: escape kutip & koma, CRLF line ending utk Excel.
+  const handleExportWatchlistCsv = useCallback(() => {
+    const escapeCsv = (value: string | number | null | undefined): string => {
+      const text = value == null ? '' : String(value)
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    }
+    const header = ['Waktu (WIB)', 'Kejadian', 'Tingkat', 'Magnitudo', 'Sumber', 'Latitude', 'Longitude']
+    const rows = filteredEvents.map((event) => [
+      formatDateTime(event.event_time),
+      event.place,
+      severityFor(event.magnitude),
+      event.magnitude.toString(),
+      event.source,
+      event.latitude.toFixed(4),
+      event.longitude.toFixed(4),
+    ])
+    const csv = [header, ...rows]
+      .map((row) => row.map(escapeCsv).join(','))
+      .join('\r\n')
+    const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `watchlist-sadarbencana-${new Date().toISOString().slice(0, 10)}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }, [filteredEvents])
+
+
+  // Harden (critique P3): pagination watchlist — 40 baris/halaman, seluruh
+  // event kini terjangkau; export CSV utk serah terima analisis.
+  const WATCHLIST_PAGE_SIZE = 10
+  const [watchlistPage, setWatchlistPage] = useState(0)
+  const watchlistPageCount = Math.max(1, Math.ceil(filteredEvents.length / WATCHLIST_PAGE_SIZE))
+  const safeWatchlistPage = Math.min(watchlistPage, watchlistPageCount - 1)
   const visibleWatchlistEvents = useMemo(
-    () => filteredEvents.slice(0, 40),
-    [filteredEvents],
+    () => filteredEvents.slice(safeWatchlistPage * WATCHLIST_PAGE_SIZE, (safeWatchlistPage + 1) * WATCHLIST_PAGE_SIZE),
+    [filteredEvents, safeWatchlistPage],
   )
+  useEffect(() => { setWatchlistPage(0) }, [minMagnitude])
 
   const latestBmkgEarthquake = useMemo(() => {
     return events
@@ -1079,11 +1116,41 @@ export default function ExecutiveOverview({
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <h3 id="section-watchlist" className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {filteredEvents.length > visibleWatchlistEvents.length && (
-                <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-400">
-                  Menampilkan {visibleWatchlistEvents.length} teratas dari {filteredEvents.length}
-                </span>
+              {filteredEvents.length > WATCHLIST_PAGE_SIZE && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-400" role="group" aria-label="Navigasi halaman watchlist">
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistPage((p) => Math.max(0, p - 1))}
+                    disabled={safeWatchlistPage === 0}
+                    aria-label="Halaman sebelumnya"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  >
+                    ‹
+                  </button>
+                  <span className="px-1 tabular-nums">
+                    {safeWatchlistPage + 1}/{watchlistPageCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistPage((p) => Math.min(watchlistPageCount - 1, p + 1))}
+                    disabled={safeWatchlistPage >= watchlistPageCount - 1}
+                    aria-label="Halaman berikutnya"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  >
+                    ›
+                  </button>
+                  <span className="ml-1 hidden text-slate-500 sm:inline">{filteredEvents.length} event</span>
+                </div>
               )}
+              <button
+                type="button"
+                onClick={handleExportWatchlistCsv}
+                disabled={filteredEvents.length === 0}
+                aria-label="Ekspor watchlist sebagai CSV"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+              >
+                CSV ⭳
+              </button>
               <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
               <button
                 type="button"
