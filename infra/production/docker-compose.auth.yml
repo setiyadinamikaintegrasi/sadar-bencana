@@ -41,6 +41,16 @@ services:
       GOTRUE_SMTP_USER: ${SMTP_USER:-}
       GOTRUE_SMTP_PASS: ${SMTP_PASSWORD:-}
       GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM:-noreply@sadarbencana.id}
+      # Template email ber-brand (GoTrue render Go template dgn {{ .ConfirmationURL }}, {{ .Email }}).
+      # URL bisa file lokal dlm container (mount) atau https; pakai env agar fleksibel.
+      GOTRUE_MAILER_TEMPLATES_CONFIRMATION: ${GOTRUE_MAILER_TEMPLATES_CONFIRMATION:-}
+      GOTRUE_MAILER_TEMPLATES_INVITE: ${GOTRUE_MAILER_TEMPLATES_INVITE:-}
+      GOTRUE_MAILER_TEMPLATES_RECOVERY: ${GOTRUE_MAILER_TEMPLATES_RECOVERY:-}
+      GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: ${GOTRUE_MAILER_TEMPLATES_MAGIC_LINK:-}
+      GOTRUE_MAILER_SUBJECTS_CONFIRMATION: "Konfirmasi pendaftaran akun SadarBencana Anda"
+      GOTRUE_MAILER_SUBJECTS_INVITE: "Anda diundang ke SadarBencana"
+      GOTRUE_MAILER_SUBJECTS_RECOVERY: "Atur ulang kata sandi SadarBencana Anda"
+      GOTRUE_MAILER_SUBJECTS_MAGIC_LINK: "Tautan masuk SadarBencana Anda"
       GOTRUE_MAILER_URLPATHS_INVITE: /verify
       GOTRUE_MAILER_URLPATHS_CONFIRMATION: /verify
       GOTRUE_MAILER_URLPATHS_RECOVERY: /verify
@@ -49,6 +59,9 @@ services:
       GOTRUE_PASSWORD_MIN_LENGTH: "8"
       GOTRUE_LOG_LEVEL: warn
       GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}
+    # Mount template email ber-brand (bila pakai file lokal; alternatif: URL https via env).
+    volumes:
+      - ./templates/email:/templates/email:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
