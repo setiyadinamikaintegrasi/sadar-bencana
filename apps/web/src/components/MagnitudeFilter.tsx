@@ -4,7 +4,7 @@ export interface MagnitudeFilterProps {
 }
 
 const options = [
-  { label: 'All', value: 0 },
+  { label: 'Semua', value: 0 },
   { label: 'M3+', value: 3 },
   { label: 'M4+', value: 4 },
   { label: 'M5+', value: 5 },
@@ -15,7 +15,7 @@ export default function MagnitudeFilter({ value, onChange }: MagnitudeFilterProp
   return (
     <label className="inline-flex items-center gap-3 text-sm text-slate-300">
       <span className="text-xs font-medium text-slate-400">
-        Min Magnitude
+        Magnitudo min.
       </span>
       <select
         value={value}

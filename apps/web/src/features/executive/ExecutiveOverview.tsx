@@ -598,21 +598,21 @@ export default function ExecutiveOverview({
           : 'Kejadian bencana yang saat ini dimuat monitor.',
       },
       {
-        label: 'Max Magnitude',
+        label: 'Magnitudo Maks',
         value: maxMagnitude,
         caption: 'Magnitudo terkuat pada himpunan event aktif.',
       },
       {
-        label: 'Open Alerts',
+        label: 'Alert Terbuka',
         value: unacknowledgedAlerts.toString(),
-        caption: 'Unacknowledged operational alerts needing review.',
+        caption: 'Alert operasional belum diketahui yang menunggu tinjauan.',
       },
       {
-        label: 'API Status',
-        value: meta ? 'Connected' : 'Offline',
+        label: 'Status API',
+        value: meta ? 'Terhubung' : 'Offline',
         caption: meta
           ? `${meta.service} · ${meta.environment} · v${meta.version} · ${topSource}`
-          : 'Backend unreachable. Check that the API service is running.',
+          : 'Backend tidak terjangkau. Pastikan layanan API berjalan.',
       },
     ]
   }, [events, eventsWindowTotal, meta, unacknowledgedAlerts])
@@ -635,7 +635,7 @@ export default function ExecutiveOverview({
             <span className="font-semibold text-slate-200">Situational Awareness</span>
             {topRiskScore?.place && (
               <span className="hidden text-slate-400 md:inline">
-                · Top risk: <strong className="font-medium text-rose-300">{topRiskScore.place} (M{topRiskScore.magnitude ?? '—'})</strong>
+                · Risiko teratas: <strong className="font-medium text-rose-300">{topRiskScore.place} (M{topRiskScore.magnitude ?? '—'})</strong>
               </span>
             )}
             <span className="hidden rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400 sm:inline">
@@ -688,7 +688,7 @@ export default function ExecutiveOverview({
             <div className="flex shrink-0 items-center gap-2">
               <div className="hidden shrink-0 items-stretch gap-2 sm:flex">
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Top Risk</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Risiko Teratas</p>
                   <p className="text-lg font-bold leading-tight text-rose-300">{topRiskScore?.score ?? '—'}</p>
                 </div>
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
@@ -696,7 +696,7 @@ export default function ExecutiveOverview({
                   <p className="text-lg font-bold leading-tight text-emerald-300">{news.length}</p>
                 </div>
                 <div className="rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-center">
-                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Sources OK</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Sumber OK</p>
                   <p className="text-lg font-bold leading-tight text-indigo-300">{connectorSummary.ok}</p>
                 </div>
               </div>
@@ -1054,7 +1054,7 @@ export default function ExecutiveOverview({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               {filteredEvents.length > visibleWatchlistEvents.length && (
                 <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-400">
-                  Showing top {visibleWatchlistEvents.length} of {filteredEvents.length}
+                  Menampilkan {visibleWatchlistEvents.length} teratas dari {filteredEvents.length}
                 </span>
               )}
               <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
@@ -1064,7 +1064,7 @@ export default function ExecutiveOverview({
                 disabled={loading || refreshing}
                 className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {refreshing ? 'Refreshing…' : 'Refresh'}
+                {refreshing ? 'Menyegarkan…' : 'Segarkan'}
               </button>
             </div>
           </div>
@@ -1106,10 +1106,10 @@ export default function ExecutiveOverview({
                 <table className="min-w-full divide-y divide-slate-800 text-left text-sm">
                   <thead>
                     <tr className="text-slate-400">
-                      <th className="pb-3 pr-6 font-medium">Event</th>
-                      <th className="pb-3 pr-6 font-medium">Severity</th>
-                      <th className="pb-3 pr-6 font-medium">Source</th>
-                      <th className="pb-3 font-medium">Time</th>
+                      <th className="pb-3 pr-6 font-medium">Kejadian</th>
+                      <th className="pb-3 pr-6 font-medium">Tingkat</th>
+                      <th className="pb-3 pr-6 font-medium">Sumber</th>
+                      <th className="pb-3 font-medium">Waktu</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800">
@@ -1122,7 +1122,7 @@ export default function ExecutiveOverview({
                           tabIndex={0}
                           role="button"
                           aria-pressed={isSelected}
-                          aria-label={`${row.place}, severity ${severity}, sumber ${row.source}`}
+                          aria-label={`${row.place}, tingkat ${severity}, sumber ${row.source}`}
                           className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 focus-visible:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                             isSelected ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-400/20' : ''
                           }`}
@@ -1146,7 +1146,7 @@ export default function ExecutiveOverview({
                             <SourceBadge source={row.source} timestamp={row.created_at} />
                           </td>
                           <td className="py-4 pr-6 text-slate-400">
-                            {new Date(row.event_time).toLocaleString()}
+                            {formatDateTime(row.event_time)} WIB
                           </td>
                         </tr>
                       )
@@ -1165,7 +1165,7 @@ export default function ExecutiveOverview({
                       tabIndex={0}
                       role="button"
                       aria-pressed={isSelected}
-                      aria-label={`${row.place}, severity ${severity}, sumber ${row.source}`}
+                      aria-label={`${row.place}, tingkat ${severity}, sumber ${row.source}`}
                       className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                         isSelected ? 'ring-1 ring-indigo-400/40' : ''
                       }`}
@@ -1188,7 +1188,7 @@ export default function ExecutiveOverview({
                       <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-700 pt-3">
                         <SourceBadge source={row.source} timestamp={row.created_at} />
                         <span className="text-xs text-slate-400">
-                          {new Date(row.event_time).toLocaleString()}
+                          {formatDateTime(row.event_time)} WIB
                         </span>
                       </div>
                     </article>
