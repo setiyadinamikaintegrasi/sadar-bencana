@@ -21,7 +21,7 @@ services:
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: "9999"
-      API_EXTERNAL_URL: ${GOTRUE_API_EXTERNAL_URL:-http://127.0.0.1:9999}
+      API_EXTERNAL_URL: ${GOTRUE_API_EXTERNAL_URL:-https://auth.sadarbencana.id}
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: ${GOTRUE_DB_URL:?Set GOTRUE_DB_URL}
       GOTRUE_SITE_URL: ${GOTRUE_SITE_URL:-https://sadarbencana.id}
