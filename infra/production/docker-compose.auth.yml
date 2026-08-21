@@ -11,7 +11,7 @@ networks:
 
 services:
   gotrue:
-    image: supabase/gotrue:v2.181.0
+    image: supabase/gotrue:v2.196.0
     container_name: sadar-gotrue
     restart: unless-stopped
     ports:
