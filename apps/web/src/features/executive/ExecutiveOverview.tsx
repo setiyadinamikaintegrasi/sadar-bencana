@@ -147,11 +147,6 @@ function toneClasses(tone: IntelligenceMoment['tone']): string {
   return map[tone]
 }
 
-function connectorStatusClass(status: ConnectorHealth['status']): string {
-  if (status === 'ok') return 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30'
-  if (status === 'stale') return 'bg-amber-500/15 text-amber-300 ring-amber-400/30'
-  return 'bg-rose-500/15 text-rose-300 ring-rose-400/30'
-}
 
 function overlayGeometry(overlay: MapOverlay): GeoJSON.Geometry | undefined {
   if (overlay.geometry) return overlay.geometry as GeoJSON.Geometry
@@ -569,18 +564,7 @@ export default function ExecutiveOverview({
     return { ok, stale, error: errorCount }
   }, [connectors])
 
-  const perilDistribution = useMemo(() => {
-    const counts = new Map<string, number>()
-    events.forEach((event) => {
-      const key = (event.event_type || 'unknown').toLowerCase()
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    })
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-  }, [events])
-
-  const intelligenceMoments = useMemo<IntelligenceMoment[]>(() => {
+    const intelligenceMoments = useMemo<IntelligenceMoment[]>(() => {
     const eventMoments = events.map((event) => {
       const severity = severityFor(event.magnitude)
       return {
@@ -1023,66 +1007,6 @@ export default function ExecutiveOverview({
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-        <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-50">Source Health Matrix</h3>
-            <span className="text-xs text-slate-400">
-              OK {connectorSummary.ok} · Stale {connectorSummary.stale} · Error {connectorSummary.error}
-            </span>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {connectors.slice(0, 8).map((connector) => (
-              <div key={connector.name} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-200">{connector.name}</p>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${connectorStatusClass(connector.status)}`}
-                  >
-                    {connector.status.toUpperCase()}
-                  </span>
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  {connector.items_fetched} items · {formatRelativeTime(connector.last_polled_at)}
-                </p>
-              </div>
-            ))}
-            {connectors.length === 0 && (
-              <div className="col-span-full rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">
-                Health connector belum tersedia.
-              </div>
-            )}
-          </div>
-        </article>
-
-        <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-50">Peril & Transmission Snapshot</h3>
-            <span className="text-xs text-slate-500">event distribution</span>
-          </div>
-          <div className="space-y-3">
-            {perilDistribution.map(([peril, count]) => {
-              const percent = events.length > 0 ? Math.round((count / events.length) * 100) : 0
-              return (
-                <div key={peril}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="font-medium text-slate-300">{perilLabels[peril] ?? peril}</span>
-                    <span className="text-slate-500">{count} events · {percent}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-emerald-400" style={{ width: `${percent}%` }} />
-                  </div>
-                </div>
-              )
-            })}
-            {perilDistribution.length === 0 && (
-              <div className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">
-                Belum ada distribusi peril.
-              </div>
-            )}
-          </div>
-        </article>
-      </section>
 
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
