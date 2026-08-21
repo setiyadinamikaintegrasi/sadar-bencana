@@ -12,6 +12,7 @@ import {
   Siren,
   Sparkles,
   Settings,
+  UserCog,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -30,6 +31,7 @@ export type Section =
   | 'Sumber Resmi'
   | 'Admin EWS'
   | 'Admin Evakuasi'
+  | 'Admin Pengguna'
   | 'Teknologi & Lisensi'
 
 export type NavigationItem = {
@@ -78,6 +80,7 @@ export const SECONDARY_NAV_GROUPS = [
       { section: 'Sumber Resmi', desktopLabel: 'Sumber Resmi', mobileLabel: 'Sumber Resmi', icon: Settings },
       { section: 'Admin EWS', desktopLabel: 'Admin EWS', mobileLabel: 'Admin EWS', icon: Radio },
       { section: 'Admin Evakuasi', desktopLabel: 'Admin Evakuasi', mobileLabel: 'Admin Evakuasi', icon: MapPinned },
+      { section: 'Admin Pengguna', desktopLabel: 'Admin Pengguna', mobileLabel: 'Pengguna', icon: UserCog },
       { section: 'Teknologi & Lisensi', desktopLabel: 'Teknologi & Lisensi', mobileLabel: 'Teknologi & Lisensi', icon: Info },
     ],
   },

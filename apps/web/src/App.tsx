@@ -12,6 +12,7 @@ import EwsPage from './features/ews/EwsPage'
 import RegionalHistoryPage from './features/history/RegionalHistoryPage'
 import OfficialSourcesSettingsPage from './features/settings/OfficialSourcesSettingsPage'
 import EwsAdminSettingsPage from './features/settings/EwsAdminSettingsPage'
+import AdminUsersPage from './features/settings/AdminUsersPage'
 import EvacuationPage from './features/evacuation/EvacuationPage'
 import EvacuationAdminPage from './features/evacuation/EvacuationAdminPage'
 import LearningPage from './features/learning/LearningPage'
@@ -186,6 +187,8 @@ function App() {
             <EwsAdminSettingsPage />
           ) : activeSection === 'Admin Evakuasi' ? (
             <EvacuationAdminPage />
+          ) : activeSection === 'Admin Pengguna' ? (
+            <AdminUsersPage />
           ) : activeSection === 'Teknologi & Lisensi' ? (
             <TechnologyAttributionPage />
           ) : (
