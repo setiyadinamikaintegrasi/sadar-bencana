@@ -209,6 +209,9 @@ export default function ExecutiveOverview({
   const [newsLoading, setNewsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [minMagnitude, setMinMagnitude] = useState(0)
+  // Pencarian watchlist: filter tempat/sumber real-time (kritik user:
+  // 'gempa Peru sulit dicari' — harus pindah halaman utk menemukannya).
+  const [watchlistQuery, setWatchlistQuery] = useState('')
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null)
   const [eventFocusRequest, setEventFocusRequest] = useState<OperationalMapFocusRequest | null>(null)
   const [activePerilFilter, setActivePerilFilter] = useState<PerilFilter>('all')
@@ -375,9 +378,15 @@ export default function ExecutiveOverview({
     setEventFocusRequest(null)
   }, [])
 
+  const normalizedQuery = watchlistQuery.trim().toLowerCase()
   const filteredEvents = useMemo(
-    () => events.filter((e) => e.magnitude >= minMagnitude),
-    [events, minMagnitude],
+    () => events.filter((e) => (
+      e.magnitude >= minMagnitude
+      && (normalizedQuery === ''
+        || (e.place ?? '').toLowerCase().includes(normalizedQuery)
+        || e.source.toLowerCase().includes(normalizedQuery))
+    )),
+    [events, minMagnitude, normalizedQuery],
   )
 
   // Export CSV watchlist (seluruh event terfilter, bukan hanya halaman aktif)
@@ -420,7 +429,7 @@ export default function ExecutiveOverview({
     () => filteredEvents.slice(safeWatchlistPage * WATCHLIST_PAGE_SIZE, (safeWatchlistPage + 1) * WATCHLIST_PAGE_SIZE),
     [filteredEvents, safeWatchlistPage],
   )
-  useEffect(() => { setWatchlistPage(0) }, [minMagnitude])
+  useEffect(() => { setWatchlistPage(0) }, [minMagnitude, normalizedQuery])
 
   // Gempa signifikan GLOBAL: M>=6.0 di luar wilayah Indonesia ( bounding
   // box rough Indonesia ) — event seperti Peru M6.7 nyaris tak tersasar
@@ -1109,9 +1118,35 @@ export default function ExecutiveOverview({
 
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
-          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h3 id="section-watchlist" className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="mb-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 id="section-watchlist" className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
+              <span className="text-xs text-slate-500">
+                {filteredEvents.length} event{normalizedQuery !== '' ? ` · pencarian "${watchlistQuery}"` : ''}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1 sm:max-w-xs">
+                <input
+                  type="search"
+                  value={watchlistQuery}
+                  onChange={(event) => setWatchlistQuery(event.target.value)}
+                  placeholder="Cari tempat / sumber… (mis. Peru, BMKG)"
+                  aria-label="Cari event di watchlist"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition placeholder:text-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400"
+                />
+                {watchlistQuery !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistQuery('')}
+                    aria-label="Hapus pencarian"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-1.5 text-xs text-slate-400 transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
               {filteredEvents.length > WATCHLIST_PAGE_SIZE && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-400" role="group" aria-label="Navigasi halaman watchlist">
                   <button
@@ -1123,7 +1158,7 @@ export default function ExecutiveOverview({
                   >
                     ‹
                   </button>
-                  <span className="px-1 tabular-nums">
+                  <span className="px-1 tabular-nums" aria-live="polite">
                     {safeWatchlistPage + 1}/{watchlistPageCount}
                   </span>
                   <button
@@ -1135,7 +1170,6 @@ export default function ExecutiveOverview({
                   >
                     ›
                   </button>
-                  <span className="ml-1 hidden text-slate-500 sm:inline">{filteredEvents.length} event</span>
                 </div>
               )}
               <button
@@ -1147,12 +1181,11 @@ export default function ExecutiveOverview({
               >
                 CSV ⭳
               </button>
-              <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
               <button
                 type="button"
                 onClick={handleRefresh}
                 disabled={loading || refreshing}
-                className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
               >
                 {refreshing ? 'Menyegarkan…' : 'Segarkan'}
               </button>
@@ -1185,10 +1218,27 @@ export default function ExecutiveOverview({
             </div>
           ) : filteredEvents.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-700 bg-slate-800/50 p-8 text-center">
-              <p className="text-sm font-medium text-slate-200">No events match this magnitude filter</p>
-              <p className="mt-2 text-sm text-slate-400">
-                Lower the minimum magnitude to show more watchlist events.
-              </p>
+              {normalizedQuery !== '' ? (
+                <>
+                  <p className="text-sm font-medium text-slate-200">
+                    Tidak ada event yang cocok dengan pencarian "{watchlistQuery}"
+                  </p>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Coba kata kunci lain (nama tempat atau sumber, mis. "Peru", "BMKG") atau{' '}
+                    <button type="button" onClick={() => setWatchlistQuery('')} className="text-indigo-300 underline-offset-2 hover:underline">
+                      hapus pencarian
+                    </button>
+                    .
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-slate-200">Tidak ada event yang cocok dengan filter magnitudo ini</p>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Turunkan magnitudo minimum untuk menampilkan lebih banyak event.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <>
