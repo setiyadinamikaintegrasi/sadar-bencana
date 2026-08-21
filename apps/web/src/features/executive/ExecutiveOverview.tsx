@@ -431,6 +431,30 @@ export default function ExecutiveOverview({
   )
   useEffect(() => { setWatchlistPage(0) }, [minMagnitude, normalizedQuery])
 
+  // Gempa signifikan GLOBAL: M>=6.0 di luar wilayah Indonesia ( bounding
+  // box rough Indonesia ) — event seperti Peru M6.7 nyaris tak tersasar
+  // karena peta default Indonesia & tanpa notice. Kritik user: sulit ditemukan.
+  const INDONESIA_BBOX = { minLat: -12, maxLat: 8, minLng: 94, maxLng: 142 }
+  const significantGlobalEvents = useMemo(() => {
+    return events
+      .filter((event) => {
+        const eventType = event.event_type.toLowerCase()
+        const isQuake = eventType.includes('earthquake') || eventType.includes('quake')
+        const outsideIndonesia = event.latitude < INDONESIA_BBOX.minLat
+          || event.latitude > INDONESIA_BBOX.maxLat
+          || event.longitude < INDONESIA_BBOX.minLng
+          || event.longitude > INDONESIA_BBOX.maxLng
+        return isQuake && event.magnitude >= 6 && outsideIndonesia
+      })
+      .sort((left, right) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
+      .slice(0, 3)
+  }, [events])
+
+  const handleFocusGlobalEvent = useCallback((event: Event) => {
+    setActivePerilFilter('earthquake')
+    handleEventClick(event)
+  }, [handleEventClick])
+
   const latestBmkgEarthquake = useMemo(() => {
     return events
       .filter((event) => {
@@ -848,6 +872,53 @@ export default function ExecutiveOverview({
               />
             )}
           </>
+        )}
+
+        {/* Gempa Signifikan Global: M>=6.0 di luar Indonesia — notice proaktif
+         * agar event seperti Peru M6.7 tidak tenggelam (kritik user). */}
+        {significantGlobalEvents.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-2xl border border-rose-400/25 bg-gradient-to-r from-rose-500/10 via-slate-950/80 to-slate-950/80">
+            <div className="flex flex-col gap-3 p-4">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-rose-200">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" aria-hidden="true" />
+                  Gempa Signifikan Global
+                </span>
+                <p className="text-xs text-slate-400">M ≥ 6,0 di luar wilayah Indonesia · 72 jam terakhir · sumber USGS/GDACS</p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-3">
+                {significantGlobalEvents.map((event) => (
+                  <button
+                    key={event.id}
+                    type="button"
+                    onClick={() => handleFocusGlobalEvent(event)}
+                    aria-label={`Fokuskan gempa ${event.magnitude} ${event.place} di peta`}
+                    className="group rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-rose-400/50 hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`flex h-9 w-12 shrink-0 flex-col items-center justify-center rounded-lg border text-[10px] font-bold leading-none ${
+                        event.magnitude >= 7
+                          ? 'severity-blink severity-blink--critical border-rose-300/40 bg-rose-500/20 text-rose-100'
+                          : 'border-orange-300/30 bg-orange-500/15 text-orange-100'
+                      }`}>
+                        <span className="text-[8px] font-semibold uppercase tracking-wide opacity-70">Mag</span>
+                        <span className="text-sm font-black">{event.magnitude.toFixed(1)}</span>
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-100" title={event.place}>{event.place}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          {formatRelativeTime(event.event_time)} · {formatDateTime(event.event_time)} WIB · sumber {event.source.toUpperCase()}
+                        </p>
+                      </span>
+                    </div>
+                    <p className="mt-2 text-[11px] font-medium text-rose-300/80 opacity-0 transition group-hover:opacity-100">
+                      Fokuskan di peta →
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
 
         <div className="mt-4 overflow-hidden rounded-2xl border border-orange-400/20 bg-gradient-to-r from-orange-500/10 via-slate-950/80 to-slate-950/80">
