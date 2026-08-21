@@ -6,7 +6,7 @@ interface AuthContextValue {
   session: Session | null
   loading: boolean
   signIn: (email: string, password: string, captchaToken?: string) => Promise<{ error: string | null }>
-  signUp: (email: string, password: string, captchaToken?: string) => Promise<{ error: string | null }>
+  signUp: (email: string, password: string, captchaToken?: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>
   resendConfirmation: (email: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
 }
@@ -35,12 +35,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null }
   }
   const signUp = async (email: string, password: string, captchaToken?: string) => {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo: window.location.origin, ...(captchaToken ? { captchaToken } : {}) },
     })
-    return { error: error?.message ?? null }
+    // autoconfirm aktif (atau sesi langsung) -> session terisi; sebaliknya
+    // user wajib konfirmasi email -> session null, needsConfirmation true.
+    const needsConfirmation = !error && !data.session
+    return { error: error?.message ?? null, needsConfirmation }
   }
   const resendConfirmation = async (email: string) => {
     const { error } = await supabase.auth.resend({ type: 'signup', email })

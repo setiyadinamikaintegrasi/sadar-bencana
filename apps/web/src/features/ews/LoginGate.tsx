@@ -29,15 +29,20 @@ export default function LoginGate({
     setBusy(true)
     setMsg(null)
     const fn = mode === 'in' ? signIn : signUp
-    const { error } = await fn(email.trim(), password, captchaToken ?? undefined)
+    const result = await fn(email.trim(), password, captchaToken ?? undefined)
+    const { error } = result
     setBusy(false)
     // Token Turnstile sekali pakai — reset widget setelah setiap percobaan (sukses maupun gagal).
     turnstileRef.current?.reset()
     setCaptchaToken(null)
     if (error) setMsg(error)
     else if (mode === 'up') {
-      setConfirmationPending(true)
-      setMsg('Pendaftaran berhasil. Cek email Anda untuk tautan konfirmasi — akun harus dikonfirmasi sebelum bisa masuk.')
+      if ('needsConfirmation' in result && result.needsConfirmation === true) {
+        setConfirmationPending(true)
+        setMsg('Pendaftaran berhasil. Cek email Anda untuk tautan konfirmasi — akun harus dikonfirmasi sebelum bisa masuk.')
+      } else {
+        setMsg('Pendaftaran berhasil — akun Anda langsung aktif. Silakan masuk.')
+      }
     }
   }
 
