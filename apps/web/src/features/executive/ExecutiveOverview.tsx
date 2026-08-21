@@ -874,108 +874,103 @@ export default function ExecutiveOverview({
           </>
         )}
 
-        {/* Gempa Signifikan Global: M>=6.0 di luar Indonesia — notice proaktif
-         * agar event seperti Peru M6.7 tidak tenggelam (kritik user). */}
-        {significantGlobalEvents.length > 0 && (
-          <div className="mt-4 overflow-hidden rounded-2xl border border-rose-400/25 bg-gradient-to-r from-rose-500/10 via-slate-950/80 to-slate-950/80">
-            <div className="flex flex-col gap-3 p-4">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-rose-200">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" aria-hidden="true" />
-                  Gempa Signifikan Global
-                </span>
-                <p className="text-xs text-slate-400">M ≥ 6,0 di luar wilayah Indonesia · 72 jam terakhir · sumber USGS/GDACS</p>
-              </div>
-              <div className="grid gap-2 md:grid-cols-3">
-                {significantGlobalEvents.map((event) => (
-                  <button
-                    key={event.id}
-                    type="button"
-                    onClick={() => handleFocusGlobalEvent(event)}
-                    aria-label={`Fokuskan gempa ${event.magnitude} ${event.place} di peta`}
-                    className="group rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-rose-400/50 hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`flex h-9 w-12 shrink-0 flex-col items-center justify-center rounded-lg border text-[10px] font-bold leading-none ${
-                        event.magnitude >= 7
-                          ? 'severity-blink severity-blink--critical border-rose-300/40 bg-rose-500/20 text-rose-100'
-                          : 'border-orange-300/30 bg-orange-500/15 text-orange-100'
-                      }`}>
-                        <span className="text-[8px] font-semibold uppercase tracking-wide opacity-70">Mag</span>
-                        <span className="text-sm font-black">{event.magnitude.toFixed(1)}</span>
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-slate-100" title={event.place}>{event.place}</p>
-                        <p className="mt-0.5 text-[11px] text-slate-500">
-                          {formatRelativeTime(event.event_time)} · {formatDateTime(event.event_time)} WIB · sumber {event.source.toUpperCase()}
-                        </p>
-                      </span>
-                    </div>
-                    <p className="mt-2 text-[11px] font-medium text-rose-300/80 opacity-0 transition group-hover:opacity-100">
-                      Fokuskan di peta →
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
+        {/* Banner "Gempa Terbaru" TERPADU: BMKG (utama) + Global signifikan
+         * (chip ringkas) dalam SATU kartu — menggantikan dua banner bertumpuk
+         * (kritik user: hemat ruang tanpa mengurangi informasi). */}
         <div className="mt-4 overflow-hidden rounded-2xl border border-orange-400/20 bg-gradient-to-r from-orange-500/10 via-slate-950/80 to-slate-950/80">
           {loading ? (
             <div className="h-28 animate-pulse bg-slate-800/50" />
-          ) : latestBmkgEarthquake ? (
-            <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center">
-              <div className="flex items-center gap-3 lg:min-w-[250px]">
-                <div
-                  className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-orange-300/30 bg-orange-500/15 text-orange-100 ${
-                    severityFor(latestBmkgEarthquake.magnitude) === 'Critical' ? 'severity-blink severity-blink--critical' : ''
-                  }`}
-                >
-                  <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-300">Mag</span>
-                  <span className="text-2xl font-black leading-none">{latestBmkgEarthquake.magnitude.toFixed(1)}</span>
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="font-semibold text-slate-50">Gempa Terbaru BMKG</h4>
-                    <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">
-                      Sumber resmi
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {formatRelativeTime(latestBmkgEarthquake.event_time)} · {formatDateTime(latestBmkgEarthquake.event_time)} WIB
-                  </p>
-                </div>
-              </div>
-
-              <div className="min-w-0 flex-1 border-slate-800 lg:border-l lg:pl-5">
-                <p className="truncate text-sm font-semibold text-slate-100" title={earthquakeLocation(latestBmkgEarthquake.place)}>
-                  {earthquakeLocation(latestBmkgEarthquake.place)}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                  <span>
-                    {latestBmkgEarthquake.latitude.toFixed(3)}, {latestBmkgEarthquake.longitude.toFixed(3)}
-                  </span>
-                  <span
-                    className={`rounded-full border px-2.5 py-1 font-medium ${tsunamiStatus(latestBmkgEarthquake.place).classes}`}
-                  >
-                    {tsunamiStatus(latestBmkgEarthquake.place).label}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleFocusLatestEarthquake}
-                className="shrink-0 rounded-xl border border-indigo-400/30 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 transition hover:border-indigo-300/60 hover:bg-indigo-500/25 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
-              >
-                Fokuskan di peta
-              </button>
-            </div>
           ) : (
-            <div className="p-5 text-center">
-              <p className="text-sm font-semibold text-slate-300">Belum ada event gempa BMKG pada data aktif.</p>
-              <p className="mt-1 text-xs text-slate-500">Ringkasan akan muncul otomatis setelah connector BMKG menerima data terbaru.</p>
+            <div className="flex flex-col gap-3 p-4">
+              {latestBmkgEarthquake ? (
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                  <div className="flex items-center gap-3 lg:min-w-[250px]">
+                    <div
+                      className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-orange-300/30 bg-orange-500/15 text-orange-100 ${
+                        severityFor(latestBmkgEarthquake.magnitude) === 'Critical' ? 'severity-blink severity-blink--critical' : ''
+                      }`}
+                    >
+                      <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-300">Mag</span>
+                      <span className="text-2xl font-black leading-none">{latestBmkgEarthquake.magnitude.toFixed(1)}</span>
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="font-semibold text-slate-50">Gempa Terbaru BMKG</h4>
+                        <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">
+                          Sumber resmi
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {formatRelativeTime(latestBmkgEarthquake.event_time)} · {formatDateTime(latestBmkgEarthquake.event_time)} WIB
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 flex-1 border-slate-800 lg:border-l lg:pl-5">
+                    <p className="truncate text-sm font-semibold text-slate-100" title={earthquakeLocation(latestBmkgEarthquake.place)}>
+                      {earthquakeLocation(latestBmkgEarthquake.place)}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span>
+                        {latestBmkgEarthquake.latitude.toFixed(3)}, {latestBmkgEarthquake.longitude.toFixed(3)}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 font-medium ${tsunamiStatus(latestBmkgEarthquake.place).classes}`}
+                      >
+                        {tsunamiStatus(latestBmkgEarthquake.place).label}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleFocusLatestEarthquake}
+                    className="shrink-0 rounded-xl border border-indigo-400/30 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 transition hover:border-indigo-300/60 hover:bg-indigo-500/25 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+                  >
+                    Fokuskan di peta
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-slate-300">Belum ada event gempa BMKG pada data aktif.</p>
+                  <p className="mt-1 text-xs text-slate-500">Ringkasan akan muncul otomatis setelah connector BMKG menerima data terbaru.</p>
+                </div>
+              )}
+
+              {/* Baris Global: chip ringkas sejajar — hanya bila ada event
+               * signifikan global (M>=6.0 non-Indonesia). */}
+              {significantGlobalEvents.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-3">
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/15 px-2.5 py-0.5 text-[10px] font-semibold text-rose-200">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" aria-hidden="true" />
+                    Global M≥6
+                  </span>
+                  {significantGlobalEvents.map((event) => (
+                    <button
+                      key={event.id}
+                      type="button"
+                      onClick={() => handleFocusGlobalEvent(event)}
+                      aria-label={`Fokuskan gempa ${event.magnitude} ${event.place} di peta`}
+                      title={`${event.place} · ${formatRelativeTime(event.event_time)} · ${formatDateTime(event.event_time)} WIB · sumber ${event.source.toUpperCase()}`}
+                      className={`group inline-flex max-w-full items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-2.5 py-1.5 text-left transition hover:border-rose-400/50 hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60 ${
+                        event.magnitude >= 7 ? 'severity-blink severity-blink--critical' : ''
+                      }`}
+                    >
+                      <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-black leading-none ${
+                        event.magnitude >= 7
+                          ? 'border border-rose-300/40 bg-rose-500/20 text-rose-100'
+                          : 'bg-orange-500/15 text-orange-200'
+                      }`}>
+                        M{event.magnitude.toFixed(1)}
+                      </span>
+                      <span className="min-w-0 truncate text-xs font-medium text-slate-300">{event.place}</span>
+                      <span className="hidden shrink-0 text-[10px] font-medium text-rose-300/70 sm:inline group-hover:text-rose-300">
+                        peta →
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
