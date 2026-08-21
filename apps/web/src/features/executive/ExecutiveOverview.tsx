@@ -632,7 +632,7 @@ export default function ExecutiveOverview({
             <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-indigo-200">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live
             </span>
-            <span className="font-semibold text-slate-200">Kesadaran Situasi</span>
+            <span className="font-semibold text-slate-200">Situational Awareness</span>
             {topRiskScore?.place && (
               <span className="hidden text-slate-400 md:inline">
                 · Risiko teratas: <strong className="font-medium text-rose-300">{topRiskScore.place} (M{topRiskScore.magnitude ?? '—'})</strong>
@@ -647,7 +647,7 @@ export default function ExecutiveOverview({
             onClick={toggleHeaderCollapse}
             aria-expanded="false"
             aria-controls="executive-situational-banner"
-            title="Tampilkan ringkasan Kesadaran Situasi lengkap"
+            title="Tampilkan ringkasan Situational Awareness lengkap"
             className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-700/80 bg-slate-900/90 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition hover:border-indigo-400/50 hover:bg-slate-800 hover:text-indigo-200"
           >
             <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -667,7 +667,7 @@ export default function ExecutiveOverview({
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live
                 </span>
                 <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 md:text-xl">
-                  Dasbor Situasional
+                  Situational Awareness Dashboard
                 </h1>
                 {lastRefreshLabel && (
                   <span
@@ -721,7 +721,7 @@ export default function ExecutiveOverview({
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h3 className="text-lg font-semibold tracking-tight text-slate-50">Executive Risk Map</h3>
             <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
-              Peta komando interaktif
+              Interactive command map
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-slate-400">
@@ -915,7 +915,7 @@ export default function ExecutiveOverview({
         >
           <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
             <div>
-              <h3 className="text-lg font-semibold text-slate-50">Momen Intelijen Real-Time</h3>
+              <h3 className="text-lg font-semibold text-slate-50">Live Intelligence Moments</h3>
               <p className="text-xs text-slate-500">Timeline gabungan event, RSS/news signal, dan alert.</p>
             </div>
             <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
@@ -989,7 +989,7 @@ export default function ExecutiveOverview({
       <section className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
         <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-50">Matriks Kesehatan Sumber</h3>
+            <h3 className="text-lg font-semibold text-slate-50">Source Health Matrix</h3>
             <span className="text-xs text-slate-400">
               OK {connectorSummary.ok} · Stale {connectorSummary.stale} · Error {connectorSummary.error}
             </span>
@@ -1020,7 +1020,7 @@ export default function ExecutiveOverview({
 
         <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-50">Snapshot Peril & Transmisi</h3>
+            <h3 className="text-lg font-semibold text-slate-50">Peril & Transmission Snapshot</h3>
             <span className="text-xs text-slate-500">event distribution</span>
           </div>
           <div className="space-y-3">
@@ -1050,7 +1050,7 @@ export default function ExecutiveOverview({
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h3 className="text-xl font-semibold text-slate-50">Watchlist Event Prioritas</h3>
+            <h3 className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               {filteredEvents.length > visibleWatchlistEvents.length && (
                 <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-400">
