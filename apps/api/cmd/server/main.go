@@ -172,6 +172,18 @@ func main() {
 		evacuationAdmin.POST("/import", apihttp.EvacuationImport(dbPool))
 		evacuationAdmin.POST("/photo", apihttp.EvacuationPhotoUpload(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
 	}
+	adminUsers := router.Group(
+		"/api/v1/admin/users",
+		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
+		apihttp.RequireAdminEmail(cfg.AdminEmails),
+	)
+	{
+		adminUsers.GET("", apihttp.AdminUsersList(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
+		adminUsers.DELETE("/:id", apihttp.AdminUserDelete(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
+		adminUsers.POST("/:id/ban", apihttp.AdminUserBan(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey, dbPool))
+		adminUsers.POST("/:id/resend", apihttp.AdminUserResendConfirmation(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
+	}
+
 	settings := router.Group("/api/v1/settings", apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL))
 	{
 		settings.GET("/official-sources", apihttp.OfficialSourceSettingsList(dbPool))
