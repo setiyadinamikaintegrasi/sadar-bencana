@@ -1047,52 +1047,22 @@ export default function ExecutiveOverview({
 
       <section className="grid gap-8 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/40 md:p-6">
-          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h3 id="section-watchlist" className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {filteredEvents.length > WATCHLIST_PAGE_SIZE && (
-                <div className="flex items-center gap-1.5 text-xs text-slate-400" role="group" aria-label="Navigasi halaman watchlist">
-                  <button
-                    type="button"
-                    onClick={() => setWatchlistPage((p) => Math.max(0, p - 1))}
-                    disabled={safeWatchlistPage === 0}
-                    aria-label="Halaman sebelumnya"
-                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
-                  >
-                    ‹
-                  </button>
-                  <span className="px-1 tabular-nums">
-                    {safeWatchlistPage + 1}/{watchlistPageCount}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setWatchlistPage((p) => Math.min(watchlistPageCount - 1, p + 1))}
-                    disabled={safeWatchlistPage >= watchlistPageCount - 1}
-                    aria-label="Halaman berikutnya"
-                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
-                  >
-                    ›
-                  </button>
-                  <span className="ml-1 hidden text-slate-500 sm:inline">{filteredEvents.length} event</span>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={handleExportWatchlistCsv}
-                disabled={filteredEvents.length === 0}
-                aria-label="Ekspor watchlist sebagai CSV"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
-              >
-                CSV ⭳
-              </button>
-              <div className="relative">
+          <div className="mb-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 id="section-watchlist" className="text-xl font-semibold text-slate-50">Priority Event Watchlist</h3>
+              <span className="text-xs text-slate-500">
+                {filteredEvents.length} event{normalizedQuery !== '' ? ` · pencarian "${watchlistQuery}"` : ''}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1 sm:max-w-xs">
                 <input
                   type="search"
                   value={watchlistQuery}
                   onChange={(event) => setWatchlistQuery(event.target.value)}
                   placeholder="Cari tempat / sumber… (mis. Peru, BMKG)"
                   aria-label="Cari event di watchlist"
-                  className="w-48 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition placeholder:text-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400 md:w-60"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 shadow-inner shadow-slate-950/40 outline-none transition placeholder:text-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-inset focus:ring-indigo-400"
                 />
                 {watchlistQuery !== '' && (
                   <button
@@ -1106,11 +1076,45 @@ export default function ExecutiveOverview({
                 )}
               </div>
               <MagnitudeFilter value={minMagnitude} onChange={setMinMagnitude} />
+              {filteredEvents.length > WATCHLIST_PAGE_SIZE && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-400" role="group" aria-label="Navigasi halaman watchlist">
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistPage((p) => Math.max(0, p - 1))}
+                    disabled={safeWatchlistPage === 0}
+                    aria-label="Halaman sebelumnya"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  >
+                    ‹
+                  </button>
+                  <span className="px-1 tabular-nums" aria-live="polite">
+                    {safeWatchlistPage + 1}/{watchlistPageCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistPage((p) => Math.min(watchlistPageCount - 1, p + 1))}
+                    disabled={safeWatchlistPage >= watchlistPageCount - 1}
+                    aria-label="Halaman berikutnya"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  >
+                    ›
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleExportWatchlistCsv}
+                disabled={filteredEvents.length === 0}
+                aria-label="Ekspor watchlist sebagai CSV"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+              >
+                CSV ⭳
+              </button>
               <button
                 type="button"
                 onClick={handleRefresh}
                 disabled={loading || refreshing}
-                className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-indigo-400 hover:text-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
               >
                 {refreshing ? 'Menyegarkan…' : 'Segarkan'}
               </button>
