@@ -21,6 +21,7 @@ import { GITHUB_REPOSITORY_URL } from '../../navigation'
 import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
 import BmkgWarningsPanel from './BmkgWarningsPanel'
+import RegionSituationPanel from './RegionSituationPanel'
 import { toOfficialAlertOverlays } from './bmkgPresentation'
 import { useBmkgWarnings } from './useBmkgWarnings'
 import {
@@ -473,6 +474,19 @@ export default function ExecutiveOverview({
     setActivePerilFilter('earthquake')
     handleEventClick(latestBmkgEarthquake)
   }, [handleEventClick, latestBmkgEarthquake])
+
+  // Situasi wilayah: fokuskan peta ke centroid wilayah + filter peril dominan
+  const handleRegionFocus = useCallback((center: [number, number], perilType?: string) => {
+    if (perilType === 'earthquake' || perilType === 'wildfire' || perilType === 'volcano' || perilType === 'flood') {
+      setActivePerilFilter(perilType as PerilFilter)
+    }
+    setSelectedEvent(null)
+    setEventFocusRequest((current) => ({
+      id: `region-${center[0].toFixed(2)}-${center[1].toFixed(2)}`,
+      geometry: { type: 'Point', coordinates: [center[0], center[1]] },
+      nonce: (current?.nonce ?? 0) + 1,
+    }))
+  }, [])
 
   const handleFocusOfficialAlert = useCallback((id: string) => {
     setSelectedEvent(null)
@@ -975,6 +989,8 @@ export default function ExecutiveOverview({
           )}
         </div>
       </section>
+
+      <RegionSituationPanel onRegionFocus={handleRegionFocus} />
 
       <div id="section-bmkg-warnings">
         <BmkgWarningsPanel

@@ -93,6 +93,13 @@ function responseFor(pathname: string): unknown | undefined {
   if (pathname === '/api/v1/air-quality/observations') {
     return { data: [], meta: { count: 0, limit: 0, latest: true, source_active: true } }
   }
+  if (pathname === '/api/v1/regions/situation') {
+    return {
+      regions: [],
+      generated_at: '2026-08-02T12:00:00.000Z',
+      window_hours: 72,
+    }
+  }
   if (pathname === '/api/v1/map/operations/events') return collection('events', [eventFeature])
   if (pathname === '/api/v1/map/operations/alerts') return collection('alerts', [], true)
   if (pathname === '/api/v1/map/operations/air-quality') return collection('air-quality', [])
