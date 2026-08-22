@@ -172,6 +172,8 @@ func main() {
 		evacuationAdmin.POST("/import", apihttp.EvacuationImport(dbPool))
 		evacuationAdmin.POST("/photo", apihttp.EvacuationPhotoUpload(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
 	}
+	router.GET("/api/v1/regions/situation", apihttp.RegionsSituation(dbPool))
+
 	adminUsers := router.Group(
 		"/api/v1/admin/users",
 		apihttp.SupabaseAuth(cfg.SupabaseJWTSecret, cfg.SupabaseJWKSURL),
