@@ -12,7 +12,7 @@
     "@ai-sdk/openai": "^4.0.24",
     "@mastra/ai-sdk": "^1.8.0",
     "@mastra/core": "^1.49.0",
-    "@mastra/libsql": "^1.18.0",
+    "@mastra/libsql": "^1.21.0",
     "ai": "^7.0.64",
     "zod": "^3.25.76"
   },
