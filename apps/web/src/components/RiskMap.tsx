@@ -94,7 +94,7 @@ export function ExecutiveMapControls({
                 type="button"
                 aria-label={`${filter.label} (${counts[filter.key]})`}
                 onClick={() => onFilterChange(filter.key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2 py-0.5 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:px-2.5 md:py-1 ${
+                className={`inline-flex items-center gap-1 rounded-lg px-1.5 py-0 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:gap-1.5 md:rounded-xl md:px-2.5 md:py-1 md:text-[11px] ${
                   isActive
                     ? 'bg-indigo-500/25 text-indigo-100 shadow-sm ring-1 ring-inset ring-indigo-400/50'
                     : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
@@ -103,7 +103,7 @@ export function ExecutiveMapControls({
                 <span className={filter.accent}>{filter.icon}</span>
                 <span>{filter.label}</span>
                 <span
-                  className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                  className={`hidden rounded-md px-1.5 py-0.5 text-[10px] font-bold sm:inline ${
                     isActive ? 'bg-indigo-900/70 text-indigo-200' : 'bg-slate-900/90 text-slate-400'
                   }`}
                 >
@@ -142,7 +142,7 @@ export function ExecutiveMapControls({
                 type="button"
                 aria-pressed={isPressed}
                 onClick={() => onOverlayClassToggle(key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-2 py-0.5 font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:px-2.5 md:py-1 ${
+                className={`inline-flex items-center gap-1 rounded-lg px-1.5 py-0 text-[10px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:gap-1.5 md:rounded-xl md:px-2.5 md:py-1 md:text-[11px] ${
                   isPressed
                     ? 'border border-indigo-400/50 bg-indigo-500/15 text-indigo-100 shadow-sm'
                     : 'border border-slate-800/90 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'

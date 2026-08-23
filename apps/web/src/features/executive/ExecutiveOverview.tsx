@@ -56,6 +56,14 @@ type IntelligenceMoment = {
   url?: string
 }
 
+// Satu vocabulary severity Indonesia (critique P1: dual vocab EN/ID).
+const SEVERITY_LABELS_ID: Record<Severity, string> = {
+  Critical: 'Kritis',
+  High: 'Tinggi',
+  Medium: 'Sedang',
+  Low: 'Rendah',
+}
+
 const severityClasses: Record<Severity, string> = {
   Low: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30',
   Medium: 'bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30',
@@ -619,7 +627,7 @@ export default function ExecutiveOverview({
       return {
         id: `event-${event.id}`,
         kind: 'event' as const,
-        title: `${severity} · M${event.magnitude.toFixed(1)} ${event.place.split(',')[0]}`,
+        title: `${SEVERITY_LABELS_ID[severity]} · M${event.magnitude.toFixed(1)} ${event.place.split(',')[0]}`,
         detail: `${perilLabels[event.event_type] ?? event.event_type} signal from ${event.source.toUpperCase()}`,
         timestamp: event.event_time,
         label: 'CAT Event',
@@ -691,7 +699,7 @@ export default function ExecutiveOverview({
   }, [events, eventsWindowTotal, meta, unacknowledgedAlerts])
 
   return (
-    <div className="space-y-4 md:space-y-5">
+    <div className="space-y-2 md:space-y-5">
       {/* Pengumuman perubahan jumlah pasca auto-refresh bagi screen reader. */}
       <p className="sr-only" role="status" aria-live="polite">{liveAnnouncement}</p>
 
@@ -731,7 +739,7 @@ export default function ExecutiveOverview({
       ) : (
         <section
           id="executive-situational-banner"
-          className="overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(79,70,229,0.25),_transparent_40%),linear-gradient(135deg,_rgba(15,23,42,0.98),_rgba(2,6,23,0.98))] px-4 py-3 shadow-xl shadow-slate-950/40 transition-all duration-200 md:px-5"
+          className="overflow-hidden rounded-2xl border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(79,70,229,0.25),_transparent_40%),linear-gradient(135deg,_rgba(15,23,42,0.98),_rgba(2,6,23,0.98))] px-3 py-2 shadow-xl shadow-slate-950/40 transition-all duration-200 md:px-5 md:py-3"
         >
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -789,8 +797,45 @@ export default function ExecutiveOverview({
         </section>
       )}
 
-      <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-3 shadow-2xl shadow-slate-950/50 md:p-5">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 md:mb-3">
+      <section className="flex gap-2 overflow-x-auto pb-1 xl:grid xl:grid-cols-4 xl:overflow-visible" role="group" aria-label="Ringkasan KPI">
+        {kpis.map((item) => {
+          const interactive = Boolean(item.targetId)
+          return (
+            <article
+              key={item.label}
+              className={`min-w-[130px] shrink-0 rounded-2xl border border-slate-800 bg-slate-900/85 px-3 py-2 shadow-xl shadow-slate-950/30 xl:min-w-0 xl:px-4 xl:py-3 ${
+                interactive ? 'cursor-pointer transition hover:border-indigo-400/50 hover:bg-slate-800/85' : ''
+              }`}
+            >
+              {interactive ? (
+                <button
+                  type="button"
+                  onClick={() => document.getElementById(item.targetId!)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded-2xl"
+                  aria-label={`Lihat detail ${item.label}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
+                  </div>
+                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
+                </button>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
+                  </div>
+                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
+                </>
+              )}
+            </article>
+          )
+        })}
+      </section>
+
+      <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-2 shadow-2xl shadow-slate-950/50 md:p-5">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 md:mb-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h3 className="text-lg font-semibold tracking-tight text-slate-50">Executive Risk Map</h3>
             <span className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-200">
@@ -1010,42 +1055,6 @@ export default function ExecutiveOverview({
         />
       </div>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((item) => {
-          const interactive = Boolean(item.targetId)
-          return (
-            <article
-              key={item.label}
-              className={`rounded-2xl border border-slate-800 bg-slate-900/85 px-4 py-3 shadow-xl shadow-slate-950/30 ${
-                interactive ? 'cursor-pointer transition hover:border-indigo-400/50 hover:bg-slate-800/85' : ''
-              }`}
-            >
-              {interactive ? (
-                <button
-                  type="button"
-                  onClick={() => document.getElementById(item.targetId!)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                  className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded-2xl"
-                  aria-label={`Lihat detail ${item.label}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
-                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
-                  </div>
-                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
-                </button>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
-                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
-                  </div>
-                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
-                </>
-              )}
-            </article>
-          )
-        })}
-      </section>
 
       <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
         <article
@@ -1276,7 +1285,7 @@ export default function ExecutiveOverview({
                           tabIndex={0}
                           role="button"
                           aria-pressed={isSelected}
-                          aria-label={`${row.place}, tingkat ${severity}, sumber ${row.source}`}
+                          aria-label={`${row.place}, tingkat ${SEVERITY_LABELS_ID[severity]}, sumber ${row.source}`}
                           className={`cursor-pointer text-slate-200 transition hover:bg-slate-800/50 focus-visible:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                             isSelected ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-400/20' : ''
                           }`}
@@ -1293,7 +1302,7 @@ export default function ExecutiveOverview({
                             <span
                               className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${severityClasses[severity]}`}
                             >
-                              {severity}
+                              {SEVERITY_LABELS_ID[severity]}
                             </span>
                           </td>
                           <td className="py-4 pr-6 align-top">
@@ -1319,7 +1328,7 @@ export default function ExecutiveOverview({
                       tabIndex={0}
                       role="button"
                       aria-pressed={isSelected}
-                      aria-label={`${row.place}, tingkat ${severity}, sumber ${row.source}`}
+                      aria-label={`${row.place}, tingkat ${SEVERITY_LABELS_ID[severity]}, sumber ${row.source}`}
                       className={`cursor-pointer rounded-xl border border-slate-800 bg-slate-800/50 p-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${
                         isSelected ? 'ring-1 ring-indigo-400/40' : ''
                       }`}
@@ -1335,7 +1344,7 @@ export default function ExecutiveOverview({
                         <span
                           className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${severityClasses[severity]}`}
                         >
-                          {severity}
+                          {SEVERITY_LABELS_ID[severity]}
                         </span>
                       </div>
                       <p className="mt-2 text-sm font-medium text-slate-100">{row.place}</p>
