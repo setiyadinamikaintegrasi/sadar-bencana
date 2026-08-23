@@ -22,6 +22,7 @@ import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
 import BmkgWarningsPanel from './BmkgWarningsPanel'
 import RegionSituationPanel from './RegionSituationPanel'
+import AseanAirQualityPanel from './AseanAirQualityPanel'
 import { toOfficialAlertOverlays } from './bmkgPresentation'
 import { useBmkgWarnings } from './useBmkgWarnings'
 import {
@@ -991,6 +992,8 @@ export default function ExecutiveOverview({
       </section>
 
       <RegionSituationPanel onRegionFocus={handleRegionFocus} />
+
+      <AseanAirQualityPanel />
 
       <div id="section-bmkg-warnings">
         <BmkgWarningsPanel
