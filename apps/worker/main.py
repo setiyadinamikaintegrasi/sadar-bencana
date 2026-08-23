@@ -83,6 +83,7 @@ from connectors.opensky import OpenSkyConnector
 from connectors.bmkg_shakemap import sync_shakemap_overlays
 from connectors.petabencana_flood_areas import sync_flood_areas
 from connectors.open_meteo import sync_weather_forecasts
+from connectors.kanari_wildfire import sync_kanari_fire_clusters
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1140,6 +1141,19 @@ async def _weather_forecast_sync_once() -> dict[str, int]:
         return {"fetched": 0, "upserted": 0}
 
 
+async def _kanari_wildfire_sync_once() -> dict[str, int]:
+    """Sync klaster karhutla agregat kanari.io (VIIRS+GOES+MTG) — S8-P2."""
+    pool = get_pool()
+    try:
+        stats = await sync_kanari_fire_clusters(pool)
+        if stats["persisted"]:
+            logger.info("Kanari wildfire: %(fetched)s fetched, %(persisted)s persisted", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("Kanari wildfire sync failed: %s", exc)
+        return {"fetched": 0, "persisted": 0}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1331,6 +1345,8 @@ async def startup_event() -> None:
     _weather_forecast_scheduler = NewsScheduler(poll_fn=_weather_forecast_sync_once, interval_seconds=1800)
     _flood_areas_scheduler.start()
     _weather_forecast_scheduler.start()
+    _kanari_wildfire_scheduler = NewsScheduler(poll_fn=_kanari_wildfire_sync_once, interval_seconds=600)
+    _kanari_wildfire_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
