@@ -34,6 +34,9 @@ RSS_SOURCES: list[dict[str, str]] = [
     {"source": "republika", "url": "https://www.republika.co.id/rss"},
     {"source": "sindo", "url": "https://www.sindonews.com/rss"},
     {"source": "okezone", "url": "https://www.okezone.com/rss"},
+    # Sumber internasional (S8-P5): Google News ID (agregat global) + BBC Indonesia.
+    {"source": "google-news-id", "url": "https://news.google.com/rss/search?q=bencana+OR+gempa+OR+banjir+OR+karhutla+OR+tsunami+indonesia&hl=id&gl=ID&ceid=ID:id"},
+    {"source": "bbc-indonesia", "url": "https://feeds.bbci.co.uk/indonesia/rss.xml"},
 ]
 
 
