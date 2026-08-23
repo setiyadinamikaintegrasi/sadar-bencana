@@ -40,25 +40,31 @@ class TestAseanHubs:
         kuching = next(h for h in ASEAN_STATION_HUBS if h["code"] == "kuching")
         assert kuching["lon"] < 111.0  # Borneo barat
 
-    def test_eight_hubs(self):
-        assert len(ASEAN_STATION_HUBS) == 8
+    def test_nine_hubs_incl_jakarta(self):
+        # 8 ASEAN + 1 domestik (Jakarta BMKG ground) sejak S8-P7.
+        assert len(ASEAN_STATION_HUBS) == 9
+        codes = {h["code"] for h in ASEAN_STATION_HUBS}
+        assert "jakarta-bmkg" in codes
 
 
 class TestFetchNearest:
     @pytest.mark.asyncio
     async def test_with_pm25_station(self):
         class LocResp:
+            status_code = 200
             def raise_for_status(self): pass
             def json(self):
                 return {"results": [{
                     "id": 12345, "name": "Kuching Station",
+                    "datetimeLast": {"utc": "2026-08-23T10:00:00Z"},
                     "sensors": [{"id": 999, "parameter": {"name": "pm25"}}],
                 }]}
 
         class MeasResp:
+            status_code = 200
             def raise_for_status(self): pass
             def json(self):
-                return {"results": [{"value": 88.5, "datetime": {"utc": "2026-08-23T10:00:00Z"}}]}
+                return {"results": [{"value": 88.5, "period": {"datetimeTo": {"utc": "2026-08-23T10:00:00Z"}}}]}
 
         class FakeClient:
             call_count = 0
@@ -76,6 +82,7 @@ class TestFetchNearest:
     @pytest.mark.asyncio
     async def test_no_results(self):
         class EmptyResp:
+            status_code = 200
             def raise_for_status(self): pass
             def json(self):
                 return {"results": []}
@@ -89,6 +96,7 @@ class TestFetchNearest:
     @pytest.mark.asyncio
     async def test_no_pm25_sensor(self):
         class NoPmResp:
+            status_code = 200
             def raise_for_status(self): pass
             def json(self):
                 return {"results": [{
@@ -110,3 +118,40 @@ class TestSyncSkipsWithoutKey:
         # pool None aman karena skip sebelum dipakai
         stats = await sync_openaq_asean(None)
         assert stats == {"fetched": 0, "upserted": 0, "skipped": True}
+
+
+class TestFreshnessSorting:
+    @pytest.mark.asyncio
+    async def test_prefers_freshest_station(self):
+        class Resp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"results": [
+                    {"id": 1, "name": "Stale Station",
+                     "datetimeLast": {"utc": "2020-01-01T00:00:00Z"},
+                     "sensors": [{"id": 11, "parameter": {"name": "pm25"}}]},
+                    {"id": 2, "name": "Fresh Station",
+                     "datetimeLast": {"utc": "2026-08-23T10:00:00Z"},
+                     "sensors": [{"id": 22, "parameter": {"name": "pm25"}}]},
+                ]}
+
+        class MeasResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"results": [{"value": 42.0, "period": {"datetimeTo": {"utc": "2026-08-23T10:00:00Z"}}}]}
+
+        calls = {"sensor_ids": []}
+
+        class FakeClient:
+            async def get(self, url, **kwargs):
+                if "/locations" in url:
+                    return Resp()
+                calls["sensor_ids"].append(url.split("/sensors/")[1].split("/")[0])
+                return MeasResp()
+
+        data = await fetch_nearest_measurement(FakeClient(), "key", 0, 0)
+        assert data is not None
+        assert data["station_name"] == "Fresh Station"
+        assert calls["sensor_ids"] == ["22"]  # sensor stasiun fresh yang dipanggil

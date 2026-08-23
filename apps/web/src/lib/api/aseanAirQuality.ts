@@ -10,6 +10,9 @@ export type AseanAirQualityEntry = {
   aqi_category: string
   measured_at: string
   fetched_at: string
+  is_stale: boolean
+  age_hours: number
+  model_pm25?: number
 }
 
 export type AseanAirQualityResponse = {

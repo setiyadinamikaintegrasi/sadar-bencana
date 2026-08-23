@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS asean_air_quality (
     aqi_category  TEXT,
     measured_at   TIMESTAMPTZ,
     fetched_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- Verifikasi kejujuran data (S8-P7): umur pengukuran.
+    stale_after_hours SMALLINT NOT NULL DEFAULT 24
 );
 
 CREATE INDEX IF NOT EXISTS idx_asean_air_quality_country

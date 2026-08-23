@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"math"
 	"net/http"
 	"time"
 
@@ -22,6 +23,11 @@ type AseanAirQualityEntry struct {
 	AqiCategory string  `json:"aqi_category"`
 	MeasuredAt  string  `json:"measured_at"`
 	FetchedAt   string  `json:"fetched_at"`
+	IsStale     bool    `json:"is_stale"`
+	AgeHours    float64 `json:"age_hours"`
+	// ModelOpenMeteo: PM2.5 dari model CAMS (Open-Meteo AQ) utk hub ID
+	// terdekat — perbandingan ground vs model (S8-P7).
+	ModelPm25 *float64 `json:"model_pm25,omitempty"`
 }
 
 type AseanAirQualityResponse struct {
@@ -31,14 +37,23 @@ type AseanAirQualityResponse struct {
 }
 
 const aseanAirQualityQuery = `
-SELECT hub_code, hub_name, country,
-       COALESCE(station_name, ''),
-       COALESCE(pm25, 0),
-       COALESCE(aqi_category, ''),
-       COALESCE(measured_at::text, ''),
-       fetched_at::text
-FROM asean_air_quality
-ORDER BY pm25 DESC
+SELECT a.hub_code, a.hub_name, a.country,
+       COALESCE(a.station_name, ''),
+       COALESCE(a.pm25, 0),
+       COALESCE(a.aqi_category, ''),
+       COALESCE(a.measured_at::text, ''),
+       a.fetched_at::text,
+       COALESCE(EXTRACT(EPOCH FROM (now() - a.measured_at)) / 3600.0, 999999),
+       a.stale_after_hours,
+       r.pm25
+FROM asean_air_quality a
+LEFT JOIN region_air_quality r
+  ON r.region_code = CASE
+    WHEN a.country = 'ID' THEN 'jawa'
+    WHEN a.hub_code = 'kuching' OR a.hub_code = 'kota-kinabalu' OR a.hub_code = 'brunei' THEN 'kalimantan'
+    WHEN a.hub_code IN ('singapore', 'johor', 'penang', 'kl', 'hat-yai') THEN 'sumatera'
+    ELSE NULL END
+ORDER BY a.pm25 DESC
 `
 
 // AseanAirQualityList melayani snapshot kualitas udara ASEAN terbaru.
@@ -61,8 +76,11 @@ func AseanAirQualityList(db *sql.DB) gin.HandlerFunc {
 		for rows.Next() {
 			var e AseanAirQualityEntry
 			var measuredAt, fetchedAt string
+			var ageHours, staleAfter float64
+			var modelPm25 sql.NullFloat64
 			if err := rows.Scan(&e.HubCode, &e.HubName, &e.Country, &e.StationName,
-				&e.Pm25, &e.AqiCategory, &measuredAt, &fetchedAt); err != nil {
+				&e.Pm25, &e.AqiCategory, &measuredAt, &fetchedAt,
+				&ageHours, &staleAfter, &modelPm25); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed"})
 				return
 			}
@@ -76,8 +94,14 @@ func AseanAirQualityList(db *sql.DB) gin.HandlerFunc {
 					e.FetchedAt = t.UTC().Format(time.RFC3339)
 				}
 			}
+			e.AgeHours = math.Round(ageHours*10) / 10
+			e.IsStale = ageHours > staleAfter
+			if modelPm25.Valid {
+				v := math.Round(modelPm25.Float64*10) / 10
+				e.ModelPm25 = &v
+			}
 			entries = append(entries, e)
-			if e.Pm25 > 35.4 {
+			if e.Pm25 > 35.4 && !e.IsStale {
 				unhealthy++
 			}
 		}

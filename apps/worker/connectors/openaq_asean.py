@@ -12,6 +12,7 @@ Kuching AQI 180" — critical regional impact narrative for reinsurance.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -40,6 +41,9 @@ ASEAN_STATION_HUBS: list[dict[str, Any]] = [
     # Regional
     {"code": "brunei", "name": "Bandar Seri Begawan", "lat": 4.89, "lon": 114.94, "country": "BN"},
     {"code": "hat-yai", "name": "Hat Yai (S. Thailand)", "lat": 7.01, "lon": 100.47, "country": "TH"},
+    # Domestik (S8-P7): satu-satunya stasiun ground yg masih aktif di ID.
+    # Radius 25km dari Kemayoran menangkap "BMKG 1" (sensor low-cost BMKG).
+    {"code": "jakarta-bmkg", "name": "Jakarta (BMKG, ground)", "lat": -6.16, "lon": 106.84, "country": "ID"},
 ]
 
 
@@ -51,18 +55,32 @@ async def fetch_nearest_measurement(
     client: httpx.AsyncClient, api_key: str, lat: float, lon: float
 ) -> dict[str, Any] | None:
     """Fetch latest PM2.5 measurement from the nearest station."""
-    resp = await client.get(
-        f"{OPENAQ_BASE_URL}/locations",
-        params={"coordinates": f"{lat},{lon}", "radius": "25000", "limit": 5},
-        headers={"X-API-Key": api_key},
-    )
-    resp.raise_for_status()
-    payload = resp.json()
+    payload = None
+    for attempt in range(3):
+        resp = await client.get(
+            f"{OPENAQ_BASE_URL}/locations",
+            params={"coordinates": f"{lat},{lon}", "radius": "25000", "limit": 50},
+            headers={"X-API-Key": api_key},
+        )
+        if resp.status_code == 429 and attempt < 2:
+            await asyncio.sleep(2 ** attempt)  # 1s, 2s backoff
+            continue
+        resp.raise_for_status()
+        payload = resp.json()
+        break
+    if payload is None:
+        return None
     results = payload.get("results") or []
     if not results:
         return None
 
-    # Ambil location terdekat yang punya sensor pm25.
+    # Urutkan kandidat berdasarkan freshness (datetimeLast) — pilih
+    # stasiun dgn data TERBARU yang punya sensor pm25, bukan sekadar
+    # yang pertama ditemukan.
+    def _last_utc(loc: dict) -> str:
+        return (loc.get("datetimeLast") or {}).get("utc", "")
+    results = sorted(results, key=_last_utc, reverse=True)
+
     for location in results:
         loc_id = location.get("id")
         if not loc_id:
@@ -86,11 +104,19 @@ async def fetch_nearest_measurement(
         value = meas.get("value")
         if value is None:
             continue
+        # OpenAQ v3: timestamp di period.datetimeTo.utc (ISO string -> datetime).
+        raw_ts = (meas.get("period", {}).get("datetimeTo", {}) or {}).get("utc")
+        measured_at = None
+        if raw_ts:
+            try:
+                measured_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            except ValueError:
+                measured_at = None
         return {
             "station_name": location.get("name", ""),
             "station_id": loc_id,
             "pm25": float(value),
-            "measured_at": meas.get("datetime", {}).get("utc"),
+            "measured_at": measured_at,
         }
     return None
 
