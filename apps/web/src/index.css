@@ -95,6 +95,8 @@
     animation: none;
   }
   .risk-news-ticker {
-    overflow-x: auto;
+    overflow: hidden;
+    overflow-x: auto !important;
+    white-space: normal;
   }
 }

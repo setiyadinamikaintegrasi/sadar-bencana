@@ -55,7 +55,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
   if (error || !active) {
     return error ? (
       <section aria-label="Situasi wilayah">
-        <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs text-slate-500">{error}</p>
+        <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-xs text-slate-400">{error}</p>
       </section>
     ) : null
   }
@@ -69,7 +69,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-slate-50">Situasi Wilayah</h3>
-          <span className="text-[11px] text-slate-500">72 jam terakhir · update otomatis 60 detik</span>
+          <span className="text-[11px] text-slate-400">72 jam terakhir · update otomatis 60 detik</span>
         </div>
         <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Pilih wilayah">
           {sorted.map((region) => {
@@ -89,7 +89,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${regionTone.bar}`} aria-hidden="true" />
                 {region.name.replace(' & Nusa Tenggara Barat', '-NTB').replace('Nusa Tenggara Timur', 'NTT')}
-                <span className="rounded-md bg-slate-900/80 px-1 py-0.5 text-[10px] tabular-nums text-slate-500">
+                <span className="rounded-md bg-slate-900/80 px-1 py-0.5 text-[10px] tabular-nums text-slate-400">
                   {region.total_events}
                 </span>
               </button>
@@ -154,7 +154,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
 
         {/* Peril chips */}
         {active.perils.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">Tidak ada event bencana aktif dalam 72 jam terakhir.</p>
+          <p className="mt-3 text-sm text-slate-400">Tidak ada event bencana aktif dalam 72 jam terakhir.</p>
         ) : (
           <div className="mt-3 flex flex-wrap gap-2">
             {active.perils.map((peril) => (
@@ -167,7 +167,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
                   <p className="font-semibold text-slate-100">
                     {peril.count_72h} <span className="font-normal text-slate-400">event</span>
                   </p>
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[10px] text-slate-400">
                     {peril.peril_type === 'wildfire' ? 'Karhutla' : peril.peril_type === 'earthquake' ? 'Gempa' : peril.peril_type === 'volcano' ? 'Vulkanik' : peril.peril_type === 'flood' ? 'Banjir' : peril.peril_type}
                     {' · '}
                     hari ini {peril.count_today}
@@ -182,7 +182,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
         {/* Prakiraan cuaca 3 hari (Open-Meteo) */}
         {active.forecast && active.forecast.length > 0 && (
           <div className="mt-3">
-            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
               🌦 Prakiraan 3 hari
             </p>
             <div className="grid grid-cols-3 gap-2">
@@ -197,11 +197,11 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
                   </p>
                   <p className="mt-0.5 text-sm font-bold leading-tight text-slate-100">{day.weather_label}</p>
                   <div className="mt-1 flex items-center justify-center gap-1 text-[10px] leading-none">
-                    <span className={day.rain_probability >= 60 ? 'font-bold text-sky-300' : 'text-slate-500'}>
+                    <span className={day.rain_probability >= 60 ? 'font-bold text-sky-300' : 'text-slate-400'}>
                       💧{day.rain_probability}%
                     </span>
                     {day.wind_max_kmh > 0 && (
-                      <span className="text-slate-500">💨{Math.round(day.wind_max_kmh)}</span>
+                      <span className="text-slate-400">💨{Math.round(day.wind_max_kmh)}</span>
                     )}
                   </div>
                 </div>
@@ -216,7 +216,7 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
         )}
 
         {/* Meta info */}
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
           {active.news_count_7d > 0 && (
             <span>{active.news_count_7d} berita (7 hari)</span>
           )}

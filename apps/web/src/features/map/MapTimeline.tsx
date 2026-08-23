@@ -116,7 +116,7 @@ export function MapTimeline({ hoursAgo, onChange, className = '' }: MapTimelineP
         className="min-w-32 flex-1 accent-indigo-400"
       />
       <span className="whitespace-nowrap font-semibold text-slate-100">{label}</span>
-      <span className="whitespace-nowrap text-slate-500">{formatMoment(position)}</span>
+      <span className="whitespace-nowrap text-slate-400">{formatMoment(position)}</span>
       <button
         type="button"
         aria-label={`Kecepatan replay ${speed} jam per detik`}
