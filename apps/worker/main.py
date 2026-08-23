@@ -82,6 +82,7 @@ from connectors.nasa_firms import NASAFIRMSConnector
 from connectors.opensky import OpenSkyConnector
 from connectors.bmkg_shakemap import sync_shakemap_overlays
 from connectors.petabencana_flood_areas import sync_flood_areas
+from connectors.open_meteo import sync_weather_forecasts
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1126,6 +1127,19 @@ async def _flood_areas_sync_once() -> dict[str, int]:
         return {"active": 0, "removed": 0}
 
 
+async def _weather_forecast_sync_once() -> dict[str, int]:
+    """Sync prakiraan cuaca per wilayah (Open-Meteo) — S8-P1."""
+    pool = get_pool()
+    try:
+        stats = await sync_weather_forecasts(pool)
+        if stats["upserted"]:
+            logger.info("Weather forecasts: %(fetched)s fetched, %(upserted)s upserted", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("Weather forecast sync failed: %s", exc)
+        return {"fetched": 0, "upserted": 0}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1314,7 +1328,9 @@ async def startup_event() -> None:
 
     # Flood-areas status sync (S7) — tiap 10 menit; replace-set (surut dihapus).
     _flood_areas_scheduler = NewsScheduler(poll_fn=_flood_areas_sync_once, interval_seconds=600)
+    _weather_forecast_scheduler = NewsScheduler(poll_fn=_weather_forecast_sync_once, interval_seconds=1800)
     _flood_areas_scheduler.start()
+    _weather_forecast_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
