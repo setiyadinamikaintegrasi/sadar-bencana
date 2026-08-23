@@ -86,6 +86,7 @@ from connectors.open_meteo import sync_weather_forecasts
 from connectors.kanari_wildfire import sync_kanari_fire_clusters
 from connectors.sunrise_sunset import sync_region_daylight
 from connectors.open_meteo_air_quality import sync_region_air_quality
+from connectors.openaq_asean import sync_openaq_asean
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1182,6 +1183,23 @@ async def _air_quality_sync_once() -> dict[str, int]:
         return {"fetched": 0, "upserted": 0}
 
 
+async def _openaq_asean_sync_once() -> dict[str, int]:
+    """Sync kualitas udara stasiun ASEAN (OpenAQ ground) — S8-P6.
+
+    Butuh OPENAQ_API_KEY; tanpa key, sync di-skip dengan aman
+    (Open-Meteo AQ tetap berjalan sebagai sumber utama).
+    """
+    pool = get_pool()
+    try:
+        stats = await sync_openaq_asean(pool)
+        if stats.get("upserted"):
+            logger.info("OpenAQ ASEAN: %(fetched)s fetched, %(upserted)s upserted", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("OpenAQ ASEAN sync failed: %s", exc)
+        return {"fetched": 0, "upserted": 0}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1379,6 +1397,8 @@ async def startup_event() -> None:
     _daylight_scheduler.start()
     _air_quality_scheduler = NewsScheduler(poll_fn=_air_quality_sync_once, interval_seconds=3600)
     _air_quality_scheduler.start()
+    _openaq_asean_scheduler = NewsScheduler(poll_fn=_openaq_asean_sync_once, interval_seconds=1800)
+    _openaq_asean_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
