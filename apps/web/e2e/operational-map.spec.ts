@@ -93,6 +93,9 @@ function responseFor(pathname: string): unknown | undefined {
   if (pathname === '/api/v1/air-quality/observations') {
     return { data: [], meta: { count: 0, limit: 0, latest: true, source_active: true } }
   }
+  if (pathname === '/api/v1/flood-hub/gauges') {
+    return { data: [], warning_count: 0, danger_count: 0, generated_at: '2026-08-02T12:00:00.000Z' }
+  }
   if (pathname === '/api/v1/air-quality/asean') {
     return { data: [], unhealthy_count: 0, generated_at: '2026-08-02T12:00:00.000Z' }
   }

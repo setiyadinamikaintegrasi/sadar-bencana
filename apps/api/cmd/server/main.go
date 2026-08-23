@@ -172,6 +172,7 @@ func main() {
 		evacuationAdmin.POST("/import", apihttp.EvacuationImport(dbPool))
 		evacuationAdmin.POST("/photo", apihttp.EvacuationPhotoUpload(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey))
 	}
+	router.GET("/api/v1/flood-hub/gauges", apihttp.FloodHubGaugesList(dbPool))
 	router.GET("/api/v1/air-quality/asean", apihttp.AseanAirQualityList(dbPool))
 	router.GET("/api/v1/regions/situation", apihttp.RegionsSituation(dbPool))
 
