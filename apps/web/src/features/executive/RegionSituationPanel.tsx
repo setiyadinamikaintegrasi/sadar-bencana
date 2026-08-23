@@ -132,6 +132,26 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
           )}
         </div>
 
+        {/* Daylight: sisa jam siang */}
+        {active.daylight && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+              active.daylight.is_night
+                ? 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200'
+                : active.daylight.daylight_remaining_hours <= 2
+                  ? 'border-orange-400/30 bg-orange-500/10 text-orange-200'
+                  : 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+            }`}>
+              {active.daylight.is_night ? '🌙' : '☀'}{' '}
+              {active.daylight.is_night
+                ? `Malam · matahari terbit ${active.daylight.sunrise.slice(0, 5)}`
+                : active.daylight.daylight_remaining_hours <= 2
+                  ? `Sisa ${active.daylight.daylight_remaining_hours.toFixed(1)} jam siang · sunset ${active.daylight.sunset.slice(0, 5)}`
+                  : `Siang ${active.daylight.daylight_remaining_hours.toFixed(1)} jam lagi · sunset ${active.daylight.sunset.slice(0, 5)}`}
+            </span>
+          </div>
+        )}
+
         {/* Peril chips */}
         {active.perils.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">Tidak ada event bencana aktif dalam 72 jam terakhir.</p>

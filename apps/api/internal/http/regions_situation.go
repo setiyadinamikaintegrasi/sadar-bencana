@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"math"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -60,6 +61,15 @@ type RegionSituation struct {
 	SeverityIndex int                     `json:"severity_index"`
 	TotalEvents   int                     `json:"total_events"`
 	Forecast      []RegionForecastDay     `json:"forecast"`
+	Daylight      *RegionDaylight         `json:"daylight,omitempty"`
+}
+
+// Jendela siang/malam wilayah hari ini (sunrise-sunset.org)
+type RegionDaylight struct {
+	Sunrise                 string  `json:"sunrise"`
+	Sunset                  string  `json:"sunset"`
+	DaylightRemainingHours float64 `json:"daylight_remaining_hours"`
+	IsNight                 bool    `json:"is_night"`
 }
 
 type RegionSituationResponse struct {
@@ -93,6 +103,12 @@ func ftoa(v float64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+const regionDaylightQuery = `
+SELECT sunrise, sunset
+FROM region_daylight
+WHERE region_code = $1 AND date = CURRENT_DATE
+`
 
 const regionForecastQuery = `
 SELECT to_char(forecast_date, 'YYYY-MM-DD') AS d,
@@ -225,6 +241,33 @@ func RegionsSituation(db *sql.DB) gin.HandlerFunc {
 				fRows.Close()
 			}
 			situation.Forecast = forecast
+
+			// Daylight: jendela siang hari ini + sisa jam siang real-time.
+			var sunriseStr, sunsetStr string
+			if err := db.QueryRowContext(c.Request.Context(), regionDaylightQuery, def.Code).Scan(&sunriseStr, &sunsetStr); err == nil {
+				now := time.Now()
+				sunrise, e1 := time.Parse("15:04:05", sunriseStr)
+				sunset, e2 := time.Parse("15:04:05", sunsetStr)
+				if e1 == nil && e2 == nil {
+					today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+					sunriseAt := today.Add(time.Duration(sunrise.Hour())*time.Hour + time.Duration(sunrise.Minute())*time.Minute)
+					sunsetAt := today.Add(time.Duration(sunset.Hour())*time.Hour + time.Duration(sunset.Minute())*time.Minute)
+					remaining := sunsetAt.Sub(now).Hours()
+					isNight := now.Before(sunriseAt) || now.After(sunsetAt)
+					if isNight {
+						remaining = 0
+					}
+					if remaining < 0 {
+						remaining = 0
+					}
+					situation.Daylight = &RegionDaylight{
+						Sunrise:                 sunriseStr,
+						Sunset:                  sunsetStr,
+						DaylightRemainingHours: math.Round(remaining*10) / 10,
+						IsNight:                 isNight,
+					}
+				}
+			}
 
 			if entries, ok := places[def.Code]; ok {
 				for i, e := range entries {
