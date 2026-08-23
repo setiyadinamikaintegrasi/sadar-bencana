@@ -26,7 +26,7 @@ OPENAQ_BASE_URL = "https://api.openaq.org/v3"
 REQUEST_TIMEOUT_SECONDS = 15.0
 ATTRIBUTION = "OpenAQ (CC BY 4.0)"
 
-# Stasiun ASEAN pemantau dampak asap lintas batas (radius 500km dari
+# Stasiun ASEAN pemantau dampak asap lintas batas (radius pencarian 25km per hub dari
 # pusat Kalimantan/Sumatera). OpenAQ coordinates+radius search.
 ASEAN_STATION_HUBS: list[dict[str, Any]] = [
     # Kalimantan smoke impact zone
@@ -53,7 +53,7 @@ async def fetch_nearest_measurement(
     """Fetch latest PM2.5 measurement from the nearest station."""
     resp = await client.get(
         f"{OPENAQ_BASE_URL}/locations",
-        params={"coordinates": f"{lat},{lon}", "radius": "50000", "limit": 5},
+        params={"coordinates": f"{lat},{lon}", "radius": "25000", "limit": 5},
         headers={"X-API-Key": api_key},
     )
     resp.raise_for_status()
