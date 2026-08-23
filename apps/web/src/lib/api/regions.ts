@@ -10,7 +10,16 @@ export type RegionPeril = {
   first_at: string
 }
 
+export type RegionForecastDay = {
+  date: string
+  rain_probability: number
+  rain_sum_mm: number
+  wind_max_kmh: number
+  weather_label: string
+}
+
 export type RegionSituation = {
+  forecast?: RegionForecastDay[]
   code: string
   name: string
   bbox: [number, number, number, number]

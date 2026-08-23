@@ -159,6 +159,42 @@ export default function RegionSituationPanel({ onRegionFocus }: RegionSituationP
           </div>
         )}
 
+        {/* Prakiraan cuaca 3 hari (Open-Meteo) */}
+        {active.forecast && active.forecast.length > 0 && (
+          <div className="mt-3">
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              🌦 Prakiraan 3 hari
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {active.forecast.map((day) => (
+                <div
+                  key={day.date}
+                  className="rounded-lg border border-slate-800 bg-slate-900/70 px-2 py-1.5 text-center"
+                  title={`${day.weather_label} · hujan ${day.rain_sum_mm}mm · angin maks ${day.wind_max_kmh} km/j`}
+                >
+                  <p className="text-[10px] font-semibold text-slate-400">
+                    {new Date(day.date + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </p>
+                  <p className="mt-0.5 text-sm font-bold leading-tight text-slate-100">{day.weather_label}</p>
+                  <div className="mt-1 flex items-center justify-center gap-1 text-[10px] leading-none">
+                    <span className={day.rain_probability >= 60 ? 'font-bold text-sky-300' : 'text-slate-500'}>
+                      💧{day.rain_probability}%
+                    </span>
+                    {day.wind_max_kmh > 0 && (
+                      <span className="text-slate-500">💨{Math.round(day.wind_max_kmh)}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {active.forecast.some((d) => d.rain_probability >= 70) && dominantPeril?.peril_type === 'wildfire' && (
+              <p className="mt-1.5 rounded-lg border border-sky-400/20 bg-sky-500/10 px-2.5 py-1.5 text-[10px] leading-snug text-sky-200">
+                💡 Hujan tinggi diprakirakan — karhutla berpotensi mereda, genangan berpotensi naik.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Meta info */}
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
           {active.news_count_7d > 0 && (
