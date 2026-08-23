@@ -39,6 +39,15 @@ type RegionPerilSituation struct {
 	FirstAt      string  `json:"first_at"`
 }
 
+// Prakiraan cuaca satu hari utk satu wilayah (Open-Meteo)
+type RegionForecastDay struct {
+	Date             string  `json:"date"`
+	RainProbability  int     `json:"rain_probability"`
+	RainSumMM        float64 `json:"rain_sum_mm"`
+	WindMaxKmh       float64 `json:"wind_max_kmh"`
+	WeatherLabel     string  `json:"weather_label"`
+}
+
 // Kartu situasi satu wilayah
 type RegionSituation struct {
 	Code          string                  `json:"code"`
@@ -50,6 +59,7 @@ type RegionSituation struct {
 	TopPlaces     []string                `json:"top_places"`
 	SeverityIndex int                     `json:"severity_index"`
 	TotalEvents   int                     `json:"total_events"`
+	Forecast      []RegionForecastDay     `json:"forecast"`
 }
 
 type RegionSituationResponse struct {
@@ -83,6 +93,18 @@ func ftoa(v float64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+const regionForecastQuery = `
+SELECT to_char(forecast_date, 'YYYY-MM-DD') AS d,
+       COALESCE(rain_probability, 0),
+       COALESCE(rain_sum_mm, 0),
+       COALESCE(wind_max_kmh, 0),
+       COALESCE(weather_label, '')
+FROM weather_forecasts
+WHERE region_code = $1 AND forecast_date >= CURRENT_DATE
+ORDER BY forecast_date
+LIMIT 3
+`
 
 const regionNewsQuery = `
 SELECT count(*)
@@ -190,6 +212,19 @@ func RegionsSituation(db *sql.DB) gin.HandlerFunc {
 			_ = db.QueryRowContext(c.Request.Context(), regionNewsQuery,
 				def.MinLon, def.MinLat, def.MaxLat, def.MaxLon).Scan(&newsCount)
 			situation.NewsCount7d = newsCount
+
+			forecast := []RegionForecastDay{}
+			fRows, fErr := db.QueryContext(c.Request.Context(), regionForecastQuery, def.Code)
+			if fErr == nil {
+				for fRows.Next() {
+					var fd RegionForecastDay
+					if err := fRows.Scan(&fd.Date, &fd.RainProbability, &fd.RainSumMM, &fd.WindMaxKmh, &fd.WeatherLabel); err == nil {
+						forecast = append(forecast, fd)
+					}
+				}
+				fRows.Close()
+			}
+			situation.Forecast = forecast
 
 			if entries, ok := places[def.Code]; ok {
 				for i, e := range entries {
