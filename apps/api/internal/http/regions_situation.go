@@ -245,11 +245,20 @@ func RegionsSituation(db *sql.DB) gin.HandlerFunc {
 			// Daylight: jendela siang hari ini + sisa jam siang real-time.
 			var sunriseStr, sunsetStr string
 			if err := db.QueryRowContext(c.Request.Context(), regionDaylightQuery, def.Code).Scan(&sunriseStr, &sunsetStr); err == nil {
-				now := time.Now()
+				// CRITICAL: sunrise/sunset dari worker disimpan dalam WIB
+				// (timezone=Asia/Jakarta). Container API berjalan di UTC,
+				// sehingga time.Now() harus dikonversi ke WIB sebelum
+				// dibandingkan — tanpa ini, jam 20:40 WIB dianggap "siang"
+				// karena 13:40 UTC < 17:30 (yang dianggap UTC padahal WIB).
+				wib, wibErr := time.LoadLocation("Asia/Jakarta")
+				if wibErr != nil {
+					wib = time.FixedZone("WIB", 7*3600)
+				}
+				now := time.Now().In(wib)
 				sunrise, e1 := time.Parse("15:04:05", sunriseStr)
 				sunset, e2 := time.Parse("15:04:05", sunsetStr)
 				if e1 == nil && e2 == nil {
-					today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+					today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, wib)
 					sunriseAt := today.Add(time.Duration(sunrise.Hour())*time.Hour + time.Duration(sunrise.Minute())*time.Minute)
 					sunsetAt := today.Add(time.Duration(sunset.Hour())*time.Hour + time.Duration(sunset.Minute())*time.Minute)
 					remaining := sunsetAt.Sub(now).Hours()
