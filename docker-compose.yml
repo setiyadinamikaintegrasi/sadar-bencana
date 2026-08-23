@@ -88,6 +88,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the Supabase pooled connection string}
       OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      GOOGLE_FLOOD_HUB_API_KEY: ${GOOGLE_FLOOD_HUB_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8080}
       LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
       LLM_MODEL: ${LLM_MODEL:-gemma4-e4b}

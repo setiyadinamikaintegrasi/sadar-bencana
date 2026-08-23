@@ -87,6 +87,7 @@ from connectors.kanari_wildfire import sync_kanari_fire_clusters
 from connectors.sunrise_sunset import sync_region_daylight
 from connectors.open_meteo_air_quality import sync_region_air_quality
 from connectors.openaq_asean import sync_openaq_asean
+from connectors.google_flood_hub import sync_flood_hub
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1200,6 +1201,22 @@ async def _openaq_asean_sync_once() -> dict[str, int]:
         return {"fetched": 0, "upserted": 0}
 
 
+async def _flood_hub_sync_once() -> dict[str, int]:
+    """Sync prakiraan banjir sungai per gauge (Google Flood Hub) — S9-P1.
+
+    Butuh GOOGLE_FLOOD_HUB_API_KEY; tanpa key, sync di-skip aman.
+    """
+    pool = get_pool()
+    try:
+        stats = await sync_flood_hub(pool)
+        if not stats.get("skipped") and stats.get("gauges"):
+            logger.info("Flood Hub: %(gauges)s gauges, %(forecasts)s forecasts", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("Flood Hub sync failed: %s", exc)
+        return {"gauges": 0, "forecasts": 0, "skipped": False}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1399,6 +1416,8 @@ async def startup_event() -> None:
     _air_quality_scheduler.start()
     _openaq_asean_scheduler = NewsScheduler(poll_fn=_openaq_asean_sync_once, interval_seconds=1800)
     _openaq_asean_scheduler.start()
+    _flood_hub_scheduler = NewsScheduler(poll_fn=_flood_hub_sync_once, interval_seconds=10800)
+    _flood_hub_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
