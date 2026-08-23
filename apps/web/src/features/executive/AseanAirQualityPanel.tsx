@@ -69,6 +69,11 @@ export default function AseanAirQualityPanel() {
               <p className="text-[10px] text-slate-400">
                 {entry.station_name || entry.hub_code}
                 {entry.measured_at ? ` · ${new Date(entry.measured_at).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })} WIB` : ''}
+                {entry.is_stale && (
+                  <span className="ml-1 rounded bg-slate-700 px-1 py-0.5 font-semibold text-slate-300" title={`Pengukuran ${entry.age_hours >= 720 ? Math.round(entry.age_hours / 720) + ' bulan' : Math.round(entry.age_hours / 24) + ' hari'} lalu — stasiun ground sering tertunda; model satelit di panel Situasi Wilayah tetap real-time`}>
+                    data lama
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -86,6 +91,14 @@ export default function AseanAirQualityPanel() {
               <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${aqiTone(entry.aqi_category)}`}>
                 {entry.aqi_category}
               </span>
+              {typeof entry.model_pm25 === 'number' && (
+                <span
+                  className="hidden rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300 md:inline"
+                  title={`Perbandingan: stasiun ground ${entry.pm25.toFixed(1)} vs model satelit CAMS ${entry.model_pm25.toFixed(1)} µg/m³`}
+                >
+                  model {entry.model_pm25.toFixed(0)}
+                </span>
+              )}
             </div>
           </div>
         ))}
