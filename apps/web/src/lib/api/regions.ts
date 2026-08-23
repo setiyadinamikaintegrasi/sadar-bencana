@@ -20,6 +20,12 @@ export type RegionForecastDay = {
 
 export type RegionSituation = {
   forecast?: RegionForecastDay[]
+  daylight?: {
+    sunrise: string
+    sunset: string
+    daylight_remaining_hours: number
+    is_night: boolean
+  }
   code: string
   name: string
   bbox: [number, number, number, number]
