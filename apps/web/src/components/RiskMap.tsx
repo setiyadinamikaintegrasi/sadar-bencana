@@ -9,6 +9,17 @@ const INDONESIA_CENTER: [number, number] = [-2.5, 118]
 
 export type PerilFilter = 'all' | 'earthquake' | 'wildfire' | 'volcano' | 'flood' | 'news'
 
+export type FloodHubGaugeMarker = {
+  gauge_id: string
+  latitude: number
+  longitude: number
+  river_name: string
+  station_name: string
+  severity_level: number
+  severity_label: string
+  value: number
+}
+
 export function operationalMapPerils(filter: PerilFilter): string[] {
   return ['earthquake', 'wildfire', 'volcano', 'flood'].includes(filter) ? [filter] : []
 }
@@ -536,6 +547,7 @@ interface RiskMapProps {
   overlayFocusNonce?: number
   timelineHoursAgo: number
   visibleOverlayClasses: ReadonlySet<RiskOverlayClass>
+  floodHubGauges?: FloodHubGaugeMarker[]
   height?: number | string
 }
 
@@ -550,6 +562,7 @@ export default function RiskMap({
   overlayFocusNonce = 0,
   timelineHoursAgo,
   visibleOverlayClasses,
+  floodHubGauges = [],
   height = 430,
 }: RiskMapProps) {
   useEffect(() => {
@@ -644,6 +657,43 @@ export default function RiskMap({
             style={{ height: '100%', width: '100%', background: '#020617' }}
           >
             <MiniMapController events={visibleEvents.length > 0 ? visibleEvents : events} selectedEvent={selectedEvent} />
+
+            {/* Prakiraan banjir sungai (Google Flood Hub) — gauge marker
+                warna per severity; hanya dirender bila data tersedia. */}
+            {floodHubGauges.map((gauge) => (
+              <CircleMarker
+                key={`fh-${gauge.gauge_id}`}
+                center={[gauge.latitude, gauge.longitude]}
+                radius={gauge.severity_level >= 3 ? 9 : 7}
+                pathOptions={{
+                  color: gauge.severity_level >= 3 ? '#fb7185' : gauge.severity_level === 2 ? '#fbbf24' : '#34d399',
+                  weight: 2,
+                  fillColor: gauge.severity_level >= 3 ? '#fb7185' : gauge.severity_level === 2 ? '#fbbf24' : '#34d399',
+                  fillOpacity: gauge.severity_level >= 2 ? 0.55 : 0.3,
+                  dashArray: gauge.severity_level === 1 ? '3 3' : undefined,
+                }}
+              >
+                <Popup>
+                  <div style={{ minWidth: 170 }}>
+                    <strong>💧 {gauge.river_name || gauge.station_name || 'Sungai'}</strong>
+                    <br />
+                    <span style={{
+                      color: gauge.severity_level >= 3 ? '#fb7185' : gauge.severity_level === 2 ? '#fbbf24' : '#34d399',
+                      fontWeight: 700,
+                    }}>
+                      {gauge.severity_label}
+                    </span>
+                    <br />
+                    <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+                      {gauge.station_name}
+                      {gauge.value > 0 ? ` · ${gauge.value.toFixed(2)} m` : ''}
+                    </span>
+                    <br />
+                    <span style={{ color: '#64748b', fontSize: '10px' }}>Prakiraan banjir · Google Flood Hub</span>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            ))}
             <OverlayFocusController overlay={selectedOverlay} focusNonce={overlayFocusNonce} />
             <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
 

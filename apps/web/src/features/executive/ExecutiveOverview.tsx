@@ -22,6 +22,7 @@ import NewsPanel from '../../components/NewsPanel'
 import LiveVideoDesk from './LiveVideoDesk'
 import BmkgWarningsPanel from './BmkgWarningsPanel'
 import RegionSituationPanel from './RegionSituationPanel'
+import { fetchFloodHubGauges, type FloodHubGauge } from '../../lib/api/floodHub'
 import AseanAirQualityPanel from './AseanAirQualityPanel'
 import { toOfficialAlertOverlays } from './bmkgPresentation'
 import { useBmkgWarnings } from './useBmkgWarnings'
@@ -201,6 +202,7 @@ export default function ExecutiveOverview({
   }, [])
 
   const [events, setEvents] = useState<Event[]>([])
+  const [floodHubGauges, setFloodHubGauges] = useState<FloodHubGauge[]>([])
   // Total aktivitas nyata 72 jam (dari meta API) vs feed terkurasi.
   const [eventsWindowTotal, setEventsWindowTotal] = useState<number | null>(null)
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -249,6 +251,14 @@ export default function ExecutiveOverview({
         getConnectorHealth().catch(() => []),
         getMapOverlays().catch(() => []),
       ])
+      // Prakiraan banjir Google Flood Hub — graceful: kosong bila API key
+      // belum diset di worker (auto-hide, tanpa error).
+      try {
+        const fh = await fetchFloodHubGauges()
+        setFloodHubGauges(fh.data ?? [])
+      } catch {
+        setFloodHubGauges([])
+      }
       setEvents(eventsResult.data)
       setEventsWindowTotal(eventsResult.meta.window_total ?? null)
       setMeta(metaData)
@@ -549,8 +559,23 @@ export default function ExecutiveOverview({
       .forEach((item) => features.push({
         type: 'Feature', id: `news-${item.id}`, geometry: { type: 'Point', coordinates: [item.lon!, item.lat!] }, properties: { kind: 'news', label: item.title },
       }))
+    // Prakiraan banjir sungai (Google Flood Hub) — titik gauge; warna
+    // severity via kind terpisah agar mudah dibedakan dari news pin.
+    floodHubGauges
+      .filter((gauge) => gauge.severity_level >= 2) // Normal tidak perlu ditonjolkan
+      .forEach((gauge) => {
+        features.push({
+          type: 'Feature',
+          id: `flood-hub-${gauge.gauge_id}`,
+          geometry: { type: 'Point', coordinates: [gauge.longitude, gauge.latitude] },
+          properties: {
+            kind: 'flood-hub-gauge',
+            label: `💧 ${gauge.river_name || gauge.station_name} — ${gauge.severity_label}`,
+          },
+        })
+      })
     return { type: 'FeatureCollection', features }
-  }, [activePerilFilter, combinedMapOverlays, news, visibleOverlayClasses])
+  }, [activePerilFilter, combinedMapOverlays, floodHubGauges, news, visibleOverlayClasses])
   const operationalFocusRequest = useMemo<OperationalMapFocusRequest | null>(() => {
     if (eventFocusRequest) return eventFocusRequest
     if (!officialAlertFocus) return null
@@ -928,6 +953,7 @@ export default function ExecutiveOverview({
                 overlayFocusNonce={officialAlertFocus?.nonce}
                 timelineHoursAgo={timelineHoursAgo}
                 visibleOverlayClasses={visibleOverlayClasses}
+                floodHubGauges={floodHubGauges}
                 height="min(58vh, 680px)"
               />
             )}
