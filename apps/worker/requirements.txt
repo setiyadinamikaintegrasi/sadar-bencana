@@ -6,7 +6,6 @@ python-dotenv==1.2.3
 asyncpg==0.31.0
 aiohttp==3.14.3
 # WorldPop grid importer (importers/worldpop_grid.py)
-# numpy>=2.5 butuh Python>=3.12 (CI & Dockerfile sudah 3.12)
-numpy>=2.0
-tifffile>=2024.8.30
-imagecodecs>=2024.9.22
+numpy>=2.5.2
+tifffile>=2026.8.16
+imagecodecs>=2026.8.16
