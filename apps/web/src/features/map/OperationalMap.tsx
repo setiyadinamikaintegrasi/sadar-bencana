@@ -14,6 +14,12 @@ import { floodAreasLayer } from './layers/floodAreas'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { fetchLatestSatelliteIRFrame, satelliteIRFallbackFrame, satelliteIRLayer, type SatelliteIRFrame } from './layers/satelliteIR'
+import {
+  applyGibsLayer,
+  fetchLatestGibsFrame,
+  setGibsLayerVisible,
+  type GibsFrame,
+} from './layers/satelliteGibs'
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
 import { patchDarkStyle } from './darkStyle'
 import { PitchControl } from './PitchControl'
@@ -267,8 +273,16 @@ export default function OperationalMap({
   const radarVisibleRef = useRef(false)
   // Overlay satelit inframerah (NASA GIBS Himawari) + tanggal vintage.
   const [irOn, setIrOn] = useState(false)
+  const [truecolorOn, setTruecolorOn] = useState(false)
+  const [floodOn, setFloodOn] = useState(false)
+  const [aerosolOn, setAerosolOn] = useState(false)
+  const [truecolorVintage, setTruecolorVintage] = useState<string | null>(null)
+  const [floodVintage, setFloodVintage] = useState<string | null>(null)
+  const [aerosolVintage, setAerosolVintage] = useState<string | null>(null)
   const [irVintage, setIrVintage] = useState<string | null>(null)
   const irVisibleRef = useRef(false)
+  const gibsVisibleRef = useRef({ truecolor: false, flood: false, aerosol: false })
+  const gibsFramesRef = useRef<Record<'truecolor' | 'flood' | 'aerosol', GibsFrame | null>>({ truecolor: null, flood: null, aerosol: null })
   // Terrain 3D (DEM AWS Terrarium) + proyeksi globe.
   const [terrainOn, setTerrainOn] = useState(false)
   const [globeOn, setGlobeOn] = useState(false)
@@ -654,6 +668,20 @@ export default function OperationalMap({
           void fetchLatestSatelliteIRFrame().then(applyIR)
         }, SATELLITE_IR_REFRESH_MS)
 
+        // Layer citra satelit GIBS (S10): true color / deteksi banjir /
+        // aerosol — dipasang tersembunyi; granule harian, refresh jarang.
+        const applyGibs = (key: 'truecolor' | 'flood' | 'aerosol') => (frame: GibsFrame | null) => {
+          if (!map || disposed) return
+          gibsFramesRef.current[key] = frame
+          if (frame) applyGibsLayer(map, key, frame)
+          setGibsLayerVisible(map, key, gibsVisibleRef.current[key])
+          const setters = { truecolor: setTruecolorVintage, flood: setFloodVintage, aerosol: setAerosolVintage } as const
+          setters[key](frame?.date ?? null)
+        }
+        void fetchLatestGibsFrame('truecolor').then(applyGibs('truecolor'))
+        void fetchLatestGibsFrame('flood').then(applyGibs('flood'))
+        void fetchLatestGibsFrame('aerosol').then(applyGibs('aerosol'))
+
         // Terrain 3D (AWS Terrarium) + hillshade: dipasang sekali (sembunyi),
         // diaktifkan lewat toggle legenda. Globe dipulihkan dari state toggle.
         terrainLayer.apply(map)
@@ -673,6 +701,13 @@ export default function OperationalMap({
       weatherRadarLayer.setVisible(m, radarVisibleRef.current)
       satelliteIRLayer.apply(m, irFrameRef.current ?? satelliteIRFallbackFrame())
       satelliteIRLayer.setVisible(m, irVisibleRef.current)
+      ;(['truecolor', 'flood', 'aerosol'] as const).forEach((key) => {
+        const frame = gibsFramesRef.current[key]
+        if (frame) {
+          applyGibsLayer(m, key, frame)
+          setGibsLayerVisible(m, key, gibsVisibleRef.current[key])
+        }
+      })
       terrainLayer.apply(m)
       terrainLayer.setVisible(m, terrainVisibleRef.current)
       if (globeRef.current) setGlobeProjection(m, true)
@@ -1038,6 +1073,24 @@ export default function OperationalMap({
     if (mapRef.current) satelliteIRLayer.setVisible(mapRef.current, next)
   }
 
+  const toggleTruecolor = (next: boolean) => {
+    setTruecolorOn(next)
+    gibsVisibleRef.current.truecolor = next
+    if (mapRef.current) setGibsLayerVisible(mapRef.current, 'truecolor', next)
+  }
+
+  const toggleFloodSatellite = (next: boolean) => {
+    setFloodOn(next)
+    gibsVisibleRef.current.flood = next
+    if (mapRef.current) setGibsLayerVisible(mapRef.current, 'flood', next)
+  }
+
+  const toggleAerosol = (next: boolean) => {
+    setAerosolOn(next)
+    gibsVisibleRef.current.aerosol = next
+    if (mapRef.current) setGibsLayerVisible(mapRef.current, 'aerosol', next)
+  }
+
   const toggleTerrain = (next: boolean) => {
     setTerrainOn(next)
     terrainVisibleRef.current = next
@@ -1115,6 +1168,15 @@ export default function OperationalMap({
               irOn={irOn}
               irVintage={irVintage}
               onToggleIR={toggleSatelliteIR}
+              truecolorOn={truecolorOn}
+              truecolorVintage={truecolorVintage}
+              onToggleTruecolor={toggleTruecolor}
+              floodSatOn={floodOn}
+              floodSatVintage={floodVintage}
+              onToggleFloodSat={toggleFloodSatellite}
+              aerosolOn={aerosolOn}
+              aerosolVintage={aerosolVintage}
+              onToggleAerosol={toggleAerosol}
               terrainOn={terrainOn}
               onToggleTerrain={toggleTerrain}
               globeOn={globeOn}

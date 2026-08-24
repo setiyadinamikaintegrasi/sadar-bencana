@@ -570,7 +570,8 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
     // Shakemap kini opt-in murni — hanya layer aktif yang diambil.
-    expect(requests).toHaveLength(1)
+    // (+3 probe granule GIBS: truecolor/flood/aerosol — HEAD request)
+    expect(requests).toHaveLength(4)
 
     map.getCenter = vi.fn(() => ({ lng: 106.812345, lat: -6.212345 }))
     map.getZoom = vi.fn(() => 16)
@@ -581,7 +582,7 @@ describe('OperationalMap', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
-    expect(requests).toHaveLength(2)
+    expect(requests).toHaveLength(5)
   })
 
   it('shows an accessible fallback when MapLibre cannot construct a map', () => {
@@ -663,7 +664,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(fetchMock).toHaveBeenCalledTimes(7)
+    expect(fetchMock).toHaveBeenCalledTimes(10)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
@@ -855,7 +856,8 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(fetchMock).not.toHaveBeenCalled()
+    // (+3 HEAD probe granule GIBS — tidak mengambil data layer public)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(map.addSource).toHaveBeenCalledWith(
       'operational-map-evacuations-source',
       expect.objectContaining({ data: collection }),
@@ -873,7 +875,9 @@ describe('OperationalMap', () => {
       'operational-map-evacuations-source',
     )
     expect(source.setData).toHaveBeenCalledWith(emptyCollection)
-    expect(fetchMock).not.toHaveBeenCalled()
+    // Probe granule GIBS (HEAD, 3x) tetap jalan di mode controlled — bukan
+    // pengambilan layer publik; data layer dikendalikan parent.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('selects and refocuses a source-qualified controlled feature request', async () => {
@@ -1135,7 +1139,10 @@ describe('OperationalMap', () => {
   it('immediately aborts and invalidates an in-flight viewport request before debounce completion', async () => {
     const requests: Array<{ resolve: (response: Response) => void; signal: AbortSignal | undefined }> = []
     vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise<Response>((resolve) => {
-      requests.push({ resolve, signal: init?.signal ?? undefined })
+      if ((init as RequestInit | undefined)?.method !== 'HEAD') {
+        // Probe granule GIBS (HEAD) tidak terkait abort viewport — dikecualikan.
+        requests.push({ resolve, signal: init?.signal ?? undefined })
+      }
     }))
 
     render(<OperationalMap />)
