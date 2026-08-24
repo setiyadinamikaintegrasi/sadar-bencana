@@ -85,8 +85,7 @@ from connectors.petabencana_flood_areas import sync_flood_areas
 from connectors.open_meteo import sync_weather_forecasts
 from connectors.kanari_wildfire import sync_kanari_fire_clusters
 from connectors.sunrise_sunset import sync_region_daylight
-from connectors.open_meteo_air_quality import sync_region_air_quality
-from connectors.openaq_asean import sync_openaq_asean
+from connectors.open_meteo_air_quality import sync_region_air_quality, sync_asean_air_quality_cams
 from connectors.google_flood_hub import sync_flood_hub
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
@@ -1185,19 +1184,20 @@ async def _air_quality_sync_once() -> dict[str, int]:
 
 
 async def _openaq_asean_sync_once() -> dict[str, int]:
-    """Sync kualitas udara stasiun ASEAN (OpenAQ ground) — S8-P6.
+    """Sync kualitas udara hub ASEAN via CAMS satelit live — S8-P7c.
 
-    Butuh OPENAQ_API_KEY; tanpa key, sync di-skip dengan aman
-    (Open-Meteo AQ tetap berjalan sebagai sumber utama).
+    Menggantikan stasiun ground OpenAQ: data ground mayoritas usang
+    (>30 hari) sehingga menampilkan berita usang; CAMS memberi nilai
+    jam-ini (lihat S8-P6 → P7c di connector).
     """
     pool = get_pool()
     try:
-        stats = await sync_openaq_asean(pool)
+        stats = await sync_asean_air_quality_cams(pool)
         if stats.get("upserted"):
-            logger.info("OpenAQ ASEAN: %(fetched)s fetched, %(upserted)s upserted", stats)
+            logger.info("ASEAN AQ (CAMS): %(fetched)s fetched, %(upserted)s upserted", stats)
         return stats
     except Exception as exc:
-        logger.warning("OpenAQ ASEAN sync failed: %s", exc)
+        logger.warning("ASEAN AQ (CAMS) sync failed: %s", exc)
         return {"fetched": 0, "upserted": 0}
 
 
@@ -1414,7 +1414,7 @@ async def startup_event() -> None:
     _daylight_scheduler.start()
     _air_quality_scheduler = NewsScheduler(poll_fn=_air_quality_sync_once, interval_seconds=3600)
     _air_quality_scheduler.start()
-    _openaq_asean_scheduler = NewsScheduler(poll_fn=_openaq_asean_sync_once, interval_seconds=1800)
+    _openaq_asean_scheduler = NewsScheduler(poll_fn=_openaq_asean_sync_once, interval_seconds=3600)
     _openaq_asean_scheduler.start()
     _flood_hub_scheduler = NewsScheduler(poll_fn=_flood_hub_sync_once, interval_seconds=10800)
     _flood_hub_scheduler.start()
