@@ -74,14 +74,21 @@ async def fetch_nearest_measurement(
     if not results:
         return None
 
-    # Urutkan kandidat berdasarkan freshness (datetimeLast) — pilih
-    # stasiun dgn data TERBARU yang punya sensor pm25, bukan sekadar
-    # yang pertama ditemukan.
+    # Pilih stasiun berdasarkan FRESHNESS PM25 AKTUAL, bukan
+    # datetimeLast lokasi (datetimeLast = max semua sensor termasuk
+    # meteo — stasiun dgn pm25 lama bisa 'kelihatan' fresh; bug
+    # Taman Tun KL: loc.last hari ini tapi pm25 stuck 2024).
+    # Strategi: cek kandidat dgn pm25 sensor (maks 5 utk hemat API
+    # quota), ambil yg timestamp measurement pm25-nya paling baru.
     def _last_utc(loc: dict) -> str:
         return (loc.get("datetimeLast") or {}).get("utc", "")
-    results = sorted(results, key=_last_utc, reverse=True)
+    candidates = sorted(results, key=_last_utc, reverse=True)
 
-    for location in results:
+    best: dict | None = None
+    checked = 0
+    for location in candidates:
+        if checked >= 5:
+            break  # cukup — kandidat selanjutnya makin stale by loc
         loc_id = location.get("id")
         if not loc_id:
             continue
@@ -92,13 +99,16 @@ async def fetch_nearest_measurement(
         sensor_id = pm25_sensor.get("id")
         if not sensor_id:
             continue
+        checked += 1
 
-        # Fetch latest measurement utk sensor ini.
+        # Fetch latest measurement utk sensor pm25 ini.
         meas_resp = await client.get(
             f"{OPENAQ_BASE_URL}/sensors/{sensor_id}/measurements",
             params={"limit": 1, "sort": "desc"},
             headers={"X-API-Key": api_key},
         )
+        if meas_resp.status_code in (429, 500):
+            continue  # stasiun bermasalah — lanjut kandidat berikutnya
         meas_resp.raise_for_status()
         meas = (meas_resp.json().get("results") or [{}])[0]
         value = meas.get("value")
@@ -112,13 +122,20 @@ async def fetch_nearest_measurement(
                 measured_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
             except ValueError:
                 measured_at = None
-        return {
+        entry = {
             "station_name": location.get("name", ""),
             "station_id": loc_id,
             "pm25": float(value),
             "measured_at": measured_at,
         }
-    return None
+        # Simpan kandidat dgn pm25 TERBARU (None timestamp dianggap tertua).
+        if best is None:
+            best = entry
+        else:
+            best_ts = best.get("measured_at")
+            if measured_at is not None and (best_ts is None or measured_at > best_ts):
+                best = entry
+    return best
 
 
 def pm25_to_aqi_category(pm25: float) -> str:

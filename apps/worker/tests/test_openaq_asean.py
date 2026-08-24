@@ -121,17 +121,27 @@ class TestSyncSkipsWithoutKey:
 
 
 class TestFreshnessSorting:
+    """Strategi S8-P7b: pilih stasiun berdasarkan timestamp PM25 AKTUAL
+    (bukan datetimeLast lokasi yang bisa menyesatkan — bug Taman Tun)."""
+
     @pytest.mark.asyncio
-    async def test_prefers_freshest_station(self):
+    async def test_prefers_freshest_pm25_not_location_last(self):
+        # Stale-by-pm25: loc.datetimeLast BARU (dari sensor meteo) tapi
+        # pm25-nya lama — harus kalah dari stasiun dgn pm25 baru.
+        measurements = {
+            "11": {"value": 50.0, "period": {"datetimeTo": {"utc": "2024-12-23T07:00:00Z"}}},
+            "22": {"value": 42.0, "period": {"datetimeTo": {"utc": "2026-08-23T10:00:00Z"}}},
+        }
+
         class Resp:
             status_code = 200
             def raise_for_status(self): pass
             def json(self):
                 return {"results": [
-                    {"id": 1, "name": "Stale Station",
-                     "datetimeLast": {"utc": "2020-01-01T00:00:00Z"},
+                    {"id": 1, "name": "Meteo Fresh, PM25 Stale",
+                     "datetimeLast": {"utc": "2026-08-24T06:00:00Z"},
                      "sensors": [{"id": 11, "parameter": {"name": "pm25"}}]},
-                    {"id": 2, "name": "Fresh Station",
+                    {"id": 2, "name": "PM25 Fresh Station",
                      "datetimeLast": {"utc": "2026-08-23T10:00:00Z"},
                      "sensors": [{"id": 22, "parameter": {"name": "pm25"}}]},
                 ]}
@@ -139,19 +149,76 @@ class TestFreshnessSorting:
         class MeasResp:
             status_code = 200
             def raise_for_status(self): pass
+            def __init__(self, payload):
+                self._payload = payload
             def json(self):
-                return {"results": [{"value": 42.0, "period": {"datetimeTo": {"utc": "2026-08-23T10:00:00Z"}}}]}
-
-        calls = {"sensor_ids": []}
+                return {"results": [self._payload]}
 
         class FakeClient:
             async def get(self, url, **kwargs):
                 if "/locations" in url:
                     return Resp()
-                calls["sensor_ids"].append(url.split("/sensors/")[1].split("/")[0])
-                return MeasResp()
+                sid = url.split("/sensors/")[1].split("/")[0]
+                return MeasResp(measurements[sid])
 
         data = await fetch_nearest_measurement(FakeClient(), "key", 0, 0)
         assert data is not None
-        assert data["station_name"] == "Fresh Station"
-        assert calls["sensor_ids"] == ["22"]  # sensor stasiun fresh yang dipanggil
+        # PM25 Fresh menang meski loc.datetimeLast-nya lebih lama
+        assert data["station_name"] == "PM25 Fresh Station"
+        assert data["measured_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_caps_candidates_at_five(self):
+        sensors = [{"id": i, "parameter": {"name": "pm25"}} for i in range(1, 9)]
+        class Resp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"results": [
+                    {"id": i, "name": f"S{i}", "datetimeLast": {"utc": "2026-08-23T10:00:00Z"}, "sensors": [s]}
+                    for i, s in enumerate(sensors, 1)
+                ]}
+        class MeasResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"results": [{"value": 10.0, "period": {"datetimeTo": {"utc": "2026-08-20T10:00:00Z"}}}]}
+        calls = {"n": 0}
+        class FakeClient:
+            async def get(self, url, **kwargs):
+                if "/locations" in url:
+                    return Resp()
+                calls["n"] += 1
+                return MeasResp()
+        await fetch_nearest_measurement(FakeClient(), "key", 0, 0)
+        assert calls["n"] <= 5
+
+    @pytest.mark.asyncio
+    async def test_skips_erroring_sensor(self):
+        class Resp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"results": [
+                    {"id": 1, "name": "Broken", "datetimeLast": {"utc": "2026-08-24T00:00:00Z"},
+                     "sensors": [{"id": 11, "parameter": {"name": "pm25"}}]},
+                    {"id": 2, "name": "Works", "datetimeLast": {"utc": "2026-08-23T00:00:00Z"},
+                     "sensors": [{"id": 22, "parameter": {"name": "pm25"}}]},
+                ]}
+        class Err:
+            status_code = 429
+            def raise_for_status(self): pass
+            def json(self): return {}
+        class Ok:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"results": [{"value": 20.0, "period": {"datetimeTo": {"utc": "2026-08-22T10:00:00Z"}}}]}
+        class FakeClient:
+            async def get(self, url, **kwargs):
+                if "/locations" in url:
+                    return Resp()
+                sid = url.split("/sensors/")[1].split("/")[0]
+                return Err() if sid == "11" else Ok()
+        data = await fetch_nearest_measurement(FakeClient(), "key", 0, 0)
+        assert data is not None and data["station_name"] == "Works"
