@@ -86,6 +86,7 @@ from connectors.open_meteo import sync_weather_forecasts
 from connectors.kanari_wildfire import sync_kanari_fire_clusters
 from connectors.sunrise_sunset import sync_region_daylight
 from connectors.open_meteo_air_quality import sync_region_air_quality, sync_asean_air_quality_cams
+from historical_backfill_runner import run_historical_backfill
 from connectors.google_flood_hub import sync_flood_hub
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
@@ -1516,6 +1517,19 @@ async def regional_analysis(request: RegionalAnalysisRequest) -> dict[str, Any]:
     output = analyze_regional_snapshot(request.snapshot, request.question)
     await save_regional_analysis(get_pool(), request.question, request.snapshot, output)
     return {"data": output}
+
+
+@app.post("/api/v1/worker/historical/warehouse-backfill")
+async def historical_warehouse_backfill() -> dict[str, Any]:
+    """Backfill warehouse historis dari USGS + GDACS (Fase 3B 2/2).
+
+    One-shot per pemanggilan; idempoten di level event (ON CONFLICT
+    DO NOTHING pada source_record_id dataset).
+    """
+    pool = get_pool()
+    stats = await run_historical_backfill(pool)
+    logger.info("Historical warehouse backfill: %s", stats)
+    return stats
 
 
 @app.post("/api/v1/worker/historical/backfill/{job_id}")
