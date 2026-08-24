@@ -243,6 +243,7 @@ func main() {
 		mapMe.GET("/overlays/me", apihttp.MapRiskOverlaysMe(dbPool))
 	}
 	router.GET("/api/v1/metrics/disaster", apihttp.DisasterMetrics(dbPool))
+	router.GET("/api/v1/historical/regions", apihttp.RegionOptionsList(dbPool))
 	router.GET("/api/v1/historical/regions/:code/profile", apihttp.RegionalHistoryProfile(dbPool))
 
 	// EWS administration contains subscriber contact details and is admin-only.
