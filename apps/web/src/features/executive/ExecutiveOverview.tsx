@@ -784,7 +784,7 @@ export default function ExecutiveOverview({
                   </span>
                 )}
               </div>
-              <p className="mt-1 truncate text-xs text-slate-400">
+              <p className="mt-1 hidden truncate text-xs text-slate-400 md:block">
                 {topRiskScore?.place
                   ? `Top risk: ${topRiskScore.place} · M${topRiskScore.magnitude ?? '—'} · ${topRiskScore.source?.toUpperCase() ?? 'SOURCE'}`
                   : 'Events · RSS · Alerts · Source Health'}
@@ -822,42 +822,6 @@ export default function ExecutiveOverview({
         </section>
       )}
 
-      <section className="flex gap-2 overflow-x-auto pb-1 xl:grid xl:grid-cols-4 xl:overflow-visible" role="group" aria-label="Ringkasan KPI">
-        {kpis.map((item) => {
-          const interactive = Boolean(item.targetId)
-          return (
-            <article
-              key={item.label}
-              className={`min-w-[130px] shrink-0 rounded-2xl border border-slate-800 bg-slate-900/85 px-3 py-2 shadow-xl shadow-slate-950/30 xl:min-w-0 xl:px-4 xl:py-3 ${
-                interactive ? 'cursor-pointer transition hover:border-indigo-400/50 hover:bg-slate-800/85' : ''
-              }`}
-            >
-              {interactive ? (
-                <button
-                  type="button"
-                  onClick={() => document.getElementById(item.targetId!)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                  className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded-2xl"
-                  aria-label={`Lihat detail ${item.label}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
-                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
-                  </div>
-                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
-                </button>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{item.label}</p>
-                    <p className="text-2xl font-bold leading-none text-slate-50">{item.value}</p>
-                  </div>
-                  <p className="mt-2 line-clamp-1 text-xs text-slate-400">{item.caption}</p>
-                </>
-              )}
-            </article>
-          )
-        })}
-      </section>
 
       <section className="rounded-3xl border border-slate-800 bg-slate-900/95 p-2 shadow-2xl shadow-slate-950/50 md:p-5">
         <div className="mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 md:mb-3">
@@ -867,7 +831,7 @@ export default function ExecutiveOverview({
               Interactive command map
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-slate-400">
+          <div className="hidden flex-wrap items-center gap-1.5 text-[11px] font-medium text-slate-400 md:flex">
             {events.length > 0 && eventsWindowTotal != null && (
               <span
                 className="rounded-full border border-slate-800 bg-slate-950/80 px-2.5 py-0.5"
@@ -888,6 +852,33 @@ export default function ExecutiveOverview({
               {news.length} news
             </span>
           </div>
+        </div>
+
+        {/* Ringkasan KPI — strip kompak di dalam kartu peta (di atas canvas):
+            hem layar pertama utk peta (kritik: KPI section terpisah memakan
+            78px + gap; overlay floating menutupi peta → strip inline optimal). */}
+        <div className="mb-1.5 flex gap-1.5 overflow-x-auto pb-0.5 md:grid md:grid-cols-4 md:gap-2 md:overflow-visible md:pb-0">
+          {kpis.map((item) => {
+            const interactive = Boolean(item.targetId)
+            return (
+              <button
+                key={item.label}
+                type={interactive ? 'button' : undefined}
+                onClick={interactive ? () => document.getElementById(item.targetId!)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : undefined}
+                disabled={!interactive}
+                aria-label={interactive ? `Lihat detail ${item.label}` : item.label}
+                title={item.caption}
+                className={`group flex min-w-[128px] shrink-0 items-baseline justify-between gap-2 rounded-xl border px-2.5 py-1.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:min-w-0 ${
+                  interactive
+                    ? 'cursor-pointer border-slate-800 bg-slate-950/70 hover:border-indigo-400/40 hover:bg-slate-900'
+                    : 'cursor-default border-slate-800/60 bg-slate-950/40'
+                }`}
+              >
+                <span className="min-w-0 truncate text-[10px] font-semibold uppercase tracking-wider text-slate-400">{item.label}</span>
+                <span className="shrink-0 text-base font-bold leading-none tabular-nums text-slate-50 md:text-lg">{item.value}</span>
+              </button>
+            )
+          })}
         </div>
 
         {loading ? (
