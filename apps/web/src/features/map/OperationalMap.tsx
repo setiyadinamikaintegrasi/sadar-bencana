@@ -671,12 +671,15 @@ export default function OperationalMap({
         // Layer citra satelit GIBS (S10): true color / deteksi banjir /
         // aerosol — dipasang tersembunyi; granule harian, refresh jarang.
         const applyGibs = (key: 'truecolor' | 'flood' | 'aerosol') => (frame: GibsFrame | null) => {
+          // Vintage selalu diperbarui (meski map sedang disposed) agar
+          // stamp legenda tetap akurat setelah re-mount.
+          const setters = { truecolor: setTruecolorVintage, flood: setFloodVintage, aerosol: setAerosolVintage } as const
+          setters[key](frame?.date ?? null)
+          console.info('[gibs]', key, 'vintage:', frame?.date ?? 'NULL')
           if (!map || disposed) return
           gibsFramesRef.current[key] = frame
           if (frame) applyGibsLayer(map, key, frame)
           setGibsLayerVisible(map, key, gibsVisibleRef.current[key])
-          const setters = { truecolor: setTruecolorVintage, flood: setFloodVintage, aerosol: setAerosolVintage } as const
-          setters[key](frame?.date ?? null)
         }
         void fetchLatestGibsFrame('truecolor').then(applyGibs('truecolor'))
         void fetchLatestGibsFrame('flood').then(applyGibs('flood'))

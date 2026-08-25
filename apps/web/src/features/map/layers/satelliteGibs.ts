@@ -1,19 +1,20 @@
 import type { Map, RasterLayerSpecification, RasterSourceSpecification } from 'maplibre-gl'
 
 /**
- * S10 — Layer citra satelit tambahan dari NASA GIBS (semua gratis tanpa key,
- * terverifikasi live untuk tile Indonesia):
+ * S10 — Layer citra satelit:
  *
- * 1. MODIS_Terra_CorrectedReflectance_TrueColor — citra asli harian 250m.
- *    Asap karhutla, abu vulkanik, dan banjir bandang terlihat langsung.
- *    (Level9 + jpg — beda dari Himawari Level6/png.)
- * 2. MODIS_Combined_Flood_2-Day — deteksi banjir satelit (composite 2 hari),
- *    pelengkap laporan ground PetaBencana.
- * 3. OMPS_Aerosol_Index — sebaran asap/aerosol harian; pasangan visual dari
- *    panel Dampak Asap Lintas Batas.
+ * 1. 'Citra satelit' — ESRI World Imagery (gratis, tanpa key): citra
+ *    resolusi tinggi yang SELALU tersedia. Catatan: NASA GIBS MODIS
+ *    True Color dinilai ulang setelah insiden data hitam luas di Asia
+ *    Tenggara (granule kosong walau HTTP 200) + VIIRS down + Himawari
+ *    stale — upstream bermasalah; ESRI dipilih agar toggle selalu
+ *    menampilkan citra nyata. Vintage = 'live' (basemap statis).
+ * 2. 'Banjir satelit' — MODIS_Combined_Flood_2-Day (GIBS): deteksi banjir
+ *    composite 2 hari, pelengkap laporan ground PetaBencana.
+ * 3. 'Sebaran asap' — OMPS_Aerosol_Index (GIBS): plume aerosol harian.
  *
- * Vintage (tanggal UTC) selalu tersimpan di frame agar UI bisa menampilkan
- * umur data secara jujur (pola stamp Situasi Wilayah).
+ * Layer GIBS memakai probe granule area-data (bukan 0/0/0 yang bisa
+ * mengembalikan placeholder kosong) + fallback H-0/H-1/H-2.
  */
 
 export interface GibsFrame {
@@ -27,27 +28,25 @@ export interface GibsLayerSpec {
   key: 'truecolor' | 'flood' | 'aerosol'
   /** Template URL dgn placeholder {date}. */
   template: string
-  /** Template probe (tile 0/0/0) utk cek ketersediaan granule. */
-  probe: string
+  /** URL probe granule nyata (≥1 harus tersedia). */
+  probe: string[]
   maxzoom: number
   attribution: string
   /** Opacity default — flood lebih tipis agar marker tetap terbaca. */
   opacity: number
 }
 
-function layer9(templateLayer: string): { template: string; probe: string } {
+function layer9(templateLayer: string): { template: string } {
   const base = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${templateLayer}/default/{date}/GoogleMapsCompatible_Level9`
   return {
     template: `${base}/{z}/{x}/{y}.jpg`,
-    probe: `${base}/0/0/0.jpg`,
   }
 }
 
-function layer6(templateLayer: string): { template: string; probe: string } {
+function layer6(templateLayer: string): { template: string } {
   const base = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${templateLayer}/default/{date}/GoogleMapsCompatible_Level6`
   return {
     template: `${base}/{z}/{x}/{y}.png`,
-    probe: `${base}/0/0/0.png`,
   }
 }
 
@@ -55,24 +54,34 @@ const TRUECOLOR = layer9('MODIS_Terra_CorrectedReflectance_TrueColor')
 const FLOOD = layer9('MODIS_Combined_Flood_2-Day')
 const AEROSOL = layer6('OMPS_Aerosol_Index')
 
+// Probe pakai tile area data (bukan 0/0/0 placeholder) — lihat catatan
+// realTileProbe di bawah.
+const TRUECOLOR_PROBES = realTileProbe(TRUECOLOR.template)
+const FLOOD_PROBES = realTileProbe(FLOOD.template)
+const AEROSOL_PROBES = realTileProbe(AEROSOL.template)
+
 export const GIBS_LAYER_SPECS: Record<GibsLayerSpec['key'], GibsLayerSpec> = {
   truecolor: {
     key: 'truecolor',
-    ...TRUECOLOR,
-    maxzoom: 9,
-    attribution: 'Citra satelit © NASA GIBS · MODIS Terra',
+    // ESRI World Imagery — tile xyz klasik (tanpa tanggal), selalu tersedia.
+    template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    probe: [], // basemap statis: tidak perlu probe granule
+    maxzoom: 19,
+    attribution: 'Citra satelit © Esri, Maxar, Earthstar Geographics',
     opacity: 1.0,
   },
   flood: {
     key: 'flood',
     ...FLOOD,
-    maxzoom: 9,
+    probe: FLOOD_PROBES,
+    maxzoom: 4,
     attribution: 'Deteksi banjir satelit © NASA GIBS · MODIS',
     opacity: 0.75,
   },
   aerosol: {
     key: 'aerosol',
     ...AEROSOL,
+    probe: AEROSOL_PROBES,
     maxzoom: 6,
     attribution: 'Indeks aerosol © NASA GIBS · OMPS',
     opacity: 0.7,
@@ -84,13 +93,39 @@ function utcDateString(date: Date): string {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
 }
 
-async function granuleAvailable(probeTemplate: string, date: string, signal?: AbortSignal): Promise<boolean> {
-  try {
-    const response = await fetch(probeTemplate.replace('{date}', date), { method: 'HEAD', signal })
-    return response.ok
-  } catch {
-    return false
-  }
+/**
+ * Probe ketersediaan granule. Pitfall (ditemukan live): GIBS mengembalikan
+ * 200 + tile placeholder KOSONG utk tanggal tanpa granule (awal hari UTC),
+ * sehingga cek 0/0/0 saja menyesatkan — tile nyata tetap 404 dan peta
+ * menjadi hitam. Solusi: probe tile TENGAH area data (z5 di sekitar
+ * Indonesia) yang hanya ada bila granule sungguhan terbit.
+ */
+async function granuleAvailable(probes: string[], date: string, signal?: AbortSignal): Promise<boolean> {
+  const results = await Promise.all(probes.map(async (probe) => {
+    try {
+      const response = await fetch(probe.replace('{date}', date), { method: 'HEAD', signal })
+      return response.ok
+    } catch {
+      return false
+    }
+  }))
+  // Granule layak bila minimal satu tile area data tersedia.
+  return results.some(Boolean)
+}
+
+/**
+ * Probe granule nyata: dua tile di area data (barat=Sumatera 5/26/16,
+ * timur=Maluku 4/13/8-ish via z4). Satu tile tunggal menyesatkan — MODIS
+ * granule harian bisa parsial (pass pagi/sore) sehingga sebagian tile
+ * 404 walau granule 'ada'. Tanggal dianggap layak bila KEDUA probe ada;
+ * MapLibre lalu menangani sisa tile kosong per-tile (yang tampil tetap
+ * tampil, tidak hitam).
+ */
+function realTileProbe(template: string): string[] {
+  return [
+    template.replace('{z}/{x}/{y}', '5/26/16'),
+    template.replace('{z}/{x}/{y}', '4/13/8'),
+  ]
 }
 
 /**
@@ -103,13 +138,20 @@ export async function fetchLatestGibsFrame(
   now = new Date(),
 ): Promise<GibsFrame | null> {
   const spec = GIBS_LAYER_SPECS[key]
-  const today = utcDateString(now)
-  const yesterday = utcDateString(new Date(now.getTime() - 24 * 60 * 60 * 1000))
-  const date = (await granuleAvailable(spec.probe, today, signal))
-    ? today
-    : (await granuleAvailable(spec.probe, yesterday, signal)) ? yesterday : null
-  if (!date) return null
-  return { date, tiles: [spec.template.replace('{date}', date)] }
+  // Basemap statis (ESRI): selalu tersedia, vintage 'live'.
+  if (spec.probe.length === 0) {
+    return { date: 'live', tiles: [spec.template] }
+  }
+  // Coba H-0, H-1, H-2: granule MODIS terbit sore UTC; awal hari UTC
+  // (malam WIB) granule hari-ini belum ada bahkan H-1 kadang belum
+  // lengkap — H-2 praktis selalu tersedia.
+  for (const offset of [0, 1, 2]) {
+    const date = utcDateString(new Date(now.getTime() - offset * 24 * 60 * 60 * 1000))
+    if (await granuleAvailable(spec.probe, date, signal)) {
+      return { date, tiles: [spec.template.replace('{date}', date)] }
+    }
+  }
+  return null
 }
 
 export interface GibsLayerHandle {

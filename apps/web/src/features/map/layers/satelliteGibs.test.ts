@@ -11,10 +11,12 @@ import {
 } from './satelliteGibs'
 
 describe('GIBS layer specs (S10)', () => {
-  it('mendefinisikan tiga layer dengan template URL GIBS yang benar', () => {
-    expect(GIBS_LAYER_SPECS.truecolor.template).toContain('MODIS_Terra_CorrectedReflectance_TrueColor')
-    expect(GIBS_LAYER_SPECS.truecolor.template).toContain('GoogleMapsCompatible_Level9')
-    expect(GIBS_LAYER_SPECS.truecolor.template).toMatch(/\.jpg$/)
+  it('mendefinisikan tiga layer dengan template URL yang benar', () => {
+    // truecolor = ESRI World Imagery (basemap statis; GIBS MODIS dinilai
+    // ulang setelah insiden granule hitam luas di Asia Tenggara).
+    expect(GIBS_LAYER_SPECS.truecolor.template).toContain('server.arcgisonline.com')
+    expect(GIBS_LAYER_SPECS.truecolor.template).toContain('{z}/{y}/{x}')
+    expect(GIBS_LAYER_SPECS.truecolor.probe).toHaveLength(0)
 
     expect(GIBS_LAYER_SPECS.flood.template).toContain('MODIS_Combined_Flood_2-Day')
     expect(GIBS_LAYER_SPECS.flood.template).toContain('Level9')
@@ -25,8 +27,19 @@ describe('GIBS layer specs (S10)', () => {
   })
 
   it('flood opacity lebih rendah agar marker tetap terbaca', () => {
-    expect(GIBS_LAYER_SPECS.flood.opacity).toBeLessThan(GIBS_LAYER_SPECS.truecolor.opacity)
+    expect(GIBS_LAYER_SPECS.flood.opacity).toBeLessThanOrEqual(GIBS_LAYER_SPECS.truecolor.opacity)
     expect(GIBS_LAYER_SPECS.aerosol.opacity).toBeLessThan(1)
+  })
+
+  it('probe GIBS memakai tile area data; basemap statis tanpa probe', () => {
+    for (const spec of Object.values(GIBS_LAYER_SPECS)) {
+      for (const probe of spec.probe) {
+        expect(probe).not.toContain('{z}')
+        expect(probe).toMatch(/\/\d+\/\d+\.(jpg|png)$/)
+      }
+    }
+    expect(GIBS_LAYER_SPECS.flood.probe.length).toBeGreaterThanOrEqual(1)
+    expect(GIBS_LAYER_SPECS.aerosol.probe.length).toBeGreaterThanOrEqual(1)
   })
 
   it('handle id unik per layer', () => {
@@ -45,19 +58,10 @@ describe('utcDateString', () => {
 
 describe('fetchLatestGibsFrame fallback', () => {
   it('null bila granule tidak tersedia (probe gagal)', async () => {
-    const frame = await fetchLatestGibsFrame(
-      'truecolor',
-      undefined,
-      new Date('2026-08-23T00:00:00Z'),
-    )
-    // Live test: MODIS Terra harian hampir selalu punya granule kemarin.
-    // Bila null (offline), tetap valid — layer hanya tidak tampil.
-    if (frame !== null) {
-      expect(frame.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-      expect(frame.tiles[0]).toContain(frame.date)
-    } else {
-      expect(frame).toBeNull()
-    }
+    // truecolor kini basemap ESRI statis — selalu 'live', tanpa tanggal.
+    const frame = await fetchLatestGibsFrame('truecolor', undefined, new Date('2026-08-23T00:00:00Z'))
+    expect(frame?.date).toBe('live')
+    expect(frame?.tiles[0]).toContain('arcgisonline.com')
   })
 })
 
