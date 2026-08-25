@@ -179,11 +179,15 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
           </label>
         ) : null}
         {onToggleFloodSat ? (
-          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+          <label
+            className="operational-map__layer-toggle operational-map__layer-toggle--mode"
+            title={floodSatVintage ? undefined : 'Granule satelit area ini belum tersedia — coba lagi nanti'}
+          >
             <input
               type="checkbox"
               aria-label="Deteksi banjir satelit (MODIS 2 hari)"
               checked={floodSatOn}
+              disabled={!floodSatVintage}
               onChange={() => onToggleFloodSat(!floodSatOn)}
             />
             <span>Banjir satelit</span>
@@ -195,11 +199,15 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
           </label>
         ) : null}
         {onToggleAerosol ? (
-          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+          <label
+            className="operational-map__layer-toggle operational-map__layer-toggle--mode"
+            title={aerosolVintage ? undefined : 'Granule satelit area ini belum tersedia — coba lagi nanti'}
+          >
             <input
               type="checkbox"
               aria-label="Sebaran asap (indeks aerosol OMPS)"
               checked={aerosolOn}
+              disabled={!aerosolVintage}
               onChange={() => onToggleAerosol(!aerosolOn)}
             />
             <span>Sebaran asap</span>
