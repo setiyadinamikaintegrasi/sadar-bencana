@@ -43,7 +43,9 @@ export function SwipeCompareControl({ map, active, onToggle }: SwipeCompareContr
     if (!map || !active) return
     const canvas = map.getCanvas()
     const container = canvas.parentElement
-    canvas.style.clipPath = `inset(0 0 0 ${position}%)`
+    // Peta utama (data) dipotong sisi kanan — sisi kiri memperlihatkan
+    // peta satelit yang berada di belakangnya.
+    canvas.style.clipPath = `inset(0 ${position}% 0 0)`
     // Latar citra statis z4 area Indonesia — indikasi visual sisi kiri.
     if (container) {
       container.style.background = 'url(https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/3/4/6) center / cover no-repeat'

@@ -25,6 +25,7 @@ import { patchDarkStyle } from './darkStyle'
 import { PitchControl } from './PitchControl'
 import { View3DPresetButton } from './View3DPresetButton'
 import { SwipeCompareControl } from './SwipeCompareControl'
+import { SatelliteCompareMap } from './SatelliteCompareMap'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -1281,7 +1282,10 @@ export default function OperationalMap({
           ) : null}
           {/* S11b — pembanding geser satelit vs data. */}
           {mode === 'viewer' && !fallback ? (
-            <SwipeCompareControl map={mapInstance} active={swipeCompareOn} onToggle={toggleSwipeCompare} />
+            <>
+              <SatelliteCompareMap sourceMap={mapInstance} active={swipeCompareOn} />
+              <SwipeCompareControl map={mapInstance} active={swipeCompareOn} onToggle={toggleSwipeCompare} />
+            </>
           ) : null}
           <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
         </>

@@ -725,3 +725,15 @@
   pointer-events: none;
   z-index: 4;
 }
+
+/* S11b v2 — Peta kedua (citra satelit) overlay di belakang peta utama. */
+.operational-map__satellite-compare {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* Peta kedua harus di bawah canvas peta utama (yang di-clip). */
+.operational-map__canvas .maplibregl-canvas-container .maplibregl-canvas {
+  /* pastikan canvas utama menutup satelit pada sisi yang tidak ter-clip */
+}
