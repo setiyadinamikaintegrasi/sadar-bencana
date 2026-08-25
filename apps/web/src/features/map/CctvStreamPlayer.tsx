@@ -7,17 +7,36 @@ import Hls from 'hls.js'
  * memakai hls.js. Graceful: gagal memuat → pesan + tautan langsung.
  */
 
-const ALLOWED_STREAM_HOSTS = [
-  'jid.jasamarga.com',
-  'jmlive.jasamarga.com',
-  'live.banyuwangikab.go.id',
-  'cctv.jogjaprov.go.id',
-]
-
+/**
+ * Validasi stream publik: protokol HTTPS + hostname bukan alamat
+ * lokal/pribadi (anti SSRF). Semua stream berasal dari katalog resmi
+ * BPJT (bpjt.pu.go.id) — 30+ server publik BUJT (Jasa Marga, Hutama
+ * Karya pub2.hk-opt.com, Waskita cctv.waskitabumiwira.com, dll.),
+ * sehingga whitelist manual per-host tidak praktis.
+ */
 function isTrustedStream(url: string): boolean {
   try {
-    const hostname = new URL(url).hostname
-    return ALLOWED_STREAM_HOSTS.some((host) => hostname === host || hostname.endsWith(`.${host}`))
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') return false
+    if (parsed.username || parsed.password) return false
+    const hostname = parsed.hostname.toLowerCase()
+    // Blokir alamat lokal/pribadi/loopback (anti SSRF).
+    if (
+      hostname === 'localhost'
+      || hostname.endsWith('.localhost')
+      || hostname.endsWith('.local')
+      || hostname.endsWith('.internal')
+      || /^127\./.test(hostname)
+      || /^10\./.test(hostname)
+      || /^192\.168\./.test(hostname)
+      || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+      || /^169\.254\./.test(hostname)
+      || hostname === '0.0.0.0'
+      || hostname === '[::1]'
+    ) return false
+    // Harus punya dot (bukan hostname kosong/tunggal).
+    if (!hostname.includes('.')) return false
+    return true
   } catch {
     return false
   }
