@@ -880,8 +880,12 @@ describe('OperationalMap', () => {
       'operational-map-evacuations-source',
     )
     expect(source.setData).toHaveBeenCalledWith(emptyCollection)
-    // (+2 probe granule GIBS flood/aerosol + 1 prefetch tile ESRI truecolor)
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    // Mode controlled: TIDAK ADA fetch API internal — eksternal (GIBS/ESRI)
+    // dikecualikan karena jumlahnya bervariasi antar lingkungan.
+    const internalOnly = (fetchMock.mock.calls as unknown as Array<[unknown]>)
+      .filter(([u]) => !String(u).includes('earthdata.nasa.gov') && !String(u).includes('arcgisonline.com'))
+      .length
+    expect(internalOnly).toBe(0)
   })
 
   it('selects and refocuses a source-qualified controlled feature request', async () => {
