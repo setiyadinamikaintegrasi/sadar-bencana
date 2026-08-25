@@ -216,7 +216,31 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
       </header>
       {properties.layer === 'cctv' && properties.stream_url ? (
         <section className="operational-map__cctv-preview" aria-label="Stream CCTV">
-          <CctvStreamPlayer streamUrl={properties.stream_url} label={properties.label} />
+          {properties.stream_protocol === 'portal' ? (
+            <div className="rounded-lg border border-sky-400/30 bg-sky-500/10 p-3 text-center text-xs text-sky-200">
+              <p>Stream kamera ini diputar melalui portal resmi operator (perlu sesi login).</p>
+              <div className="mt-2 flex flex-col gap-1.5">
+                <a
+                  href="https://bpjt.pu.go.id/cctv/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block rounded-lg bg-sky-500/20 px-3 py-1.5 font-semibold text-sky-100 underline"
+                >
+                  Tonton di portal CCTV BPJT ↗
+                </a>
+                <a
+                  href={properties.stream_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-sky-300/80 underline"
+                >
+                  Buka tautan stream operator ↗
+                </a>
+              </div>
+            </div>
+          ) : (
+            <CctvStreamPlayer streamUrl={properties.stream_url} label={properties.label} />
+          )}
           <p className="operational-map__cctv-meta">
             {properties.is_online ? (
               <span className="text-emerald-300">● Online</span>
