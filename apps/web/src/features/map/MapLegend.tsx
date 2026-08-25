@@ -30,6 +30,15 @@ interface MapLegendProps {
   irOn?: boolean
   irVintage?: string | null
   onToggleIR?: (next: boolean) => void
+  truecolorOn?: boolean
+  truecolorVintage?: string | null
+  onToggleTruecolor?: (next: boolean) => void
+  floodSatOn?: boolean
+  floodSatVintage?: string | null
+  onToggleFloodSat?: (next: boolean) => void
+  aerosolOn?: boolean
+  aerosolVintage?: string | null
+  onToggleAerosol?: (next: boolean) => void
   /** Terrain 3D (AWS Terrarium) + hillshade. */
   terrainOn?: boolean
   onToggleTerrain?: (next: boolean) => void
@@ -68,7 +77,7 @@ function fallbackState(result: PublicMapLayerResult | undefined): PublicMapLayer
   }
 }
 
-export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, irOn = false, irVintage = null, onToggleIR, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme, onExportSnapshot }: MapLegendProps) {
+export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatmapOn = false, onToggleHeatmap, radarOn = false, radarVintage = null, onToggleRadar, irOn = false, irVintage = null, onToggleIR, truecolorOn = false, truecolorVintage = null, onToggleTruecolor, floodSatOn = false, floodSatVintage = null, onToggleFloodSat, aerosolOn = false, aerosolVintage = null, onToggleAerosol, terrainOn = false, onToggleTerrain, globeOn = false, onToggleGlobe, theme = 'light', onToggleTheme, onExportSnapshot }: MapLegendProps) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
   // Di layar kecil legenda diringkas agar tidak menutupi peta; pengguna bisa
   // membukanya lewat summary. Desktop tetap terbuka.
@@ -148,6 +157,54 @@ export function MapLegend({ enabledLayers, results, layerStates, onToggle, heatm
             {irOn && irVintage ? (
               <span className="operational-map__layer-health" title="Tanggal granule satelit (UTC)">
                 {irVintage}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+        {onToggleTruecolor ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Citra satelit warna asli (MODIS Terra, harian)"
+              checked={truecolorOn}
+              onChange={() => onToggleTruecolor(!truecolorOn)}
+            />
+            <span>Citra satelit</span>
+            {truecolorOn && truecolorVintage ? (
+              <span className="operational-map__layer-health" title="Tanggal granule MODIS Terra (UTC) — asap karhutla dan abu vulkanik terlihat langsung">
+                {truecolorVintage}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+        {onToggleFloodSat ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Deteksi banjir satelit (MODIS 2 hari)"
+              checked={floodSatOn}
+              onChange={() => onToggleFloodSat(!floodSatOn)}
+            />
+            <span>Banjir satelit</span>
+            {floodSatOn && floodSatVintage ? (
+              <span className="operational-map__layer-health" title="Composite deteksi banjir MODIS (UTC) — pelengkap laporan ground">
+                {floodSatVintage}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+        {onToggleAerosol ? (
+          <label className="operational-map__layer-toggle operational-map__layer-toggle--mode">
+            <input
+              type="checkbox"
+              aria-label="Sebaran asap (indeks aerosol OMPS)"
+              checked={aerosolOn}
+              onChange={() => onToggleAerosol(!aerosolOn)}
+            />
+            <span>Sebaran asap</span>
+            {aerosolOn && aerosolVintage ? (
+              <span className="operational-map__layer-health" title="Tanggal indeks aerosol OMPS (UTC) — pasangan visual panel asap lintas batas">
+                {aerosolVintage}
               </span>
             ) : null}
           </label>
