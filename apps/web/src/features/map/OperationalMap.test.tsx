@@ -1303,13 +1303,14 @@ describe('OperationalMap', () => {
     const deferredFailures: Array<(response: Response) => void> = []
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const asUrl = String(url)
+      // Fetch eksternal (tile ESRI/GIBS oleh MapLibre): resolve langsung 404,
+      // TIDAK masuk deferredFailures — jumlahnya bervariasi antar lingkungan.
+      if (asUrl.includes('earthdata.nasa.gov') || asUrl.includes('arcgisonline.com')) {
+        return Promise.resolve(new Response('', { status: 404 }))
+      }
       const layer = asUrl.includes('/alerts') ? 'alerts' : asUrl.includes('/air-quality')
         ? 'air-quality' : asUrl.includes('/evacuations') ? 'evacuations' : 'events'
-      // Fetch eksternal (tile ESRI/GIBS oleh MapLibre) tidak di-defer —
-      // jumlahnya bervariasi antar lingkungan dan merusak determinisme.
-      const isExternal = asUrl.includes('earthdata.nasa.gov') || asUrl.includes('arcgisonline.com')
-      if (failedRefresh && !isExternal) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
-      if (failedRefresh && isExternal) return Promise.resolve(new Response('', { status: 404 }))
+      if (failedRefresh) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
       return Promise.resolve(new Response(JSON.stringify({
         type: 'FeatureCollection', layer, truncated: layer === 'events',
         features: layer === 'events' ? [{
