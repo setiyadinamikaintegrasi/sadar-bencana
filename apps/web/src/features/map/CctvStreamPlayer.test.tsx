@@ -27,15 +27,15 @@ describe('CctvStreamPlayer (S12b)', () => {
 
   it('menolak stream non-HTTPS', () => {
     render(<CctvStreamPlayer streamUrl="http://example.com/x.m3u8" label="test" />)
-    expect(screen.getByText(/tidak dapat dimuat/i)).toBeTruthy()
+    expect(screen.getByText(/tidak dapat diputar langsung/i)).toBeTruthy()
   })
 
   it('menolak stream host lokal (anti-SSRF)', () => {
     const { unmount: u1 } = render(<CctvStreamPlayer streamUrl="https://192.168.1.1/x.m3u8" label="test" />)
-    expect(screen.getByText(/tidak dapat dimuat/i)).toBeTruthy()
+    expect(screen.getByText(/tidak dapat diputar langsung/i)).toBeTruthy()
     u1()
     const { unmount: u2 } = render(<CctvStreamPlayer streamUrl="https://localhost/x.m3u8" label="test" />)
-    expect(screen.getByText(/tidak dapat dimuat/i)).toBeTruthy()
+    expect(screen.getByText(/tidak dapat diputar langsung/i)).toBeTruthy()
     u2()
   })
 

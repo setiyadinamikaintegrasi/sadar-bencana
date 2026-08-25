@@ -74,6 +74,7 @@ export function CctvStreamPlayer({ streamUrl, label }: { streamUrl: string; labe
         void video.play().catch(() => setStatus('error'))
       })
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        // Fatal (manifest invalid/HTML balasan server session-expired) → fallback.
         if (data.fatal) setStatus('error')
       })
     } else {
@@ -89,15 +90,18 @@ export function CctvStreamPlayer({ streamUrl, label }: { streamUrl: string; labe
 
   if (status === 'error') {
     return (
-      <div className="rounded-lg border border-rose-400/30 bg-rose-500/10 p-3 text-center text-xs text-rose-200">
-        <p>Stream tidak dapat dimuat dari perangkat ini.</p>
+      <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 p-3 text-center text-xs text-amber-200">
+        <p>Stream CCTV tidak dapat diputar langsung di sini.</p>
+        <p className="mt-1 text-[10px] text-amber-300/80">
+          Server operator mungkin membatasi sesi atau memerlukan kunjungan langsung.
+        </p>
         <a
           href={streamUrl}
           target="_blank"
           rel="noreferrer"
-          className="mt-1 inline-block font-semibold text-rose-100 underline"
+          className="mt-2 inline-block rounded-lg bg-amber-500/20 px-3 py-1.5 font-semibold text-amber-100 underline"
         >
-          Buka stream langsung ↗
+          Buka stream di server resmi ↗
         </a>
       </div>
     )
