@@ -682,7 +682,8 @@ describe('OperationalMap', () => {
     // Hitung hanya fetch API internal — tile/probe eksternal (GIBS, ESRI,
     // IR refresh) bervariasi antar lingkungan & timing CI.
     const internalCalls = (fetchMock.mock.calls as unknown as Array<[unknown]>).filter(([u]) => !isExternalRequest(u)).length
-    expect(internalCalls).toBe(7)
+    // +1 layer cctv (S12) ikut dimuat paralel.
+    expect(internalCalls).toBe(8)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-air-quality-source', expect.anything())
@@ -1175,7 +1176,7 @@ describe('OperationalMap', () => {
       await Promise.resolve()
     })
 
-    expect(requests).toHaveLength(7)
+    expect(requests).toHaveLength(8)
     act(() => map.trigger('moveend'))
     expect(requests.every((request) => request.signal?.aborted)).toBe(true)
 
@@ -1323,6 +1324,13 @@ describe('OperationalMap', () => {
       if (isExternalRequest(asUrl)) {
         return Promise.resolve(new Response('', { status: 404 }))
       }
+      // Layer CCTV (S12) statis — resolve langsung, tidak di-defer agar
+      // assertion jumlah deferred tetap deterministik.
+      if (asUrl.includes('operations/cctv')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          type: 'FeatureCollection', layer: 'cctv', truncated: false, features: [],
+        }), { status: 200 }))
+      }
       const layer = asUrl.includes('/alerts') ? 'alerts' : asUrl.includes('/air-quality')
         ? 'air-quality' : asUrl.includes('/evacuations') ? 'evacuations' : 'events'
       if (failedRefresh) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
@@ -1364,8 +1372,17 @@ describe('OperationalMap', () => {
     let failedRefresh = false
     const deferredFailures: Array<(response: Response) => void> = []
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
-      const layer = String(url).includes('/alerts') ? 'alerts' : String(url).includes('/air-quality')
-        ? 'air-quality' : String(url).includes('/evacuations') ? 'evacuations' : 'events'
+      const asUrl = String(url)
+      if (isExternalRequest(asUrl)) {
+        return Promise.resolve(new Response('', { status: 404 }))
+      }
+      if (asUrl.includes('operations/cctv')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          type: 'FeatureCollection', layer: 'cctv', truncated: false, features: [],
+        }), { status: 200 }))
+      }
+      const layer = asUrl.includes('/alerts') ? 'alerts' : asUrl.includes('/air-quality')
+        ? 'air-quality' : asUrl.includes('/evacuations') ? 'evacuations' : 'events'
       if (failedRefresh) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
       return Promise.resolve(new Response(JSON.stringify({
         type: 'FeatureCollection', layer, truncated: false,

@@ -738,3 +738,15 @@
 .operational-map__canvas .maplibregl-canvas-container .maplibregl-canvas {
   /* pastikan canvas utama menutup satelit pada sisi yang tidak ter-clip */
 }
+
+/* S12b — CCTV jalan tol: preview stream + meta di detail sheet. */
+.operational-map__cctv-preview {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.operational-map__cctv-meta {
+  margin-top: 0.4rem;
+  font-size: 10px;
+  color: #94a3b8;
+}
