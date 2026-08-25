@@ -81,7 +81,7 @@ class TestParseCameras:
         assert jagorawi["km_point"] == "JAGORAWI KM 04+500 | B"
         assert jagorawi["operator_code"] == "jm"
         assert jagorawi["is_online"] is True
-        assert "jid.jasamarga.com" in jagorawi["stream_url"]
+        assert jagorawi["stream_url"].startswith("https://jid.jasamarga.com/")
 
         hk = next(p for p in parsed if p["camera_id"] == "100-2-5")
         assert hk["operator_code"] == "hk"
