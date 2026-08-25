@@ -88,6 +88,7 @@ from connectors.sunrise_sunset import sync_region_daylight
 from connectors.open_meteo_air_quality import sync_region_air_quality, sync_asean_air_quality_cams
 from historical_backfill_runner import run_historical_backfill
 from connectors.google_flood_hub import sync_flood_hub
+from connectors.bpjt_cctv import sync_bpjt_cctv
 from connectors.petabencana_flood import PetaBencanaFloodConnector
 from connectors.rss_news import RSSNewsConnector
 from connectors.usgs import USGSConnector
@@ -1218,6 +1219,22 @@ async def _flood_hub_sync_once() -> dict[str, int]:
         return {"gauges": 0, "forecasts": 0, "skipped": False}
 
 
+async def _bpjt_cctv_sync_once() -> dict[str, int]:
+    """Sync CCTV jalan tol resmi (BPJT Kementerian PUPR + BUJT) — S12a.
+
+    Katalog kamera relatif statis (lokasi tetap) — sync 12 jam cukup.
+    """
+    pool = get_pool()
+    try:
+        stats = await sync_bpjt_cctv(pool)
+        if stats["upserted"]:
+            logger.info("BPJT CCTV: %(fetched)s fetched, %(upserted)s upserted", stats)
+        return stats
+    except Exception as exc:
+        logger.warning("BPJT CCTV sync failed: %s", exc)
+        return {"fetched": 0, "upserted": 0}
+
+
 async def _asset_poll_cycle() -> dict[str, int]:
     """Poll OpenSky (REST) + drain AIS buffer + poll VesselFinder, then upsert to DB.
 
@@ -1419,6 +1436,8 @@ async def startup_event() -> None:
     _openaq_asean_scheduler.start()
     _flood_hub_scheduler = NewsScheduler(poll_fn=_flood_hub_sync_once, interval_seconds=10800)
     _flood_hub_scheduler.start()
+    _bpjt_cctv_scheduler = NewsScheduler(poll_fn=_bpjt_cctv_sync_once, interval_seconds=43200)
+    _bpjt_cctv_scheduler.start()
 
     if _env_enabled("CONNECTOR_EVACUATION_OSM_ENABLED"):
         _evacuation_scheduler = EvacuationSyncScheduler(sync_fn=_evacuation_sync_once)
