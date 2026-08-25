@@ -500,10 +500,13 @@ export default function ExecutiveOverview({
       setActivePerilFilter(perilType as PerilFilter)
     }
     setSelectedEvent(null)
+    // S11a — fly-through sinematik: kamera miring 60° menuju wilayah,
+    // memutar bearing 15° utk kesan gerak, lalu membelit halus.
     setEventFocusRequest((current) => ({
       id: `region-${center[0].toFixed(2)}-${center[1].toFixed(2)}`,
       geometry: { type: 'Point', coordinates: [center[0], center[1]] },
       nonce: (current?.nonce ?? 0) + 1,
+      cinematic: { pitch: 60, zoom: 6.5, bearing: 15 },
     }))
   }, [])
 

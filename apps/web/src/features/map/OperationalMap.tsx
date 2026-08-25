@@ -24,6 +24,7 @@ import { setGlobeProjection, terrainLayer } from './layers/terrain'
 import { patchDarkStyle } from './darkStyle'
 import { PitchControl } from './PitchControl'
 import { View3DPresetButton } from './View3DPresetButton'
+import { SwipeCompareControl } from './SwipeCompareControl'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -43,6 +44,13 @@ export type OperationalMapFocusRequest = {
   id?: string
   geometry?: GeoJSON.Geometry
   nonce: number
+  /** Mode sinematik (S11a fly-through wilayah): pitch miring + zoom
+   *  lebih dekat — dipakai fokus dari panel Situasi Wilayah. */
+  cinematic?: {
+    pitch?: number
+    zoom?: number
+    bearing?: number
+  }
 }
 
 const MAP_REFRESH_DEBOUNCE_MS = 250
@@ -275,6 +283,7 @@ export default function OperationalMap({
   // Overlay satelit inframerah (NASA GIBS Himawari) + tanggal vintage.
   const [irOn, setIrOn] = useState(false)
   const [truecolorOn, setTruecolorOn] = useState(false)
+  const [swipeCompareOn, setSwipeCompareOn] = useState(false)
   const [floodOn, setFloodOn] = useState(false)
   const [aerosolOn, setAerosolOn] = useState(false)
   const [truecolorVintage, setTruecolorVintage] = useState<string | null>(null)
@@ -328,10 +337,22 @@ export default function OperationalMap({
     // Cache style gelap ter-patch (fetch sekali per sesi peta).
     let darkStyleCache: StyleSpecification | null = null
 
-    const focusGeometry = (geometry: GeoJSON.Geometry) => {
+    const focusGeometry = (geometry: GeoJSON.Geometry, cinematic?: OperationalMapFocusRequest['cinematic']) => {
       if (!map) return
       suppressNextCameraWrite = true
       if (geometry.type === 'Point') {
+        if (cinematic) {
+          // S11a — fly-through sinematik: miring, dekat, berputar lembut.
+          map.easeTo({
+            center: geometry.coordinates as [number, number],
+            zoom: Math.min(Math.max(map.getZoom(), cinematic.zoom ?? 6.5), 8),
+            pitch: Math.min(cinematic.pitch ?? 60, 70),
+            bearing: cinematic.bearing ?? 0,
+            duration: 1800,
+            essential: true,
+          })
+          return
+        }
         map.easeTo({ center: geometry.coordinates as [number, number], zoom: Math.max(map.getZoom(), 7) })
         return
       }
@@ -353,9 +374,9 @@ export default function OperationalMap({
         : undefined
       if (selected) {
         setSelectedFeature(selected)
-        if (lastFocusedRequestKey !== requestKey) focusGeometry(selected.geometry)
+        if (lastFocusedRequestKey !== requestKey) focusGeometry(selected.geometry, request.cinematic)
       } else if (request.geometry) {
-        if (lastFocusedRequestKey !== requestKey) focusGeometry(request.geometry)
+        if (lastFocusedRequestKey !== requestKey) focusGeometry(request.geometry, request.cinematic)
       }
       if (selected || request.geometry) lastFocusedRequestKey = requestKey
     }
@@ -1117,6 +1138,21 @@ export default function OperationalMap({
     }
   }
 
+  // S11b — swipe compare: satelit (kiri) vs data overlay (kanan).
+  // Aktif: truecolor dinyalakan penuh; canvas utama di-clip dari
+  // kiri sehingga sisi kiri memperlihatkan latar citra satelit
+  // (container background), kanan = map data. Praktis & mulus.
+  const toggleSwipeCompare = (next: boolean) => {
+    setSwipeCompareOn(next)
+    if (next) {
+      toggleTruecolor(true)
+      if (mapRef.current) {
+        mapRef.current.easeTo({ pitch: 0, duration: 400, essential: true })
+      }
+    }
+    // Saat off: biarkan truecolor spt adanya (user bisa matikan sendiri).
+  }
+
   const deactivateView3D = () => {
     toggleTruecolor(false)
     toggleTerrain(false)
@@ -1242,6 +1278,10 @@ export default function OperationalMap({
               onActivate={activateView3D}
               onDeactivate={deactivateView3D}
             />
+          ) : null}
+          {/* S11b — pembanding geser satelit vs data. */}
+          {mode === 'viewer' && !fallback ? (
+            <SwipeCompareControl map={mapInstance} active={swipeCompareOn} onToggle={toggleSwipeCompare} />
           ) : null}
           <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
         </>

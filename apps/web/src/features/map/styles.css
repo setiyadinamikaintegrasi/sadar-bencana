@@ -662,3 +662,66 @@
 .operational-map__3d-preset--active:hover {
   background: rgba(99, 102, 241, 0.35);
 }
+
+/* S11b — Swipe Compare: kiri citra satelit, kanan data overlay. */
+.operational-map__swipe-compare {
+  position: absolute;
+  z-index: 3;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.operational-map__swipe-compare__toggle--active,
+.operational-map__swipe-compare button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.operational-map__swipe-compare button:hover {
+  background: rgba(99, 102, 241, 0.25);
+}
+
+.operational-map__swipe-compare__toggle--active {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: rgba(129, 140, 248, 0.6);
+}
+
+.operational-map__swipe-compare__slider {
+  width: 9rem;
+  accent-color: #6366f1;
+}
+
+.operational-map__swipe-compare__label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.85);
+  border-radius: 6px;
+  padding: 2px 6px;
+  pointer-events: none;
+}
+
+.operational-map__swipe-compare__line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #818cf8;
+  box-shadow: 0 0 8px rgba(129, 140, 248, 0.8);
+  pointer-events: none;
+  z-index: 4;
+}
