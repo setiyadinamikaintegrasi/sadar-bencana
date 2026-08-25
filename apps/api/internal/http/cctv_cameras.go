@@ -134,6 +134,12 @@ func CctvCamerasGeoJSON(db *sql.DB) gin.HandlerFunc {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "row_scan_failed"})
 				return
 			}
+			label := cam.KmPoint
+			if label == "" {
+				label = cam.TollRoadName
+			}
+			// Kontrak wire map (lihat isFeature frontend): wajib id, layer,
+			// label, source, attribution, verification_status.
 			features = append(features, map[string]any{
 				"type": "Feature",
 				"id":   cam.CameraID,
@@ -142,17 +148,25 @@ func CctvCamerasGeoJSON(db *sql.DB) gin.HandlerFunc {
 					"coordinates": []float64{cam.Longitude, cam.Latitude},
 				},
 				"properties": map[string]any{
-					"toll_road":      cam.TollRoadName,
-					"km":             cam.KmPoint,
-					"operator":       cam.OperatorName,
-					"operator_code":  cam.OperatorCode,
-					"stream_url":     cam.StreamURL,
-					"is_online":      cam.IsOnline,
+					"id":                  cam.CameraID,
+					"layer":               "cctv",
+					"label":               label,
+					"source":              cam.OperatorCode,
+					"attribution":         "BPJT Kementerian PUPR · " + cam.OperatorName,
+					"verification_status": "official",
+					"toll_road":           cam.TollRoadName,
+					"km":                  cam.KmPoint,
+					"operator":            cam.OperatorName,
+					"operator_code":       cam.OperatorCode,
+					"stream_url":          cam.StreamURL,
+					"is_online":           cam.IsOnline,
 				},
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"type":     "FeatureCollection",
+			"layer":    "cctv",
+			"truncated": false,
 			"features": features,
 		})
 	}

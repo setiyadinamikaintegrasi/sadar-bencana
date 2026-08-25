@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import SeverityBadge from '../../components/SeverityBadge'
 import { IMPACT_RADIUS_KM, useImpactSummary } from './impactSummary'
 import type { OperationalMapFeature, OperationalMapFeatureProperties } from './types'
+import { CctvStreamPlayer } from './CctvStreamPlayer'
 
 interface MapDetailSheetProps {
   feature: OperationalMapFeature | null
@@ -213,6 +214,19 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
           <X aria-hidden="true" size={14} />
         </button>
       </header>
+      {properties.layer === 'cctv' && properties.stream_url ? (
+        <section className="operational-map__cctv-preview" aria-label="Stream CCTV">
+          <CctvStreamPlayer streamUrl={properties.stream_url} label={properties.label} />
+          <p className="operational-map__cctv-meta">
+            {properties.is_online ? (
+              <span className="text-emerald-300">● Online</span>
+            ) : (
+              <span className="text-slate-400">○ Offline</span>
+            )}
+            {properties.operator ? <span> · {properties.operator}</span> : null}
+          </p>
+        </section>
+      ) : null}
       <dl className="operational-map__detail-list">
         {properties.magnitude != null ? (
           <DetailRow label="Magnitudo">
@@ -221,6 +235,12 @@ export function MapDetailSheet({ feature, onClose }: MapDetailSheetProps) {
         ) : null}
         {properties.place ? <DetailRow label="Lokasi">{properties.place}</DetailRow> : null}
         <DetailRow label="Sumber">{properties.source}</DetailRow>
+        {properties.layer === 'cctv' && properties.toll_road ? (
+          <DetailRow label="Ruas tol">{properties.toll_road}</DetailRow>
+        ) : null}
+        {properties.layer === 'cctv' && properties.km ? (
+          <DetailRow label="Titik">{properties.km}</DetailRow>
+        ) : null}
         {properties.severity ? (
           <DetailRow label="Severity">
             <SeverityBadge severity={properties.severity} pulse />

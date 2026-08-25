@@ -11,6 +11,7 @@ import { EVENTS_CLUSTERS_LAYER_ID, EVENTS_PULSE_LAYERS, eventsLayer, rebuildClus
 import { advanceAircraftPositions, aircraftLayer } from './layers/aircraft'
 import { shakemapLayer } from './layers/shakemap'
 import { floodAreasLayer } from './layers/floodAreas'
+import { cctvLayer } from './layers/cctv'
 import { OFFICIAL_ALERTS_PULSE_LAYERS, officialAlertsLayer } from './layers/officialAlerts'
 import { fallbackFrame, fetchLatestWeatherRadarFrame, weatherRadarLayer, type WeatherRadarFrame } from './layers/weatherRadar'
 import { fetchLatestSatelliteIRFrame, satelliteIRFallbackFrame, satelliteIRLayer, type SatelliteIRFrame } from './layers/satelliteIR'
@@ -92,6 +93,7 @@ const layerAdapters = {
   aircraft: aircraftLayer,
   shakemaps: shakemapLayer,
   'flood-areas': floodAreasLayer,
+  cctv: cctvLayer,
 } as const
 
 // Interval animasi pesawat (dead-reckoning antar refresh data).
@@ -857,6 +859,8 @@ export default function OperationalMap({
     // Referensi handler stabil agar on/off klik klaster selalu berpasangan.
     const expandEventCluster = expandClusterFor(eventsLayer.sourceId)
     const expandLocalCluster = expandClusterFor(localPrivateOverlayAdapter.sourceId)
+    // S12b — klaster CCTV jalan tol: klik = perbesar ke kamera individual.
+    const expandCctvCluster = expandClusterFor(cctvLayer.sourceId)
 
     // Registrasi interaksi layer (klik, klaster, hover). Dipakai saat
     // inisialisasi DAN setelah setStyle (tema basemap) yang menghapus layer.
@@ -868,6 +872,8 @@ export default function OperationalMap({
       m.on('click', EVENTS_CLUSTERS_LAYER_ID, expandEventCluster)
       // Klaster overlay lokal (mis. tumpukan berita) ikut bisa diperbesar.
       m.on('click', localPrivateOverlayAdapter.layerIds[2], expandLocalCluster)
+      // S12b — klaster CCTV (ribuan kamera) ikut bisa diperbesar.
+      m.on('click', cctvLayer.layerIds[0], expandCctvCluster)
       for (const layerId of HOVERABLE_LAYER_IDS) {
         m.on('mousemove', layerId, hoverFeatureFromEvent)
         m.on('mouseleave', layerId, clearHover)

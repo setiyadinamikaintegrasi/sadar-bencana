@@ -6,6 +6,7 @@ export const PUBLIC_OPERATIONAL_MAP_LAYERS = [
   'aircraft',
   'shakemaps',
   'flood-areas',
+  'cctv',
 ] as const
 
 export const PRIVATE_OPERATIONAL_MAP_LAYERS = [
@@ -25,6 +26,7 @@ export const OPERATIONAL_MAP_WIRE_LAYERS = [
   'aircraft',
   'shakemaps',
   'flood-areas',
+  'cctv',
   'watch-zones',
   'personal-assets',
 ] as const
@@ -69,6 +71,13 @@ export interface OperationalMapFeatureProperties {
   location_type?: string
   open?: boolean
   full?: boolean
+  /** CCTV jalan tol (S12): ruas tol, titik KM, operator, stream. */
+  toll_road?: string
+  km?: string
+  operator?: string
+  operator_code?: string
+  stream_url?: string
+  is_online?: boolean
 }
 
 export interface OperationalMapFeature {

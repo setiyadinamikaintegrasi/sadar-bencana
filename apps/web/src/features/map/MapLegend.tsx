@@ -12,6 +12,7 @@ const LAYER_LABELS: Record<PublicOperationalMapLayer, string> = {
   aircraft: 'Lalu lintas udara',
   shakemaps: 'Shakemap MMI',
   'flood-areas': 'Genangan banjir',
+  cctv: 'CCTV jalan tol',
 }
 
 interface MapLegendProps {

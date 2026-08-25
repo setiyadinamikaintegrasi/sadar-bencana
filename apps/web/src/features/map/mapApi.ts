@@ -20,6 +20,7 @@ export const publicMapEndpoints = {
   aircraft: '/map/operations/aircraft',
   shakemaps: '/map/operations/shakemaps',
   'flood-areas': '/map/operations/flood-areas',
+  cctv: '/map/operations/cctv',
 } as const satisfies Record<PublicOperationalMapLayer, string>
 
 export const privateMapEndpoints = {
@@ -35,6 +36,7 @@ const publicMapWireLayers: Record<PublicOperationalMapLayer, OperationalMapWireL
   aircraft: 'aircraft',
   shakemaps: 'shakemaps',
   'flood-areas': 'flood-areas',
+  cctv: 'cctv',
 }
 
 const EVENT_PERILS = new Set(['earthquake', 'wildfire', 'flood', 'volcano'])
