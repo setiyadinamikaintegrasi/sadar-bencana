@@ -619,3 +619,46 @@
     padding: 0.375rem 0.5rem;
   }
 }
+
+/* S10b — Preset "Tampilan 3D": satelit + terrain + tilt satu klik.
+   Posisi tepat di atas kontrol pitch (kiri-bawah) — satu kelompok
+   kontrol kamera. */
+.operational-map__3d-preset {
+  position: absolute;
+  z-index: 2;
+  bottom: 9.5rem; /* pitch ctrl 3rem + tinggi 3 tombol ~6rem + margin */
+  left: 0.5rem;
+  display: flex;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.operational-map__3d-preset button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.operational-map__3d-preset button:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.operational-map__3d-preset button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.operational-map__3d-preset--active {
+  background: rgba(99, 102, 241, 0.25);
+}
+
+.operational-map__3d-preset--active:hover {
+  background: rgba(99, 102, 241, 0.35);
+}
