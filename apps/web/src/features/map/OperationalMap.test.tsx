@@ -210,6 +210,21 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
 })
 
+
+/**
+ * Cek request eksternal (tile GIBS/ESRI) dgn hostname EKSAK — bukan
+ * substring (menghindari CodeQL js/incomplete-url-substring-sanitization;
+ * includes('domain') bisa loloskan host jahat).
+ */
+function isExternalRequest(raw: unknown): boolean {
+  try {
+    const hostname = new URL(String(raw)).hostname
+    return hostname === 'gibs.earthdata.nasa.gov' || hostname === 'server.arcgisonline.com'
+  } catch {
+    return false
+  }
+}
+
 describe('OperationalMap', () => {
   it('creates one viewer map from the URL camera and removes it on unmount', () => {
     window.history.replaceState({}, '', '/?mapLng=106.8456&mapLat=-6.2088&mapZoom=9')
@@ -666,7 +681,7 @@ describe('OperationalMap', () => {
 
     // Hitung hanya fetch API internal — tile/probe eksternal (GIBS, ESRI,
     // IR refresh) bervariasi antar lingkungan & timing CI.
-    const internalCalls = (fetchMock.mock.calls as unknown as Array<[unknown]>).filter(([u]) => !String(u).includes('earthdata.nasa.gov') && !String(u).includes('arcgisonline.com')).length
+    const internalCalls = (fetchMock.mock.calls as unknown as Array<[unknown]>).filter(([u]) => !isExternalRequest(u)).length
     expect(internalCalls).toBe(7)
     expect(map.addSource).toHaveBeenCalledWith('operational-map-events-source', expect.anything())
     expect(map.addSource).toHaveBeenCalledWith('operational-map-official-alerts-source', expect.anything())
@@ -861,7 +876,7 @@ describe('OperationalMap', () => {
 
     // Mode controlled: TIDAK ADA fetch API internal (layer dari parent);
     // tile/probe eksternal dikecualikan karena bervariasi.
-    const internalCalls2 = (fetchMock.mock.calls as unknown as Array<[unknown]>).filter(([u]) => !String(u).includes('earthdata.nasa.gov') && !String(u).includes('arcgisonline.com')).length
+    const internalCalls2 = (fetchMock.mock.calls as unknown as Array<[unknown]>).filter(([u]) => !isExternalRequest(u)).length
     expect(internalCalls2).toBe(0)
     expect(map.addSource).toHaveBeenCalledWith(
       'operational-map-evacuations-source',
@@ -883,7 +898,7 @@ describe('OperationalMap', () => {
     // Mode controlled: TIDAK ADA fetch API internal — eksternal (GIBS/ESRI)
     // dikecualikan karena jumlahnya bervariasi antar lingkungan.
     const internalOnly = (fetchMock.mock.calls as unknown as Array<[unknown]>)
-      .filter(([u]) => !String(u).includes('earthdata.nasa.gov') && !String(u).includes('arcgisonline.com'))
+      .filter(([u]) => !isExternalRequest(u))
       .length
     expect(internalOnly).toBe(0)
   })
@@ -1303,13 +1318,14 @@ describe('OperationalMap', () => {
     const deferredFailures: Array<(response: Response) => void> = []
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const asUrl = String(url)
+      // Fetch eksternal (tile ESRI/GIBS oleh MapLibre): resolve langsung 404,
+      // TIDAK masuk deferredFailures — jumlahnya bervariasi antar lingkungan.
+      if (isExternalRequest(asUrl)) {
+        return Promise.resolve(new Response('', { status: 404 }))
+      }
       const layer = asUrl.includes('/alerts') ? 'alerts' : asUrl.includes('/air-quality')
         ? 'air-quality' : asUrl.includes('/evacuations') ? 'evacuations' : 'events'
-      // Fetch eksternal (tile ESRI/GIBS oleh MapLibre) tidak di-defer —
-      // jumlahnya bervariasi antar lingkungan dan merusak determinisme.
-      const isExternal = asUrl.includes('earthdata.nasa.gov') || asUrl.includes('arcgisonline.com')
-      if (failedRefresh && !isExternal) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
-      if (failedRefresh && isExternal) return Promise.resolve(new Response('', { status: 404 }))
+      if (failedRefresh) return new Promise<Response>((resolve) => deferredFailures.push(resolve))
       return Promise.resolve(new Response(JSON.stringify({
         type: 'FeatureCollection', layer, truncated: layer === 'events',
         features: layer === 'events' ? [{
