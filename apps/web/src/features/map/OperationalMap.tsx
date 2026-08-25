@@ -23,6 +23,7 @@ import {
 import { setGlobeProjection, terrainLayer } from './layers/terrain'
 import { patchDarkStyle } from './darkStyle'
 import { PitchControl } from './PitchControl'
+import { View3DPresetButton } from './View3DPresetButton'
 import { localPrivateOverlayAdapter, privateLayerAdapters } from './layers/private'
 import { readMapViewState, writeMapViewState, type MapViewState } from './state'
 import { OPERATIONAL_MAP_WIRE_LAYERS, type OperationalMapFeature, type OperationalMapFeatureCollection, type OperationalMapFeatureProperties, type PrivateOperationalMapLayer, type PublicOperationalMapLayer } from './types'
@@ -1106,6 +1107,24 @@ export default function OperationalMap({
     if (mapRef.current) setGlobeProjection(mapRef.current, next)
   }
 
+  // Preset "Tampilan 3D" (S10b): satelit + terrain + pitch 55 deg + zoom.
+  // Klik lagi kembali ke standar (basemap gelap, terrain off, pitch 0).
+  const activateView3D = () => {
+    toggleTruecolor(true)
+    toggleTerrain(true)
+    if (mapRef.current) {
+      mapRef.current.easeTo({ pitch: 55, zoom: Math.min(mapRef.current.getZoom() + 0.5, 12), duration: 650 })
+    }
+  }
+
+  const deactivateView3D = () => {
+    toggleTruecolor(false)
+    toggleTerrain(false)
+    if (mapRef.current) {
+      mapRef.current.easeTo({ pitch: 0, bearing: 0, duration: 500 })
+    }
+  }
+
   const toggleTheme = (next: OperationalMapTheme) => {
     applyThemeRef.current?.(next)
   }
@@ -1216,6 +1235,14 @@ export default function OperationalMap({
           ) : null}
           {/* Kontrol kemiringan peta (tilt) tanpa ctrl+drag. */}
           {mode === 'viewer' && !fallback ? <PitchControl map={mapInstance} /> : null}
+          {/* Preset Tampilan 3D: satelit + terrain + tilt dalam satu klik (S10b). */}
+          {mode === 'viewer' && !fallback ? (
+            <View3DPresetButton
+              active={truecolorOn && terrainOn}
+              onActivate={activateView3D}
+              onDeactivate={deactivateView3D}
+            />
+          ) : null}
           <MapDetailSheet feature={selectedFeature} onClose={() => setSelectedFeature(null)} />
         </>
       )}
