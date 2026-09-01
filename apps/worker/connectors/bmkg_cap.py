@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import ParseResult, urljoin, urlparse
 
@@ -108,6 +108,53 @@ def parse_bmkg_cap_rss(xml_text: str) -> list[str]:
         if len(urls) >= MAX_ACTIVE_ALERTS:
             break
     return urls
+
+
+def newest_pub_date(xml_text: str) -> datetime | None:
+    """pubDate terbaru dari item feed (parse RFC 822) — None bila kosong.
+
+    Dipakai deteksi feed stale: bila item terbaru jauh di belakang waktu
+    sekarang, berarti BMKG belum menerbitkan peringatan baru (atau feed
+    bermasalah) — UI perlu menampilkan status 'feed stale', bukan sekadar
+    panel kosong yang bisa disalahartikan sebagai gangguan aplikasi.
+    """
+    from email.utils import parsedate_to_datetime
+
+    if not xml_text or not xml_text.strip():
+        return None
+    root = ET.fromstring(xml_text)
+    newest: datetime | None = None
+    for node in root.iter():
+        if _local_name(node.tag) != "item":
+            continue
+        raw = _child_text(node, "pubDate")
+        if not raw:
+            continue
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            continue
+        if newest is None or parsed > newest:
+            newest = parsed
+    return newest
+
+
+def is_feed_stale(newest: datetime | None, max_age_hours: float = 48.0) -> bool:
+    """True bila item feed terbaru lebih tua dari threshold.
+
+    Threshold 48 jam dipilih karena peringatan dini cuaca BMKG
+    (nowcast) biasanya terbit harian; 2 hari tanpa item baru = sinyal
+    kuat feed stale (bukan sekadar jeda penerbitan normal).
+    """
+    if newest is None:
+        return True
+    from datetime import timezone as _tz
+
+    if newest.tzinfo is None:
+        # Naive datetime: bandingkan dgn now() naive (konsisten).
+        return datetime.now() - newest > timedelta(hours=max_age_hours)
+    age = datetime.now(_tz.utc) - newest
+    return age > timedelta(hours=max_age_hours)
 
 
 def _parse_polygon(raw: str) -> list[list[float]] | None:
@@ -342,10 +389,21 @@ class BMKGCAPConnector:
         assert self._client is not None
 
         response, _ = await self._get_with_validated_redirects(self._rss_url)
-        urls = parse_bmkg_cap_rss(await read_bounded_text(
-            response,
-            label="CAP RSS payload",
-        ))
+        rss_text = await read_bounded_text(response, label="CAP RSS payload")
+        urls = parse_bmkg_cap_rss(rss_text)
+
+        # Deteksi feed stale: item terbaru terlalu lama → log warning agar
+        # terlihat di observability (bukan hanya panel kosong di UI).
+        # Attr feed_stale dibaca _bmkg_cap_cycle utk diteruskan ke
+        # connector_health.error_message (dikonsumsi API/UI).
+        newest = newest_pub_date(rss_text)
+        self.feed_stale = is_feed_stale(newest)
+        if self.feed_stale:
+            logger.warning(
+                "BMKG CAP feed stale: item terbaru %s (age > 48 jam) — "
+                "panel peringatan akan kosong sampai BMKG menerbitkan alert baru",
+                newest.isoformat() if newest else "tidak ada item",
+            )
 
         alerts: list[OfficialAlertInput] = []
         errors: list[str] = []

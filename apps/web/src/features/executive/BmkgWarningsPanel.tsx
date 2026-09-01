@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   AlertTriangle,
   Clock3,
@@ -253,10 +253,20 @@ function LoadingRows() {
   )
 }
 
-function EmptyRow() {
+function EmptyRow({ stale = false }: { stale?: boolean }) {
   return (
     <div className="flex min-h-32 items-center justify-center border-t border-slate-800 px-4 py-8 text-center">
-      <p className="text-sm font-medium text-slate-400">Tidak ada peringatan aktif.</p>
+      {stale ? (
+        <div>
+          <p className="text-sm font-medium text-amber-300">Tidak ada peringatan aktif.</p>
+          <p className="mt-1 text-xs text-amber-400/80">
+            Sumber BMKG belum menerbitkan peringatan baru (&gt;48 jam) — feed aman
+            diakses, menunggu penerbitan resmi berikutnya.
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm font-medium text-slate-400">Tidak ada peringatan aktif.</p>
+      )}
     </div>
   )
 }
@@ -282,6 +292,23 @@ export default function BmkgWarningsPanel({
   onRetry,
 }: BmkgWarningsPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>('weather')
+  // Deteksi sumber stale (mis. BMKG belum menerbitkan peringatan baru >48 jam):
+  // tampilkan pesan jujur, bukan sekadar 'Tidak ada peringatan aktif'.
+  const [sourceStale, setSourceStale] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/health/connectors')
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((data: { data?: { name: string; status: string }[] } | null) => {
+        if (cancelled || !data?.data) return
+        const cap = data.data.find((item) => item.name === 'bmkg_cap')
+        setSourceStale(cap?.status === 'feed_stale')
+      })
+      .catch(() => {
+        // Health endpoint tak wajib — panel tetap berfungsi.
+      })
+    return () => { cancelled = true }
+  }, [])
   const instanceId = useId()
   const titleId = `${instanceId}-title`
   const weatherTabId = `${instanceId}-tab-weather`
@@ -438,7 +465,7 @@ export default function BmkgWarningsPanel({
               isActive={weatherIsActive}
             />
           ))}
-          {weatherConfirmedEmpty && <EmptyRow />}
+          {weatherConfirmedEmpty && <EmptyRow stale={sourceStale} />}
           </>
           )}
         </div>
@@ -500,7 +527,7 @@ export default function BmkgWarningsPanel({
               isActive={airIsActive}
             />
           ))}
-          {airConfirmedEmpty && <EmptyRow />}
+          {airConfirmedEmpty && <EmptyRow stale={sourceStale} />}
           </>
           )}
         </div>

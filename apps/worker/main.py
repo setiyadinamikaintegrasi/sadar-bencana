@@ -488,6 +488,13 @@ async def _bmkg_cap_cycle(
         topology_errors = await _official_alert_topology_errors(pool, alerts)
         detail_errors = [*detail_errors, *topology_errors]
         error_message = "; ".join(detail_errors[:3]) if detail_errors else None
+        # Feed stale (item terbaru > 48 jam): catat di connector_health agar
+        # API/UI dapat menampilkan status sumber — bukan hanya panel kosong.
+        # Alert lama tetap TIDAK dipaksa aktif (kedaluwarsa tetap kedaluwarsa).
+        stale_marker = getattr(connector, "feed_stale", False)
+        if stale_marker:
+            stale_note = "feed_stale: item terbaru > 48 jam"
+            error_message = f"{stale_note}; {error_message}" if error_message else stale_note
         if run_mode == "dry_run":
             if setting is not None and config_version is not None:
                 shadow_after = await capture_worker_shadow_persistence_counts(
