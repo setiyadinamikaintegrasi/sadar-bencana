@@ -120,6 +120,10 @@ def parse_cameras(raw: str) -> list[dict[str, Any]]:
         stream = str(cam.get("stream") or "").strip()
         if not stream:
             continue
+        # Host jid.jasamarga.com memerlukan sesi login JID — stream tidak
+        # bisa diputar langsung; tandai 'portal' agar UI menampilkan tautan
+        # ke portal resmi BPJT/Jasa Marga (jmlive valid tetap 'hls').
+        is_portal = stream.startswith("https://jid.jasamarga.com/")
         # unique_id BPJT (mis. 479-1-105) — id unik per kamera.
         camera_id = str(cam.get("unique_id") or f"{cam.get('camera_id')}-{cam.get('no_urut_segment')}")
         parsed.append({
@@ -132,7 +136,7 @@ def parse_cameras(raw: str) -> list[dict[str, Any]]:
             "latitude": lat,
             "longitude": lon,
             "stream_url": stream,
-            "stream_protocol": str(cam.get("protocol") or "m3u8"),
+            "stream_protocol": "portal" if is_portal else str(cam.get("protocol") or "m3u8"),
             "is_online": str(cam.get("status")) == "1",
         })
     return parsed

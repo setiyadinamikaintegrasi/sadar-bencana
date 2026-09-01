@@ -77,6 +77,7 @@ export interface OperationalMapFeatureProperties {
   operator?: string
   operator_code?: string
   stream_url?: string
+  stream_protocol?: string
   is_online?: boolean
 }
 

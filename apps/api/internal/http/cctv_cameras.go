@@ -159,6 +159,7 @@ func CctvCamerasGeoJSON(db *sql.DB) gin.HandlerFunc {
 					"operator":            cam.OperatorName,
 					"operator_code":       cam.OperatorCode,
 					"stream_url":          cam.StreamURL,
+					"stream_protocol":     cam.StreamProtocol,
 					"is_online":           cam.IsOnline,
 				},
 			})
