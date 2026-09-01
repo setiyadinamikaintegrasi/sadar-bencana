@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"strings"
 	"net/http"
 	"time"
 
@@ -171,6 +172,11 @@ func ConnectorHealthHandler(db *sql.DB) gin.HandlerFunc {
 			ch.UpdatedAt = row.updatedAt
 
 			switch {
+			case row.errorMessage != nil && strings.HasPrefix(*row.errorMessage, "feed_stale"):
+				// Sumber berhasil di-poll tapi datanya belum diperbarui upstream
+				// (mis. BMKG belum menerbitkan peringatan baru) — bukan error
+				// konektor. Status khusus agar UI bisa menampilkan pesan jujur.
+				ch.Status = "feed_stale"
 			case row.errorMessage != nil:
 				ch.Status = "error"
 			case row.lastPolledAt == nil:
