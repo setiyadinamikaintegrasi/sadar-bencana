@@ -600,6 +600,19 @@ async def _bmkg_cap_cycle(
             items_fetched=len(alerts),
             error_message=error_message,
         )
+        # S13 — fallback regional: hanya saat CAP stale; alert berlabel
+        # bmkg_regional (tidak mencampur bmkg_cap). Regional juga stale →
+        # fallback tidak menghasilkan apa pun (aturan 9).
+        if connector.feed_stale:
+            try:
+                stats = await sync_bmkg_regional_fallback(pool, cap_stale=True)
+                if stats.get("fresh_any"):
+                    logger.info(
+                        "BMKG regional fallback: checked=%s inserted=%s",
+                        stats["checked"], stats["inserted"],
+                    )
+            except Exception as fallback_exc:
+                logger.warning("BMKG regional fallback failed: %s", fallback_exc)
         return created
     except Exception as exc:
         await complete_source_poll(

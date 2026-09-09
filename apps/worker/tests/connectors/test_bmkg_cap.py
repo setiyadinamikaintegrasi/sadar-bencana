@@ -93,6 +93,7 @@ class _CycleConnector:
         self.errors = errors or []
         self.fetch_error = fetch_error
         self.closed = False
+        self.feed_stale = False
 
     async def fetch_active(self):
         if self.fetch_error is not None:
