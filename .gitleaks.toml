@@ -46,3 +46,11 @@ paths = [
   '''README\.md$''',
   '''\.env\.example$''',
 ]
+
+[[allowlists]]
+description = "BMKG regional public HTML fixtures contain session/CDN tokens from the public page — not secrets"
+targetRules = ["generic-api-key", "jwt"]
+condition = "AND"
+paths = [
+  '''apps/worker/tests/connectors/fixtures/bmkg_regional/.*\.html$''',
+]
