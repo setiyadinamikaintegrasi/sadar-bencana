@@ -603,7 +603,9 @@ async def _bmkg_cap_cycle(
         # S13 — fallback regional: hanya saat CAP stale; alert berlabel
         # bmkg_regional (tidak mencampur bmkg_cap). Regional juga stale →
         # fallback tidak menghasilkan apa pun (aturan 9).
-        if connector.feed_stale:
+        if getattr(connector, "feed_stale", False) and _env_enabled(
+            "CONNECTOR_BMKG_REGIONAL_FALLBACK_ENABLED"
+        ):
             try:
                 stats = await sync_bmkg_regional_fallback(pool, cap_stale=True)
                 if stats.get("fresh_any"):
