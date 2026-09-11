@@ -150,10 +150,13 @@ const maplibre = vi.hoisted(() => {
     GeolocateControl: vi.fn(),
     ScaleControl: vi.fn(),
     FullscreenControl: vi.fn(),
+    setWorkerUrl: vi.fn(),
   }
 })
 
-vi.mock('maplibre-gl', () => ({ default: maplibre }))
+// MapLibre GL v6 tidak lagi menyediakan default export - sediakan named exports
+// (Map, NavigationControl, ...) plus properti "default" untuk pemakai lama.
+vi.mock('maplibre-gl', () => ({ ...maplibre, default: maplibre }))
 
 const privateApi = vi.hoisted(() => ({ fetchPrivateMapLayer: vi.fn() }))
 

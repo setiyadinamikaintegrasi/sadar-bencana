@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import maplibregl from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
+import '../../config/maplibreWorker'
 import type { StyleSpecification } from 'maplibre-gl'
 import { MapDetailSheet } from './MapDetailSheet'
 import { MapLegend } from './MapLegend'
@@ -781,10 +782,10 @@ export default function OperationalMap({
     }
     applyThemeRef.current = applyTheme
 
-    const synchronizeView = (event?: { geolocateSource?: boolean }) => {
+    const synchronizeView = (event?: maplibregl.MapEventType['moveend']) => {
       if (disposed || !map) return
       onViewportChangeRef.current?.(publicViewport(map, viewStateRef.current))
-      if (event?.geolocateSource) {
+      if (event && 'geolocateSource' in event && event.geolocateSource) {
         schedulePublicLayers()
         loadPrivateLayers()
         return
