@@ -10,6 +10,16 @@ const authTarget = process.env.VITE_PROXY_AUTH_TARGET ?? 'http://127.0.0.1:9999'
 const projectDir = fileURLToPath(new URL('../../', import.meta.url))
 
 export default defineConfig({
+  // Vitest (jsdom) tidak dapat menyelesaikan specifier '?worker&url' milik
+  // registrasi worker MapLibre v6 — arahkan ke stub URL string khusus test.
+  test: {
+    alias: [
+      {
+        find: /maplibre-gl\/dist\/maplibre-gl-worker\.mjs\?worker&url$/,
+        replacement: fileURLToPath(new URL('./src/config/maplibreWorkerTestStub.ts', import.meta.url)),
+      },
+    ],
+  },
   plugins: [
     react(),
     {

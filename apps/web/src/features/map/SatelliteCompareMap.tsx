@@ -1,6 +1,7 @@
 // apps/web/src/features/map/SatelliteCompareMap.tsx
 import { useEffect, useRef } from 'react'
-import maplibregl from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
+import '../../config/maplibreWorker'
 
 /**
  * S11b v2 — Peta kedua (citra satelit ESRI) untuk Swipe Compare.
