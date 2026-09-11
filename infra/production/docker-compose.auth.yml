@@ -14,6 +14,9 @@ services:
     image: supabase/gotrue:v2.196.0
     container_name: sadar-gotrue
     restart: unless-stopped
+    depends_on:
+      templates-server:
+        condition: service_started
     ports:
       - "127.0.0.1:9999:9999"
     networks:
@@ -23,7 +26,7 @@ services:
       GOTRUE_API_PORT: "9999"
       API_EXTERNAL_URL: ${GOTRUE_API_EXTERNAL_URL:-https://auth.sadarbencana.id}
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: ${GOTRUE_DB_URL:?Set GOTRUE_DB_URL}
+      GOTRUE_DB_DATABASE_URL: ${GOTRUE_DB_URL:?Set GOTRUE_DB_URL}?options=-c%20search_path%3Dauth%2Cpublic%2Cextensions
       GOTRUE_SITE_URL: ${GOTRUE_SITE_URL:-https://sadarbencana.id}
       GOTRUE_URI_ALLOW_LIST: ${GOTRUE_URI_ALLOW_LIST:-https://sadarbencana.id,http://localhost:3001}
       GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:?Set GOTRUE_JWT_SECRET}
@@ -43,10 +46,10 @@ services:
       GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM:-noreply@sadarbencana.id}
       # Template email ber-brand (GoTrue render Go template dgn {{ .ConfirmationURL }}, {{ .Email }}).
       # URL bisa file lokal dlm container (mount) atau https; pakai env agar fleksibel.
-      GOTRUE_MAILER_TEMPLATES_CONFIRMATION: ${GOTRUE_MAILER_TEMPLATES_CONFIRMATION:-}
-      GOTRUE_MAILER_TEMPLATES_INVITE: ${GOTRUE_MAILER_TEMPLATES_INVITE:-}
-      GOTRUE_MAILER_TEMPLATES_RECOVERY: ${GOTRUE_MAILER_TEMPLATES_RECOVERY:-}
-      GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: ${GOTRUE_MAILER_TEMPLATES_MAGIC_LINK:-}
+      GOTRUE_MAILER_TEMPLATES_CONFIRMATION: http://templates-server/confirmation.html
+      GOTRUE_MAILER_TEMPLATES_INVITE: http://templates-server/invite.html
+      GOTRUE_MAILER_TEMPLATES_RECOVERY: http://templates-server/recovery.html
+      GOTRUE_MAILER_TEMPLATES_MAGIC_LINK: http://templates-server/magiclink.html
       GOTRUE_MAILER_SUBJECTS_CONFIRMATION: "Konfirmasi pendaftaran akun SadarBencana Anda"
       GOTRUE_MAILER_SUBJECTS_INVITE: "Anda diundang ke SadarBencana"
       GOTRUE_MAILER_SUBJECTS_RECOVERY: "Atur ulang kata sandi SadarBencana Anda"
@@ -74,3 +77,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  templates-server:
+    image: caddy:2-alpine
+    container_name: sadar-email-templates
+    restart: unless-stopped
+    networks:
+      - sadar-net
+    command: ["caddy", "file-server", "--root", "/templates", "--listen", ":80"]
+    volumes:
+      - ./templates/email:/templates:ro
