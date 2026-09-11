@@ -36,17 +36,6 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Historical BMKG regional HTML fixtures with synthetic JWT-like response tokens"
-targetRules = ["generic-api-key", "jwt"]
-condition = "AND"
-commits = [
-  "15b10e60757ff672f46ecc8bf94abcb875e29340",
-]
-paths = [
-  '''apps/worker/tests/connectors/fixtures/bmkg_regional/(jabar_no_alert|sumut_fresh|sumut_stale)\.html$''',
-]
-
-[[allowlists]]
 description = "JWT placeholder examples introduced with the self-hosted auth env docs"
 targetRules = ["generic-api-key"]
 condition = "AND"
