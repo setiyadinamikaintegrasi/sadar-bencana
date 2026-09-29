@@ -421,3 +421,65 @@ describe('ExecutiveOverview BMKG earthquake provenance', () => {
     expect(await screen.findByText('Gempa Terbaru BMKG')).toBeTruthy()
   })
 })
+
+describe('ExecutiveOverview Magnitudo Gempa Maks KPI', () => {
+  const kpiValueFor = (label: string): string | null => {
+    const kpi = screen.getByText(label).closest('button')
+    return kpi?.querySelector('span.font-bold')?.textContent ?? null
+  }
+
+  it('mengabaikan proxy magnitude wildfire saat menghitung KPI gempa', async () => {
+    dashboardState.events = [
+      { ...event, id: 'wf-1', event_id: 'firms:1', source: 'nasa_firms', event_type: 'wildfire', magnitude: 9.2, place: 'Hotspot 3.47S 104.92E', severity: 'Low' },
+      { ...event, id: 'eq-1', event_id: 'usgs:1', source: 'usgs', event_type: 'earthquake', magnitude: 6.5 },
+    ]
+
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    await screen.findByText('Magnitudo Gempa Maks')
+    expect(kpiValueFor('Magnitudo Gempa Maks')).toBe('6.5')
+  })
+
+  it('menghitung gempa tunggal M6.5 sebagai 6.5', async () => {
+    dashboardState.events = [{ ...event, magnitude: 6.5 }]
+
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    await screen.findByText('Magnitudo Gempa Maks')
+    expect(kpiValueFor('Magnitudo Gempa Maks')).toBe('6.5')
+  })
+
+  it('menampilkan em-dash bila tidak ada event earthquake', async () => {
+    dashboardState.events = [
+      { ...event, id: 'wf-1', event_id: 'firms:1', source: 'nasa_firms', event_type: 'wildfire', magnitude: 9.2, severity: 'Low' },
+      { ...event, id: 'fl-1', event_id: 'gdacs:1', source: 'gdacs_fl', event_type: 'flood', magnitude: 7.5, severity: 'Low' },
+      { ...event, id: 'vl-1', event_id: 'gdacs:2', source: 'gdacs_vl', event_type: 'volcano', magnitude: 8.1, severity: 'Low' },
+    ]
+
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    await screen.findByText('Magnitudo Gempa Maks')
+    expect(kpiValueFor('Magnitudo Gempa Maks')).toBe('—')
+    // Event non-gempa tetap ada di data (KPI Event Aktif tetap menghitung 3).
+    expect(kpiValueFor('Event Aktif')).toBe('3')
+  })
+
+  it('memakai magnitude 0 gempa dan mengabaikan nilai non-finite', async () => {
+    dashboardState.events = [
+      { ...event, id: 'eq-0', event_id: 'usgs:0', source: 'usgs', event_type: 'earthquake', magnitude: 0 },
+      { ...event, id: 'eq-nan', event_id: 'usgs:nan', source: 'usgs', event_type: 'earthquake', magnitude: Number.NaN },
+    ]
+
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    await screen.findByText('Magnitudo Gempa Maks')
+    expect(kpiValueFor('Magnitudo Gempa Maks')).toBe('0.0')
+  })
+
+  it('memakai caption gempa pada KPI', async () => {
+    render(<ExecutiveOverview onOfficialAlertFocusCleared={vi.fn()} />)
+
+    const kpi = await screen.findByText('Magnitudo Gempa Maks')
+    expect(kpi.closest('button')?.getAttribute('title')).toBe('Magnitudo gempa tertinggi pada event earthquake aktif.')
+  })
+})

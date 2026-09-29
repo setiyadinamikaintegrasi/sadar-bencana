@@ -692,8 +692,14 @@ export default function ExecutiveOverview({
 
   const topRiskScore = riskScores[0]
   const kpis = useMemo(() => {
+    // KPI magnitudo HANYA untuk gempa: NASA FIRMS memakai field `magnitude`
+    // sebagai proxy FRP (frp/50, maks 10) pada event wildfire — bukan Mw/Richter.
+    const earthquakeMagnitudes = events
+      .filter((event) => event.event_type === 'earthquake')
+      .map((event) => event.magnitude)
+      .filter(Number.isFinite)
     const maxMagnitude =
-      events.length > 0 ? Math.max(...events.map((e) => e.magnitude)).toFixed(1) : '—'
+      earthquakeMagnitudes.length > 0 ? Math.max(...earthquakeMagnitudes).toFixed(1) : '—'
     const topSource = events.length > 0 ? events[0].source.toUpperCase() : '—'
     return [
       {
@@ -705,10 +711,10 @@ export default function ExecutiveOverview({
           : 'Kejadian bencana yang saat ini dimuat monitor.',
       },
       {
-        label: 'Magnitudo Maks',
+        label: 'Magnitudo Gempa Maks',
         targetId: 'section-watchlist',
         value: maxMagnitude,
-        caption: 'Magnitudo terkuat pada himpunan event aktif.',
+        caption: 'Magnitudo gempa tertinggi pada event earthquake aktif.',
       },
       {
         label: 'Alert Terbuka',
